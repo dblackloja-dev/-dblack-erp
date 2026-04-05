@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: dblack-erp-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false   # você vai preencher manualmente no painel do Render
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
