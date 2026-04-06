@@ -35,6 +35,7 @@ app.use('/uploads', express.static(UPLOAD_DIR));
 // ─── AUTH MIDDLEWARE ───
 const authMiddleware = (req, res, next) => {
   if (req.path === '/auth/login') return next();
+  if (req.path === '/qz-cert' || req.path === '/qz-sign') return next();
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token necessário' });
   try {
