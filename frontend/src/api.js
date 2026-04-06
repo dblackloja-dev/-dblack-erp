@@ -48,6 +48,7 @@ const api = {
   getUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: data }),
   updateUser: (id, data) => request(`/users/${id}`, { method: 'PUT', body: data }),
+  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
 
   // Products
   getProducts: () => request('/products'),

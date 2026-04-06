@@ -494,7 +494,7 @@ export default function App() {
           {tab==="rh" && <RHModule {...{employees,setEmployees,payrolls,setPayrolls,showToast}} />}
 
           {/* USUÁRIOS */}
-          {tab==="usuarios" && <UsersModule {...{users,setUsers,showToast}} />}
+          {tab==="usuarios" && <UsersModule {...{users,setUsers,showToast,loggedUser}} />}
 
           {/* CRM */}
           {tab==="crm" && <CRMModule {...{customers,setCustomers,storeSales,showToast}} />}
@@ -2765,48 +2765,95 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
     </div>
   );
 }
-function UsersModule({users,setUsers,showToast}){
+function UsersModule({users,setUsers,showToast,loggedUser}){
+  const EMPTY={name:"",email:"",password:"",role:"vendedor",store_id:"loja1"};
   const [showForm,setShowForm]=useState(false);
-  const [nu,setNu]=useState({name:"",email:"",password:"",role:"vendedor",storeId:"loja1",avatar:""});
-  const addUser=()=>{
-    if(!nu.name||!nu.password)return showToast("Preencha nome e senha!","error");
-    if(users.find(u=>u.name.toLowerCase()===nu.name.toLowerCase()))return showToast("Já existe usuário com este nome!","error");
-    const avatar=nu.name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
-    setUsers(prev=>[...prev,{...nu,id:genId(),avatar,active:true}]);
-    setNu({name:"",email:"",password:"",role:"vendedor",storeId:"loja1",avatar:""});setShowForm(false);showToast("Usuário criado!");
+  const [editId,setEditId]=useState(null);
+  const [form,setForm]=useState(EMPTY);
+  const [confirmDel,setConfirmDel]=useState(null);
+
+  const openNew=()=>{setEditId(null);setForm(EMPTY);setShowForm(true);};
+  const openEdit=(u)=>{setEditId(u.id);setForm({name:u.name,email:u.email||"",password:"",role:u.role,store_id:u.store_id||u.storeId||"loja1"});setShowForm(true);};
+  const closeForm=()=>{setShowForm(false);setEditId(null);setForm(EMPTY);};
+
+  const saveUser=async()=>{
+    if(!form.name)return showToast("Preencha o nome!","error");
+    if(!editId&&!form.password)return showToast("Defina uma senha!","error");
+    const avatar=form.name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+    try{
+      if(editId){
+        const payload={name:form.name,email:form.email,role:form.role,store_id:form.store_id,avatar,active:true};
+        if(form.password)payload.password=form.password;
+        await api.updateUser(editId,payload);
+        setUsers(prev=>prev.map(u=>u.id===editId?{...u,...payload,storeId:form.store_id}:u));
+        showToast("Usuário atualizado!");
+      }else{
+        const data=await api.createUser({name:form.name,email:form.email,password:form.password,role:form.role,store_id:form.store_id,avatar});
+        setUsers(prev=>[...prev,{...data,storeId:form.store_id}]);
+        showToast("Usuário criado!");
+      }
+      closeForm();
+    }catch(e){showToast(e.message||"Erro ao salvar","error");}
   };
-  const toggleUser=(id)=>{setUsers(prev=>prev.map(u=>u.id===id?{...u,active:!u.active}:u));};
+
+  const toggleUser=async(u)=>{
+    try{
+      await api.updateUser(u.id,{name:u.name,email:u.email||"",role:u.role,store_id:u.store_id||u.storeId,avatar:u.avatar,active:!u.active});
+      setUsers(prev=>prev.map(x=>x.id===u.id?{...x,active:!x.active}:x));
+    }catch(e){showToast(e.message||"Erro","error");}
+  };
+
+  const deleteUser=async(id)=>{
+    try{
+      await api.deleteUser(id);
+      setUsers(prev=>prev.filter(u=>u.id!==id));
+      setConfirmDel(null);
+      showToast("Usuário excluído!");
+    }catch(e){showToast(e.message||"Erro ao excluir","error");}
+  };
+
   return(
     <div>
-      <div style={S.toolbar}><h3 style={{margin:0,fontSize:16}}>Gestão de Usuários</h3><div style={{flex:1}}/><button style={S.primBtn} onClick={()=>setShowForm(!showForm)}>{I.plus} Novo Usuário</button></div>
-      {showForm&&<div style={S.formCard}><h3 style={S.formTitle}>Cadastrar Usuário</h3><div style={S.formGrid}>
-        <input style={S.inp} placeholder="Nome completo" value={nu.name} onChange={e=>setNu(u=>({...u,name:e.target.value}))}/>
-        <input style={S.inp} placeholder="E-mail" value={nu.email} onChange={e=>setNu(u=>({...u,email:e.target.value}))}/>
-        <input style={S.inp} type="password" placeholder="Senha" value={nu.password} onChange={e=>setNu(u=>({...u,password:e.target.value}))}/>
-        <select style={S.sel} value={nu.role} onChange={e=>setNu(u=>({...u,role:e.target.value}))}>
+      <div style={S.toolbar}><h3 style={{margin:0,fontSize:16}}>Gestão de Usuários</h3><div style={{flex:1}}/><button style={S.primBtn} onClick={openNew}>{I.plus} Novo Usuário</button></div>
+
+      {showForm&&<div style={S.formCard}><h3 style={S.formTitle}>{editId?"Editar Usuário":"Novo Usuário"}</h3><div style={S.formGrid}>
+        <input style={S.inp} placeholder="Nome completo" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/>
+        <input style={S.inp} placeholder="E-mail" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/>
+        <input style={S.inp} type="password" placeholder={editId?"Nova senha (deixe em branco para não alterar)":"Senha"} value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))}/>
+        <select style={S.sel} value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))}>
           {Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
         </select>
-        <select style={S.sel} value={nu.storeId} onChange={e=>setNu(u=>({...u,storeId:e.target.value}))}>
+        <select style={S.sel} value={form.store_id} onChange={e=>setForm(f=>({...f,store_id:e.target.value}))}>
           <option value="all">Todas as lojas</option>
           {STORES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-      </div><div style={S.formAct}><button style={S.secBtn} onClick={()=>setShowForm(false)}>Cancelar</button><button style={S.primBtn} onClick={addUser}>Criar</button></div></div>}
+      </div><div style={S.formAct}><button style={S.secBtn} onClick={closeForm}>Cancelar</button><button style={S.primBtn} onClick={saveUser}>{editId?"Salvar":"Criar"}</button></div></div>}
 
-      {/* Roles legend */}
-      <div style={{...S.card,display:"flex",gap:12,flexWrap:"wrap",marginBottom:12}}>
-        {Object.entries(ROLES).map(([k,v])=><div key={k} style={{fontSize:11,color:C.dim}}><strong style={{color:C.gold}}>{v.label}:</strong> {v.permissions.includes("all")?"Acesso total":v.permissions.length+" permissões"}</div>)}
-      </div>
+      {confirmDel&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999}}>
+        <div style={{background:C.card,borderRadius:12,padding:28,width:320,textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>⚠️</div>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:8}}>Excluir usuário?</div>
+          <div style={{color:C.dim,fontSize:13,marginBottom:20}}>"{confirmDel.name}" será removido permanentemente.</div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{...S.secBtn,flex:1}} onClick={()=>setConfirmDel(null)}>Cancelar</button>
+            <button style={{...S.primBtn,flex:1,background:C.red,borderColor:C.red}} onClick={()=>deleteUser(confirmDel.id)}>Excluir</button>
+          </div>
+        </div>
+      </div>}
 
-      <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}></th><th style={S.th}>Nome</th><th style={S.th}>E-mail</th><th style={S.th}>Cargo</th><th style={S.th}>Loja</th><th style={S.th}>Senha</th><th style={S.th}>Status</th><th style={S.th}>Ação</th></tr></thead>
+      <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}></th><th style={S.th}>Nome</th><th style={S.th}>E-mail</th><th style={S.th}>Cargo</th><th style={S.th}>Loja</th><th style={S.th}>Status</th><th style={S.th}>Ações</th></tr></thead>
       <tbody>{users.map(u=><tr key={u.id} style={{...S.tr,...(!u.active?{opacity:.4}:{})}}>
         <td style={S.td}><div style={S.avatar}>{u.avatar}</div></td>
         <td style={{...S.td,fontWeight:600}}>{u.name}</td>
         <td style={{...S.td,fontSize:12}}>{u.email}</td>
         <td style={S.td}><span style={S.payBadge}>{ROLES[u.role]?.label||u.role}</span></td>
-        <td style={S.td}>{u.storeId==="all"?"Todas":STORES.find(s=>s.id===u.storeId)?.name||u.storeId}</td>
-        <td style={{...S.td,fontFamily:"monospace",letterSpacing:2,color:C.dim}}>{"•".repeat(Math.min(8,(u.password||u.pin||"").length))}</td>
+        <td style={S.td}>{(u.store_id||u.storeId)==="all"?"Todas":STORES.find(s=>s.id===(u.store_id||u.storeId))?.name||(u.store_id||u.storeId)}</td>
         <td style={S.td}><span style={{...S.stBadge,...(u.active?S.stOk:S.stLow)}}>{u.active?"Ativo":"Inativo"}</span></td>
-        <td style={S.td}><button style={S.smBtn} onClick={()=>toggleUser(u.id)}>{u.active?"Desativar":"Ativar"}</button></td>
+        <td style={S.td}><div style={{display:"flex",gap:4}}>
+          <button style={S.smBtn} onClick={()=>openEdit(u)}>✏️ Editar</button>
+          <button style={S.smBtn} onClick={()=>toggleUser(u)}>{u.active?"Desativar":"Ativar"}</button>
+          {u.id!==loggedUser?.id&&<button style={{...S.smBtn,color:C.red,borderColor:C.red}} onClick={()=>setConfirmDel(u)}>🗑️</button>}
+        </div></td>
       </tr>)}</tbody></table></div>
     </div>
   );
