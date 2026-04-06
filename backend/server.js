@@ -117,6 +117,16 @@ app.post('/api/auth/login', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Retorna o usuário autenticado pelo token
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const user = await queryOne('SELECT * FROM users WHERE id = $1 AND active = true', [req.user.id]);
+    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+    const { password: _p, pin: _pin, ...safeUser } = user;
+    res.json(safeUser);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/users', async (req, res) => {
   try {
     const users = await queryAll('SELECT * FROM users ORDER BY name');

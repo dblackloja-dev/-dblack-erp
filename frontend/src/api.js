@@ -41,6 +41,7 @@ const api = {
     if (data?.token) setToken(data.token);
     return data;
   },
+  me: () => request('/auth/me'),
   logout: () => clearToken(),
 
   // Users

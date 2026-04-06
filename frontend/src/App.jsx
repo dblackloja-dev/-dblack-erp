@@ -2,9 +2,9 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import api from './api.js';
 
 // ─── HELPERS ───
-const fmt = (v) => (v||0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const fmt = (v) => (parseFloat(v)||0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const fmtDate = (d) => { try { return new Date(d + "T12:00:00").toLocaleDateString("pt-BR"); } catch { return d; } };
-const pct = (v) => (v||0).toFixed(1)+"%";
+const pct = (v) => (parseFloat(v)||0).toFixed(1)+"%";
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // ─── LOCALSTORAGE HELPERS ───
@@ -32,11 +32,11 @@ const lsSave = (key, val) => {
 })();
 
 // ─── TRANSFORMAÇÕES API ↔ FRONTEND ───
-const prodFromApi = p => ({ ...p, minStock: p.min_stock, variations: typeof p.variations === 'string' ? JSON.parse(p.variations||'[]') : (p.variations||[]) });
+const prodFromApi = p => ({ ...p, minStock: parseInt(p.min_stock)||0, price: parseFloat(p.price)||0, cost: parseFloat(p.cost)||0, margin: parseFloat(p.margin)||0, variations: typeof p.variations === 'string' ? JSON.parse(p.variations||'[]') : (p.variations||[]) });
 const prodToApi = p => ({ ...p, min_stock: p.minStock, variations: Array.isArray(p.variations) ? p.variations : [] });
 const custFromApi = c => ({ ...c, totalSpent: parseFloat(c.total_spent||0), lastVisit: c.last_visit||'-', tags: typeof c.tags === 'string' ? JSON.parse(c.tags||'["Novo"]') : (c.tags||['Novo']) });
 const custToApi = c => ({ ...c, total_spent: c.totalSpent||0, last_visit: c.lastVisit||'-' });
-const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,canceledBy:s.canceled_by,canceledAt:s.canceled_at}); }); return r; };
+const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,canceledBy:s.canceled_by,canceledAt:s.canceled_at,subtotal:parseFloat(s.subtotal||0),discount:parseFloat(s.discount||0),total:parseFloat(s.total||0)}); }); return r; };
 const expFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
 const exchFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
 const empFromApi = e => ({ ...e, storeId: e.store_id });
@@ -104,43 +104,15 @@ const INIT_STOCK = {
 const getStockId = (storeId) => (STORES.find(s=>s.id===storeId)||{}).stockId || storeId;
 
 // ─── PER-STORE SALES ───
-const INIT_SALES = {
-  loja1:[
-    { id:"v1", date:"2026-04-04", customer:"Juliana Santos", customerId:"c4", seller:"Ana Beatriz", sellerId:"u2", items:[{name:"Camiseta Oversized Premium",qty:2,price:149.90,id:"p1"},{name:"Boné Aba Reta D'Black",qty:1,price:89.90,id:"p4"}], subtotal:389.70, discount:0, total:389.70, payment:"Cartão Crédito", status:"Concluída", cupom:"CNF-000124" },
-    { id:"v2", date:"2026-04-03", customer:"Lucas Mendes", customerId:"c1", seller:"Carlos Silva", sellerId:"u3", items:[{name:"Calça Cargo Streetwear",qty:1,price:279.90,id:"p2"}], subtotal:279.90, discount:20, total:259.90, payment:"Dinheiro", status:"Concluída", cupom:"CNF-000122" },
-  ],
-  loja2:[
-    { id:"v3", date:"2026-04-04", customer:"Mariana Costa", customerId:"c2", seller:"Diego Ramos", sellerId:"u4", items:[{name:"Corrente Aço Cirúrgico",qty:1,price:129.90,id:"p5"},{name:"Óculos de Sol Polarizado",qty:1,price:199.90,id:"p9"}], subtotal:329.80, discount:0, total:329.80, payment:"PIX", status:"Concluída", cupom:"CNF-000123" },
-  ],
-  loja3:[
-    { id:"v4", date:"2026-04-03", customer:"Rafael Oliveira", customerId:"c3", seller:"Fernanda Lima", sellerId:"u5", items:[{name:"Tênis Urban Runner",qty:1,price:459.90,id:"p6"}], subtotal:459.90, discount:0, total:459.90, payment:"Cartão Débito", status:"Concluída", cupom:"CNF-000121" },
-  ],
-  loja4:[
-    { id:"v5", date:"2026-04-02", customer:"Pedro Almeida", customerId:"c5", seller:"Gabriel Costa", sellerId:"u6", items:[{name:"Moletom Canguru D'Black",qty:1,price:249.90,id:"p7"},{name:"Bermuda Jogger",qty:2,price:159.90,id:"p8"}], subtotal:569.70, discount:30, total:539.70, payment:"PIX", status:"Concluída", cupom:"CNF-000120" },
-  ],
-};
+const INIT_SALES = { loja1:[], loja2:[], loja3:[], loja4:[] };
 
-const INIT_EXPENSES = {
-  loja1:[{id:"d1",date:"2026-04-04",category:"Aluguel",description:"Aluguel abril",value:4500,recurring:true},{id:"d2",date:"2026-04-03",category:"Energia",description:"Conta de luz",value:680,recurring:true}],
-  loja2:[{id:"d3",date:"2026-04-01",category:"Aluguel",description:"Aluguel abril",value:6200,recurring:true},{id:"d4",date:"2026-04-01",category:"Funcionários",description:"Salários",value:8500,recurring:true}],
-  loja3:[{id:"d5",date:"2026-04-01",category:"Aluguel",description:"Aluguel abril",value:5100,recurring:true}],
-  loja4:[{id:"d6",date:"2026-04-01",category:"Aluguel",description:"Aluguel abril",value:3800,recurring:true},{id:"d7",date:"2026-04-02",category:"Marketing",description:"Tráfego pago",value:1200,recurring:false}],
-};
+const INIT_EXPENSES = { loja1:[], loja2:[], loja3:[], loja4:[] };
 
 const INIT_CASH = { loja1:{open:false,initial:500,history:[]}, loja2:{open:false,initial:500,history:[]}, loja3:{open:false,initial:500,history:[]}, loja4:{open:false,initial:500,history:[]} };
 
-const INIT_CUSTOMERS = [
-  { id:"c1", name:"Lucas Mendes", phone:"(11) 99876-5432", email:"lucas@email.com", cpf:"123.456.789-00", totalSpent:1890, visits:8, lastVisit:"2026-04-01", tags:["VIP"], notes:"", points:189, whatsapp:"5511998765432" },
-  { id:"c2", name:"Mariana Costa", phone:"(11) 98765-4321", email:"mari@email.com", cpf:"987.654.321-00", totalSpent:3250, visits:15, lastVisit:"2026-04-03", tags:["VIP","Frequente"], notes:"", points:325, whatsapp:"5511987654321" },
-  { id:"c3", name:"Rafael Oliveira", phone:"(11) 97654-3210", email:"rafa@email.com", cpf:"456.789.123-00", totalSpent:750, visits:3, lastVisit:"2026-03-20", tags:["Novo"], notes:"", points:75, whatsapp:"5511976543210" },
-  { id:"c4", name:"Juliana Santos", phone:"(11) 96543-2109", email:"ju@email.com", cpf:"789.123.456-00", totalSpent:5680, visits:22, lastVisit:"2026-04-04", tags:["VIP","Premium"], notes:"", points:568, whatsapp:"5511965432109" },
-  { id:"c5", name:"Pedro Almeida", phone:"(11) 95432-1098", email:"pedro@email.com", cpf:"321.654.987-00", totalSpent:420, visits:2, lastVisit:"2026-02-14", tags:[], notes:"", points:42, whatsapp:"5511954321098" },
-];
+const INIT_CUSTOMERS = [];
 
-const INIT_INVESTMENTS = [
-  {id:"inv1",week:"Sem. 01/04 - 07/04",date:"2026-04-01",value:15000,supplier:"Fornecedor SP Têxtil",categories:["Camisetas","Calças"],notes:"Coleção outono"},
-  {id:"inv2",week:"Sem. 25/03 - 31/03",date:"2026-03-25",value:8500,supplier:"Acessórios Premium",categories:["Acessórios"],notes:"Reposição"},
-];
+const INIT_INVESTMENTS = [];
 
 // ─── ICONS ───
 const I = {
@@ -179,6 +151,7 @@ const C = { bg:"#0A0A0C", s1:"#111114", s2:"#18181C", s3:"#1F1F24", brd:"rgba(25
 export default function App() {
   // Auth
   const [loggedUser, setLoggedUser] = useState(null);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [users, setUsers] = useState(() => ls('users', INIT_USERS));
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
@@ -239,6 +212,17 @@ export default function App() {
   useEffect(() => { lsSave('sellers', sellers); }, [sellers]);
   useEffect(() => { lsSave('employees', employees); }, [employees]);
   useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
+
+  // ─── RESTAURA SESSÃO AO ABRIR O APP ───
+  useEffect(() => {
+    api.me().then(user => {
+      if (user?.id) {
+        setLoggedUser({ ...user, storeId: user.store_id || 'all' });
+        const sid = user.store_id;
+        if (sid && sid !== 'all') setActiveStore(sid);
+      }
+    }).catch(() => {}).finally(() => setCheckingSession(false));
+  }, []);
 
   // ─── CARREGA DADOS DA API APÓS LOGIN ───
   useEffect(() => {
@@ -313,6 +297,15 @@ export default function App() {
   };
 
   const currentStore = STORES.find(s => s.id === activeStore) || STORES[0];
+
+  // ─── VERIFICANDO SESSÃO ───
+  if (checkingSession) {
+    return (
+      <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Outfit',sans-serif",color:C.txt}}>
+        <div style={{textAlign:"center",color:C.dim,fontSize:14}}>Carregando...</div>
+      </div>
+    );
+  }
 
   // ─── LOGIN SCREEN ───
   if (!loggedUser) {
@@ -564,7 +557,7 @@ function StoreDashboard({storeProducts,storeSales,todaySales,todayRev,totalRev,l
         <KPI icon={I.chart} label="Ticket Médio" value={fmt(avgTicket)} sub={customers.length+" clientes"} color={C.pur}/>
       </div>
       {storeCash.open&&<div style={S.kpiRow}><KPI icon={I.store} label="Caixa Aberto" value={fmt(cashBal)} sub="Saldo atual" color={C.grn}/><KPI icon={I.money} label="Despesas" value={fmt(totalExp)} sub={storeExpenses.length+" lançamentos"} color={C.red}/></div>}
-      {lowStock.length>0&&<div style={S.alertBox}><div style={S.alertTitle}>{I.alert}<span>Estoque Baixo ({lowStock.length})</span></div><div style={S.alertList}>{lowStock.map(p=><div key={p.id} style={S.alertItem}><span style={{fontSize:18}}>{p.img}</span><span style={{fontWeight:600}}>{p.name}</span><span style={{color:C.red,fontWeight:700,fontSize:12}}>{p.stock}/{p.minStock}</span></div>)}</div></div>}
+{/* alertas de estoque baixo desativados para testes */}
       <div style={S.card}><h3 style={S.cardTitle}>Últimas Vendas — {currentStore.name}</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Cliente</th><th style={S.th}>Total</th><th style={S.th}>Pgto</th><th style={S.th}>Cupom</th></tr></thead><tbody>{storeSales.slice(0,5).map(s=><tr key={s.id} style={S.tr}><td style={S.td}>{fmtDate(s.date)}</td><td style={S.td}>{s.customer}</td><td style={{...S.td,...S.tdM}}>{fmt(s.total)}</td><td style={S.td}><span style={S.payBadge}>{s.payment}</span></td><td style={{...S.td,fontSize:11}}>{s.cupom}</td></tr>)}</tbody></table></div></div>
     </div>
   );
@@ -868,8 +861,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const cashChange=currentMethod==="Dinheiro"&&cashReceived?(+cashReceived)-remaining:0;
 
   const addToCart=(p)=>{
-    if(p.stock<=0)return showToast("Sem estoque!","error");
-    setCart(prev=>{const ex=prev.find(i=>i.id===p.id);if(ex){if(ex.qty>=p.stock){showToast("Estoque!","error");return prev;}return prev.map(i=>i.id===p.id?{...i,qty:i.qty+1}:i);}return[...prev,{...p,qty:1}];});
+    setCart(prev=>{const ex=prev.find(i=>i.id===p.id);if(ex){return prev.map(i=>i.id===p.id?{...i,qty:i.qty+1}:i);}return[...prev,{...p,qty:1}];});
   };
 
   // Add payment method
@@ -1014,7 +1006,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <button style={S.qBtn} onClick={()=>setCart(prev=>prev.map(i=>i.id===item.id?(i.qty>1?{...i,qty:i.qty-1}:null):i).filter(Boolean))}>{I.minus}</button>
               <span style={{fontSize:14,fontWeight:700,minWidth:24,textAlign:"center"}}>{item.qty}</span>
-              <button style={S.qBtn} onClick={()=>{if(item.qty>=item.stock){showToast("Estoque!","error");return;}setCart(prev=>prev.map(i=>i.id===item.id?{...i,qty:i.qty+1}:i));}}>{I.plus}</button>
+              <button style={S.qBtn} onClick={()=>setCart(prev=>prev.map(i=>i.id===item.id?{...i,qty:i.qty+1}:i))}>{I.plus}</button>
               <span style={{marginLeft:"auto",fontWeight:700,color:C.gold,fontSize:13}}>{fmt(item.price*item.qty)}</span>
             </div>
           </div>)}
@@ -1850,7 +1842,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     const prod=catalog.find(p=>p.id===movProduct);
     if(movType==="saida"){
       const current=(stock[activeStockId]||{})[movProduct]||0;
-      if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
+      // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
     }
     adjustStock(movProduct, movType==="entrada"?qty:-qty);
     const mov={id:genId(),date:"2026-04-04",time:new Date().toLocaleTimeString("pt-BR"),type:movType,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
@@ -1864,7 +1856,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     if(!transProduct||!transQty||+transQty<=0||!transTo)return showToast("Preencha todos os campos!","error");
     const qty=+transQty;
     const current=(stock[activeStockId]||{})[transProduct]||0;
-    if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
+    // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
     const prod=catalog.find(p=>p.id===transProduct);
     const destStore=STORES.find(s=>s.id===transTo);
     adjustStock(transProduct,-qty,activeStockId);
@@ -1926,7 +1918,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       {/* ── LISTA ── */}
       {activeTab==="lista"&&<div>
         <div style={S.toolbar}><div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar produto..." value={search} onChange={e=>setSearch(e.target.value)}/></div></div>
-        {lowStock.length>0&&<div style={S.alertBox}><div style={S.alertTitle}>{I.alert}<span>Estoque Baixo ({lowStock.length})</span></div><div style={S.alertList}>{lowStock.map(p=><div key={p.id} style={S.alertItem}><span style={{fontSize:16}}>{p.img}</span><span style={{fontWeight:600}}>{p.name}</span><span style={{color:C.red,fontWeight:700,fontSize:11}}>{p.stock}/{p.minStock}</span></div>)}</div></div>}
+{/* alertas de estoque baixo desativados para testes */}
         <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Cat.</th><th style={S.th}>Preço</th><th style={S.th}>Custo</th><th style={S.th}>Estoque</th><th style={S.th}>Valor</th><th style={S.th}>Ajuste</th></tr></thead>
         <tbody>{filtered.map(p=><tr key={p.id} style={{...S.tr,...(p.stock<=p.minStock?{background:"rgba(255,82,82,0.06)"}:{})}}>
           <td style={S.td}><span style={{fontSize:18}}>{p.img}</span></td>
