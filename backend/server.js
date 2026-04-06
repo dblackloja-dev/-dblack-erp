@@ -664,17 +664,17 @@ app.post('/api/investments', async (req, res) => {
 // ═══════════════════════════════════════════
 // ═══  START SERVER                       ═══
 // ═══════════════════════════════════════════
+// Health check (sem autenticação)
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+// Inicia o servidor imediatamente e tenta conectar ao banco
+app.listen(PORT, () => {
+  console.log(`D'BLACK ERP rodando na porta ${PORT}`);
+});
+
 initDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`
-╔══════════════════════════════════════════╗
-║   D'BLACK ERP — Backend Server           ║
-║   Rodando em http://localhost:${PORT}       ║
-║   Banco: PostgreSQL (Neon)               ║
-╚══════════════════════════════════════════╝
-    `);
-  });
+  console.log('✅ Banco de dados conectado!');
 }).catch(err => {
-  console.error('❌ Falha ao inicializar banco:', err);
-  process.exit(1);
+  console.error('❌ Falha ao inicializar banco:', err.message);
+  // Não encerra o servidor — continua respondendo às requisições
 });

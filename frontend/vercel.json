@@ -4,12 +4,12 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://dblack-erp-backend-production.up.railway.app/api/:path*"
+      "source": "/api/(.*)",
+      "destination": "https://dblack-erp-backend-production.up.railway.app/api/$1"
     },
     {
-      "source": "/uploads/:path*",
-      "destination": "https://dblack-erp-backend-production.up.railway.app/uploads/:path*"
+      "source": "/uploads/(.*)",
+      "destination": "https://dblack-erp-backend-production.up.railway.app/uploads/$1"
     }
   ]
 }
