@@ -17,20 +17,24 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dblack_jwt_secret_2026';
 // Garante que a pasta de uploads existe
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// CORS — permite Vercel e localhost
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin || origin.includes('localhost') || origin.endsWith('.vercel.app')) return cb(null, true);
-    cb(new Error('CORS bloqueado'));
-  },
-  credentials: true,
-}));
+// CORS — libera Vercel e localhost antes de qualquer middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin || '';
+  if (!origin || origin.includes('localhost') || origin.endsWith('.vercel.app') || origin.endsWith('.railway.app')) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
 // ─── AUTH MIDDLEWARE ───
 const authMiddleware = (req, res, next) => {
-  if (req.path === '/auth/login' || req.method === 'OPTIONS') return next();
+  if (req.path === '/auth/login') return next();
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token necessário' });
   try {
