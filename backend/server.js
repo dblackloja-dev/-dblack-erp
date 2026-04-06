@@ -665,7 +665,15 @@ app.post('/api/investments', async (req, res) => {
 // ═══  START SERVER                       ═══
 // ═══════════════════════════════════════════
 // Health check (sem autenticação)
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+app.get('/health', async (req, res) => {
+  try {
+    const { pool } = require('./database');
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', db: 'connected', time: new Date().toISOString() });
+  } catch(e) {
+    res.json({ status: 'ok', db: 'error: ' + e.message, time: new Date().toISOString() });
+  }
+});
 
 // Inicia o servidor imediatamente e tenta conectar ao banco
 app.listen(PORT, () => {
