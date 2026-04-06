@@ -4,20 +4,43 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const { queryAll, queryOne, queryRun, initDB } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const UPLOAD_DIR = path.resolve(__dirname, process.env.UPLOAD_DIR || '../uploads');
+const JWT_SECRET = process.env.JWT_SECRET || 'dblack_jwt_secret_2026';
 
 // Garante que a pasta de uploads existe
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// Middleware
-app.use(cors());
+// CORS — permite Vercel e localhost
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || origin.includes('localhost') || origin.endsWith('.vercel.app')) return cb(null, true);
+    cb(new Error('CORS bloqueado'));
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(UPLOAD_DIR));
+
+// ─── AUTH MIDDLEWARE ───
+const authMiddleware = (req, res, next) => {
+  if (req.path === '/auth/login' || req.method === 'OPTIONS') return next();
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token necessário' });
+  try {
+    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Token inválido ou expirado' });
+  }
+};
+app.use('/api', authMiddleware);
 
 // Multer — upload de fotos de produtos
 const storage = multer.diskStorage({
@@ -58,13 +81,35 @@ app.get('/api/stores', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { login, password } = req.body;
-    // Aceita login por nome ou email, e senha ou pin (legado)
     const user = await queryOne(
-      `SELECT * FROM users WHERE (LOWER(name) = LOWER($1) OR LOWER(email) = LOWER($1)) AND (password = $2 OR pin = $2) AND active = true`,
-      [login, password]
+      `SELECT * FROM users WHERE (LOWER(name) = LOWER($1) OR LOWER(email) = LOWER($1)) AND active = true`,
+      [login]
     );
     if (!user) return res.status(401).json({ error: 'Usuário ou senha inválidos' });
-    res.json(user);
+
+    let valid = false;
+    if (user.password?.startsWith('$2')) {
+      // Senha já com bcrypt
+      valid = await bcrypt.compare(password, user.password);
+    } else {
+      // Senha em texto puro (legado) — valida e já atualiza para bcrypt
+      valid = user.password === password || user.pin === password;
+      if (valid) {
+        const hash = await bcrypt.hash(password, 10);
+        await queryRun('UPDATE users SET password = $1 WHERE id = $2', [hash, user.id]);
+      }
+    }
+
+    if (!valid) return res.status(401).json({ error: 'Usuário ou senha inválidos' });
+
+    const token = jwt.sign(
+      { id: user.id, name: user.name, role: user.role, store_id: user.store_id },
+      JWT_SECRET,
+      { expiresIn: '12h' }
+    );
+
+    const { password: _p, pin: _pin, ...safeUser } = user;
+    res.json({ ...safeUser, token });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -79,9 +124,11 @@ app.post('/api/users', async (req, res) => {
   try {
     const { name, email, password, pin, role, store_id, avatar } = req.body;
     const id = genId();
+    const rawPass = password || pin || 'mudar123';
+    const hash = await bcrypt.hash(rawPass, 10);
     await queryRun(
-      'INSERT INTO users (id, name, email, password, pin, role, store_id, avatar) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, name, email || '', password || pin || '', pin || '', role || 'vendedor', store_id || 'all', avatar || name.slice(0, 2).toUpperCase()]
+      'INSERT INTO users (id, name, email, password, role, store_id, avatar) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [id, name, email || '', hash, role || 'vendedor', store_id || 'all', avatar || name.slice(0, 2).toUpperCase()]
     );
     res.json({ id, name, email, role, store_id, active: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -90,10 +137,22 @@ app.post('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     const { name, email, password, pin, role, store_id, active, avatar } = req.body;
-    await queryRun(
-      'UPDATE users SET name=$1, email=$2, password=$3, pin=$4, role=$5, store_id=$6, active=$7, avatar=$8 WHERE id=$9',
-      [name, email || '', password || pin || '', pin || '', role, store_id, active !== false, avatar, req.params.id]
-    );
+    const rawPass = password || pin;
+    let hash = undefined;
+    if (rawPass && !rawPass.startsWith('$2')) {
+      hash = await bcrypt.hash(rawPass, 10);
+    }
+    if (hash) {
+      await queryRun(
+        'UPDATE users SET name=$1, email=$2, password=$3, role=$4, store_id=$5, active=$6, avatar=$7 WHERE id=$8',
+        [name, email || '', hash, role, store_id, active !== false, avatar, req.params.id]
+      );
+    } else {
+      await queryRun(
+        'UPDATE users SET name=$1, email=$2, role=$3, store_id=$4, active=$5, avatar=$6 WHERE id=$7',
+        [name, email || '', role, store_id, active !== false, avatar, req.params.id]
+      );
+    }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

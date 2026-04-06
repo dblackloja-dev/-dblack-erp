@@ -2,12 +2,27 @@
 // Em produção usa a URL do Render. Em dev, usa o proxy do Vite (localhost:3001)
 const BASE = (import.meta.env.VITE_API_URL || '') + '/api';
 
+// Gerenciamento do token JWT
+const getToken = () => localStorage.getItem('dblack_token');
+const setToken = (t) => localStorage.setItem('dblack_token', t);
+const clearToken = () => localStorage.removeItem('dblack_token');
+
 async function request(path, options = {}) {
+  const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  if (res.status === 401) {
+    clearToken();
+    window.location.reload();
+    return;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro de rede' }));
     throw new Error(err.error || 'Erro na requisição');
@@ -20,7 +35,12 @@ const api = {
   getStores: () => request('/stores'),
 
   // Auth
-  login: (login, password) => request('/auth/login', { method: 'POST', body: { login, password } }),
+  login: async (login, password) => {
+    const data = await request('/auth/login', { method: 'POST', body: { login, password } });
+    if (data?.token) setToken(data.token);
+    return data;
+  },
+  logout: () => clearToken(),
 
   // Users
   getUsers: () => request('/users'),
@@ -35,7 +55,12 @@ const api = {
   uploadPhoto: async (id, file) => {
     const form = new FormData();
     form.append('photo', file);
-    const res = await fetch(`${BASE}/products/${id}/photo`, { method: 'POST', body: form });
+    const token = getToken();
+    const res = await fetch(`${BASE}/products/${id}/photo`, {
+      method: 'POST',
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     return res.json();
   },
 

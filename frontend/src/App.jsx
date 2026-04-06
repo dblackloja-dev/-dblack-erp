@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import api from './api.js';
 
 // ─── HELPERS ───
 const fmt = (v) => (v||0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -14,19 +15,35 @@ const lsSave = (key, val) => {
   try { localStorage.setItem('dblack_' + key, JSON.stringify(val)); } catch {}
 };
 
-// ─── MIGRAÇÃO: converte usuários com pin→password ───
+// ─── MIGRAÇÃO: garante que todos os usuários têm senha ───
 (() => {
   try {
     const stored = localStorage.getItem('dblack_users');
     if (!stored) return;
     const users = JSON.parse(stored);
+    const defaults = { u1:'admin123', u2:'ana123', u3:'carlos123', u4:'diego123', u5:'fer123', u6:'gabriel123' };
     let changed = false;
     users.forEach(u => {
       if (u.pin && !u.password) { u.password = u.pin; delete u.pin; changed = true; }
+      if (!u.password && defaults[u.id]) { u.password = defaults[u.id]; changed = true; }
     });
     if (changed) localStorage.setItem('dblack_users', JSON.stringify(users));
   } catch {}
 })();
+
+// ─── TRANSFORMAÇÕES API ↔ FRONTEND ───
+const prodFromApi = p => ({ ...p, minStock: p.min_stock, variations: typeof p.variations === 'string' ? JSON.parse(p.variations||'[]') : (p.variations||[]) });
+const prodToApi = p => ({ ...p, min_stock: p.minStock, variations: Array.isArray(p.variations) ? p.variations : [] });
+const custFromApi = c => ({ ...c, totalSpent: parseFloat(c.total_spent||0), lastVisit: c.last_visit||'-', tags: typeof c.tags === 'string' ? JSON.parse(c.tags||'["Novo"]') : (c.tags||['Novo']) });
+const custToApi = c => ({ ...c, total_spent: c.totalSpent||0, last_visit: c.lastVisit||'-' });
+const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,canceledBy:s.canceled_by,canceledAt:s.canceled_at}); }); return r; };
+const expFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
+const exchFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
+const empFromApi = e => ({ ...e, storeId: e.store_id });
+const sellerFromApi = s => ({ ...s, salesCount: s.sales_count||0, totalSold: parseFloat(s.total_sold||0), storeId: s.store_id });
+const payrollFromApi = p => ({ ...p, empId:p.emp_id, empName:p.emp_name, empCpf:p.emp_cpf, empRole:p.emp_role, empPix:p.emp_pix, storeId:p.store_id, storeName:p.store_name, baseSalary:parseFloat(p.base_salary||0), metaBonus:parseFloat(p.meta_bonus||0), awards:parseFloat(p.awards||0), overtime:parseFloat(p.overtime||0), storeDiscount:parseFloat(p.store_discount||0), advances:parseFloat(p.advances||0), otherDeductions:parseFloat(p.other_deductions||0), totalEarnings:parseFloat(p.total_earnings||0), totalDeductions:parseFloat(p.total_deductions||0), netPay:parseFloat(p.net_pay||0), paidDate:p.paid_date });
+const promoFromApi = p => ({ ...p, minPurchase: parseFloat(p.min_purchase||0), validUntil: p.valid_until, usageCount: p.usage_count||0 });
+const promoToApi = p => ({ ...p, min_purchase: p.minPurchase||0, valid_until: p.validUntil||'', usage_count: p.usageCount||0 });
 
 // ─── STORES ───
 const STORES = [
@@ -172,6 +189,7 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [sideOpen, setSideOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const [apiLoaded, setApiLoaded] = useState(false);
 
   // Global data — carregados do localStorage (persistem ao fechar o app)
   const [catalog, setCatalog] = useState(() => ls('catalog', CATALOG));
@@ -222,25 +240,63 @@ export default function App() {
   useEffect(() => { lsSave('employees', employees); }, [employees]);
   useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
 
+  // ─── CARREGA DADOS DA API APÓS LOGIN ───
+  useEffect(() => {
+    if (!loggedUser) return;
+    setApiLoaded(false);
+    Promise.all([
+      api.getProducts(),
+      api.getStock(),
+      api.getSales(),
+      api.getCustomers(),
+      api.getExpenses(),
+      api.getEmployees(),
+      api.getPayrolls(),
+      api.getSellers(),
+      api.getExchanges(),
+      api.getPromos(),
+      api.getInvestments(),
+      api.getUsers(),
+    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs]) => {
+      if(prods?.length) setCatalog(prods.map(prodFromApi));
+      if(stk&&Object.keys(stk).length) setStock(stk);
+      if(sls?.length) setSales(salesFromApi(sls));
+      if(custs?.length) setCustomers(custs.map(custFromApi));
+      if(exps?.length) setExpenses(expFromApi(exps));
+      if(emps?.length) setEmployees(emps.map(empFromApi));
+      if(pays?.length) setPayrolls(pays.map(payrollFromApi));
+      if(sels?.length) setSellers(sels.map(sellerFromApi));
+      if(exchs?.length) setExchanges(exchFromApi(exchs));
+      if(proms?.length) setPromos(proms.map(promoFromApi));
+      if(invs?.length) setInvestments(invs);
+      if(usrs?.length) setUsers(usrs);
+    }).catch(e => console.error('Erro ao carregar do servidor:', e))
+      .finally(() => setApiLoaded(true));
+  }, [loggedUser?.id]);
+
   const showToast = useCallback((msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); },[]);
 
   // Login
-  const doLogin = () => {
-    const id = loginUser.trim().toLowerCase();
-    const user = users.find(u => {
-      const nameMatch = u.name.toLowerCase() === id;
-      const emailMatch = u.email?.toLowerCase() === id;
-      // suporta campo password (novo) ou pin (legado)
-      const passMatch = (u.password || u.pin) === loginPass;
-      return (nameMatch || emailMatch) && passMatch && u.active;
-    });
-    if (!user) { setLoginError("Usuário ou senha inválidos"); return; }
-    setLoggedUser(user);
-    if (user.storeId !== "all") setActiveStore(user.storeId);
-    setLoginUser(""); setLoginPass(""); setLoginError("");
+  const doLogin = async () => {
+    setLoginError("");
+    try {
+      const user = await api.login(loginUser.trim(), loginPass);
+      setLoggedUser({ ...user, storeId: user.store_id || user.storeId || 'all' });
+      const sid = user.store_id || user.storeId;
+      if (sid && sid !== 'all') setActiveStore(sid);
+      setLoginUser(""); setLoginPass("");
+    } catch(e) {
+      // Fallback para login local (offline)
+      const id = loginUser.trim().toLowerCase();
+      const u = users.find(u => (u.name.toLowerCase()===id||u.email?.toLowerCase()===id) && (u.password||u.pin)===loginPass && u.active);
+      if (!u) { setLoginError(e.message||"Usuário ou senha inválidos"); return; }
+      setLoggedUser(u);
+      if (u.storeId !== "all") setActiveStore(u.storeId);
+      setLoginUser(""); setLoginPass(""); setLoginError("");
+    }
   };
 
-  const doLogout = () => { setLoggedUser(null); setTab("dashboard"); };
+  const doLogout = () => { api.logout(); setLoggedUser(null); setTab("dashboard"); };
 
   // Permissions
   const hasPermission = (perm) => {
@@ -872,6 +928,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const custObj=customers.find(c=>c.name===cartCustomer);
     const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
+    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId }).catch(console.error);
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};cart.forEach(c=>{st[c.id]=Math.max(0,(st[c.id]||0)-c.qty);});n[activeStockId]=st;return n;});
     setCashState(prev=>{const n={...prev};const cs={...(n[activeStore]||{})};cs.history=[...cs.history,{type:"entrada",value:cartTotal,desc:"Venda "+cupomNum,time:new Date().toLocaleTimeString("pt-BR")}];n[activeStore]=cs;return n;});
     setAutoFlow(true);
@@ -1480,13 +1537,15 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
     const vars=np.variations?np.variations.split(",").map(v=>v.trim()).filter(Boolean):[];
     const margin=npCost>0?((npPrice-npCost)/npCost*100):0;
     if(editId){
-      setCatalog(prev=>prev.map(p=>p.id===editId?{...p,...np,price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars}:p));
+      const updated = {...np,price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
+      setCatalog(prev=>prev.map(p=>p.id===editId?{...p,...updated}:p));
+      api.updateProduct(editId, prodToApi(updated)).catch(console.error);
       setEditId(null);showToast("Produto atualizado!");
     } else {
       const newProd={...np,id:genId(),price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
       setCatalog(prev=>[...prev,newProd]);
-      // Add initial stock 0 in all stores
       setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
+      api.createProduct(prodToApi(newProd)).catch(console.error);
       showToast("Produto cadastrado!");
     }
     setNp(newEmpty());setShowForm(false);
@@ -1499,7 +1558,14 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
   };
 
   // Toggle active
-  const toggleProduct=(id)=>setCatalog(prev=>prev.map(p=>p.id===id?{...p,active:!p.active}:p));
+  const toggleProduct=(id)=>{
+    setCatalog(prev=>prev.map(p=>{
+      if(p.id!==id) return p;
+      const updated={...p,active:!p.active};
+      api.updateProduct(id, prodToApi(updated)).catch(console.error);
+      return updated;
+    }));
+  };
 
   // CSV Import
   const importCSV=()=>{
@@ -2761,7 +2827,15 @@ function CRMModule({customers,setCustomers,storeSales,showToast}){
   const [search,setSearch]=useState("");const [sel,setSel]=useState(null);const [showForm,setShowForm]=useState(false);
   const [nc,setNc]=useState({name:"",phone:"",email:"",cpf:"",birthdate:"",notes:"",whatsapp:""});
   const filtered=customers.filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.phone.includes(search));
-  const addC=()=>{if(!nc.name||!nc.phone)return showToast("Preencha nome e telefone!","error");setCustomers(prev=>[...prev,{...nc,id:genId(),totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],points:0}]);setNc({name:"",phone:"",email:"",cpf:"",birthdate:"",notes:"",whatsapp:""});setShowForm(false);showToast("Cliente cadastrado!");};
+  const addC=()=>{
+    if(!nc.name||!nc.phone)return showToast("Preencha nome e telefone!","error");
+    const newC={...nc,id:genId(),totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],points:0};
+    setCustomers(prev=>[...prev,newC]);
+    api.createCustomer(custToApi(newC)).catch(console.error);
+    setNc({name:"",phone:"",email:"",cpf:"",birthdate:"",notes:"",whatsapp:""});
+    setShowForm(false);
+    showToast("Cliente cadastrado!");
+  };
   const custSales=sel?storeSales.filter(s=>s.customerId===sel.id):[];
   return(
     <div>
@@ -2807,7 +2881,12 @@ function FinanceiroModule({storeSales,storeProducts,storeExpenses,storeSellers,t
 // ═══════════════════════════════════
 function ComissoesModule({storeSellers,sellers,setSellers,storeSales,showToast}){
   const [editId,setEditId]=useState(null);const [editVal,setEditVal]=useState("");
-  const saveComm=(id)=>{setSellers(prev=>prev.map(s=>s.id===id?{...s,commission:+editVal}:s));setEditId(null);showToast("Comissão atualizada!");};
+  const saveComm=(id)=>{
+    setSellers(prev=>prev.map(s=>s.id===id?{...s,commission:+editVal}:s));
+    api.updateSeller(id,{commission:+editVal}).catch(console.error);
+    setEditId(null);
+    showToast("Comissão atualizada!");
+  };
   return(
     <div>
       <div style={S.kpiRow}>{storeSellers.map(s=><KPI key={s.id} icon={I.award} label={s.name} value={fmt(s.totalSold*s.commission/100)} sub={pct(s.commission)+" de "+fmt(s.totalSold)} color={C.gold}/>)}</div>
@@ -2924,7 +3003,15 @@ function FidelidadeModule({customers,setCustomers,showToast}){
 function PromosModule({promos,setPromos,showToast}){
   const [showForm,setShowForm]=useState(false);
   const [np,setNp]=useState({name:"",type:"percent",value:"",minPurchase:"",validUntil:""});
-  const addP=()=>{if(!np.name)return showToast("Preencha!","error");setPromos(prev=>[...prev,{...np,id:genId(),value:+np.value,minPurchase:+np.minPurchase,active:true,usageCount:0}]);setNp({name:"",type:"percent",value:"",minPurchase:"",validUntil:""});setShowForm(false);showToast("Cupom criado!");};
+  const addP=()=>{
+    if(!np.name)return showToast("Preencha!","error");
+    const newP={...np,id:genId(),value:+np.value,minPurchase:+np.minPurchase,active:true,usageCount:0};
+    setPromos(prev=>[...prev,newP]);
+    api.createPromo(promoToApi(newP)).catch(console.error);
+    setNp({name:"",type:"percent",value:"",minPurchase:"",validUntil:""});
+    setShowForm(false);
+    showToast("Cupom criado!");
+  };
   return(
     <div>
       <div style={S.toolbar}><h3 style={{margin:0,fontSize:15}}>Cupons & Promoções</h3><div style={{flex:1}}/><button style={S.primBtn} onClick={()=>setShowForm(!showForm)}>{I.plus} Novo Cupom</button></div>
@@ -2956,7 +3043,16 @@ function WhatsAppModule({customers}){
 function InvestimentosModule({investments,setInvestments,showToast}){
   const [showForm,setShowForm]=useState(false);
   const [ni,setNi]=useState({week:"",date:"2026-04-04",value:"",supplier:"",cats:"",notes:""});
-  const addInv=()=>{if(!ni.value||!ni.supplier)return showToast("Preencha!","error");const wk=ni.week||("Sem. "+fmtDate(ni.date));setInvestments(prev=>[{id:genId(),week:wk,date:ni.date,value:+ni.value,supplier:ni.supplier,categories:ni.cats?ni.cats.split(",").map(c=>c.trim()):[],notes:ni.notes},...prev]);setNi({week:"",date:"2026-04-04",value:"",supplier:"",cats:"",notes:""});setShowForm(false);showToast("Investimento registrado!");};
+  const addInv=()=>{
+    if(!ni.value||!ni.supplier)return showToast("Preencha!","error");
+    const wk=ni.week||("Sem. "+fmtDate(ni.date));
+    const newInv={id:genId(),week:wk,date:ni.date,value:+ni.value,supplier:ni.supplier,categories:ni.cats?ni.cats.split(",").map(c=>c.trim()):[],notes:ni.notes};
+    setInvestments(prev=>[newInv,...prev]);
+    api.createInvestment(newInv).catch(console.error);
+    setNi({week:"",date:new Date().toISOString().split('T')[0],value:"",supplier:"",cats:"",notes:""});
+    setShowForm(false);
+    showToast("Investimento registrado!");
+  };
   const total=investments.reduce((s,i)=>s+i.value,0);const avg=investments.length>0?total/investments.length:0;const max=investments.length>0?Math.max(...investments.map(i=>i.value)):1;
   const bySup={};investments.forEach(i=>{bySup[i.supplier]=(bySup[i.supplier]||0)+i.value;});
   return(
