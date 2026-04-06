@@ -1,6 +1,7 @@
 // ─── API Client ───
-// Em produção usa a URL do Render. Em dev, usa o proxy do Vite (localhost:3001)
-const BASE = (import.meta.env.VITE_API_URL || '') + '/api';
+// Em dev: Vite proxy → localhost:3001
+// Em produção: Vercel rewrite proxy → Railway (sem CORS)
+const BASE = '/api';
 
 // Gerenciamento do token JWT
 const getToken = () => localStorage.getItem('dblack_token');
