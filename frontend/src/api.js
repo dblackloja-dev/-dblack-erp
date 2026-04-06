@@ -41,7 +41,15 @@ const api = {
     if (data?.token) setToken(data.token);
     return data;
   },
-  me: () => request('/auth/me'),
+  me: async () => {
+    const token = getToken();
+    if (!token) return null;
+    const res = await fetch(`${BASE}/auth/me`, {
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) { clearToken(); return null; }
+    return res.json();
+  },
   logout: () => clearToken(),
 
   // Users

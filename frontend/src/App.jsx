@@ -7,6 +7,67 @@ const fmtDate = (d) => { try { return new Date(d + "T12:00:00").toLocaleDateStri
 const pct = (v) => (parseFloat(v)||0).toFixed(1)+"%";
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+// ─── IMPRESSÃO SILENCIOSA (QZ Tray) ───
+// Armazena o nome da impressora configurada pelo usuário
+let _qzPrinterName = localStorage.getItem('dblack_qz_printer') || '';
+let _globalToast = null; // referência global para mostrar toasts de erro
+
+function _buildPrintHTML(el) {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+    @page{margin:0;padding:0;size:80mm auto;}
+    html,body{margin:0;padding:0;background:#fff;width:72mm;}
+    body *{font-weight:700!important;color:#000!important;background:transparent!important;-webkit-print-color-adjust:exact!important;}
+  </style></head><body>${el.outerHTML}</body></html>`;
+}
+
+// Retorna a lista de impressoras disponíveis no QZ Tray
+async function qzGetPrinters() {
+  const qz = window.qz;
+  if (!qz) return [];
+  if (!qz.websocket.isActive()) await qz.websocket.connect({ retries:2, delay:500 });
+  return await qz.printers.find();
+}
+
+async function _qzSilentPrint(el) {
+  const qz = window.qz;
+  if (!qz) throw new Error('QZ Tray não disponível');
+  // Só reconecta se necessário (normalmente já está conectado desde o início)
+  if (!qz.websocket.isActive()) await qz.websocket.connect({ retries:2, delay:500 });
+
+  let printer = _qzPrinterName;
+
+  // Se não tem impressora salva, tenta encontrar automaticamente
+  if (!printer) {
+    const all = await qz.printers.find();
+    // Procura por ELGIN ou termica no nome
+    printer = all.find(p => /elgin/i.test(p)) || all.find(p => /termic|thermal|i8/i.test(p)) || all[0] || '';
+    if (printer) { _qzPrinterName = printer; localStorage.setItem('dblack_qz_printer', printer); }
+  }
+
+  if (!printer) throw new Error('Nenhuma impressora encontrada. Configure nas configurações.');
+
+  const config = qz.configs.create(printer, { scaleContent: false, margins: {top:0,right:0,bottom:0,left:0} });
+  await qz.print(config, [{ type:'html', format:'plain', data: _buildPrintHTML(el) }]);
+  if (_globalToast) _globalToast('✅ Impresso em: ' + printer);
+}
+
+function triggerPrint(contentRef, callback) {
+  const el = contentRef?.current;
+  if (window.qz && el) {
+    _qzSilentPrint(el)
+      .then(() => callback && callback())
+      .catch(err => {
+        console.warn('QZ Tray falhou:', err.message||err);
+        if (_globalToast) _globalToast('⚠️ QZ Tray: ' + (err.message||'erro') + ' — usando impressão normal', 'error');
+        window.print();
+        callback && callback();
+      });
+  } else {
+    window.print();
+    callback && callback();
+  }
+}
+
 // ─── LOCALSTORAGE HELPERS ───
 const ls = (key, fallback) => {
   try { const v = localStorage.getItem('dblack_' + key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
@@ -62,7 +123,7 @@ const ROLES = {
   gestor:{ label:"Gestor", permissions:["dashboard_geral","ver_todas_lojas","vendas","estoque","crm","financeiro","despesas","comissoes","trocas","etiquetas","fidelidade","promos","caixa","whatsapp","investimentos"] },
   gerente:{ label:"Gerente de Loja", permissions:["dashboard_loja","vendas","estoque","crm","caixa","trocas","comissoes","etiquetas","despesas","whatsapp","fidelidade"] },
   vendedor:{ label:"Vendedor", permissions:["vendas","caixa","trocas","etiquetas"] },
-  caixa:{ label:"Operador de Caixa", permissions:["vendas","caixa","trocas"] },
+  caixa:{ label:"Operador de Caixa", permissions:["vendas","caixa","trocas","estoque","despesas","dashboard_loja"] },
 };
 
 // ─── USERS ───
@@ -213,6 +274,8 @@ export default function App() {
   useEffect(() => { lsSave('employees', employees); }, [employees]);
   useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
 
+  // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
+
   // ─── RESTAURA SESSÃO AO ABRIR O APP ───
   useEffect(() => {
     api.me().then(user => {
@@ -259,6 +322,42 @@ export default function App() {
   }, [loggedUser?.id]);
 
   const showToast = useCallback((msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); },[]);
+
+  // ─── INICIALIZA QZ TRAY (depois de showToast estar definido) ───
+  useEffect(() => {
+    _globalToast = showToast;
+
+    function initQz() {
+      if (!window.qz) return;
+      try {
+        // Fornece o certificado ao QZ Tray (habilita "Remember this decision")
+        window.qz.security.setCertificatePromise(resolve =>
+          fetch('/api/qz-cert').then(r => r.text()).then(resolve).catch(() => resolve(''))
+        );
+        // Assina as requisições via backend para QZ Tray confiar no site
+        window.qz.security.setSignaturePromise(toSign => resolve =>
+          fetch('/api/qz-sign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: toSign })
+          }).then(r => r.json()).then(d => resolve(d.signature)).catch(() => resolve(''))
+        );
+        // Conecta uma única vez — mantém conexão persistente
+        if (!window.qz.websocket.isActive()) {
+          window.qz.websocket.connect({ retries: 5, delay: 1000, keepAlive: 30 }).catch(() => {});
+        }
+      } catch(e) {}
+    }
+
+    if (window.qz) { initQz(); return; }
+
+    const s = document.createElement('script');
+    s.src = '/qz-tray.js';
+    s.async = true;
+    s.onload = initQz;
+    s.onerror = () => {};
+    document.head.appendChild(s);
+  }, []); // showToast é estável (useCallback com deps [])
 
   // Login
   const doLogin = async () => {
@@ -734,10 +833,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       }
       // Enter smart navigation
       if(e.key==="Enter"){
-        // If focused on search and there's text, add first matching product
-        if(document.activeElement===searchRef.current && search.trim()){
-          const match=storeProducts.find(p=>p.stock>0&&(p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())));
-          if(match){addToCart(match);setSearch("");showToast(match.img+" "+match.name+" adicionado!");}
+        // Se o campo de busca está focado e tem texto, adiciona produto (leitor de código de barras)
+        const searchVal=(searchRef.current?.value||search).trim();
+        if(document.activeElement===searchRef.current && searchVal){
+          const q=searchVal.toLowerCase();
+          // Busca por EAN exato primeiro, depois SKU exato, depois por nome/sku parcial
+          const match=storeProducts.find(p=>p.ean===searchVal||p.sku.toLowerCase()===q)
+            ||storeProducts.find(p=>p.name.toLowerCase().includes(q)||p.sku.toLowerCase().includes(q)||(p.ean||"").includes(q));
+          if(match){addToCart(match);setSearch("");if(searchRef.current)searchRef.current.value="";showToast(match.img+" "+match.name+" adicionado!");}
           else showToast("Produto não encontrado","error");
           e.preventDefault();return;
         }
@@ -796,6 +899,12 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         // If search has text, clear it
         if(search){setSearch("");return;}
         // Nothing to go back to
+        return;
+      }
+      // Qualquer tecla digitada sem input focado → foca busca (essencial para o scanner de código de barras)
+      const activeTag=document.activeElement?.tagName;
+      if(!e.ctrlKey&&!e.altKey&&e.key.length===1&&activeTag!=="INPUT"&&activeTag!=="TEXTAREA"&&activeTag!=="SELECT"){
+        if(searchRef.current){searchRef.current.focus();}
         return;
       }
       // F-keys
@@ -1319,10 +1428,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   useEffect(()=>{
     if(!autoFlow)return;
     const t=setTimeout(()=>{
-      if(contentRef.current)contentRef.current.id="receipt-print";
-      window.print(); // bloqueia até o usuário fechar o diálogo
-      if(contentRef.current)contentRef.current.removeAttribute("id");
-      setPhase("troca_prompt");
+      triggerPrint(contentRef,()=>setPhase("troca_prompt"));
     },120);
     return()=>clearTimeout(t);
   },[autoFlow]);
@@ -1331,58 +1437,82 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   useEffect(()=>{
     if(phase!=="troca_prompt")return;
     const handler=(e)=>{
-      if(e.key==="Enter"){e.preventDefault();setPhase("troca");setTimeout(()=>{window.print();onClose();},120);}
+      if(e.key==="Enter"){e.preventDefault();setPhase("troca");setTimeout(()=>{triggerPrint(contentRef,onClose);},120);}
       if(e.key==="Escape"){e.preventDefault();onClose();}
     };
     window.addEventListener("keydown",handler);
     return()=>window.removeEventListener("keydown",handler);
   },[phase,onClose]);
 
-  // Conteúdo cupom venda
+  // estilos térmico 80mm
+  const W={fontFamily:"'Courier New',Courier,monospace",color:"#000",background:"#fff",width:"100%",boxSizing:"border-box",wordBreak:"break-word",fontWeight:700};
+  const HR=()=><div style={{borderTop:"1px dashed #000",margin:"5px 0"}}/>;
+  const HR2=()=><div style={{borderTop:"2px solid #000",margin:"5px 0"}}/>;
+  const Row=({l,r})=><div style={{display:"flex",justifyContent:"space-between",gap:4,padding:"1px 0",fontWeight:700}}><span style={{flex:1,wordBreak:"break-word"}}>{l}</span><span style={{whiteSpace:"nowrap",fontWeight:700}}>{r}</span></div>;
+
+  // Cupom de venda
   const CupomVenda=()=>(
-    <div ref={contentRef} style={{textAlign:"center",padding:24}}>
-      <div style={{fontSize:24,fontWeight:900,letterSpacing:4,background:"linear-gradient(135deg,"+C.gold+",#fff)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>D'BLACK</div>
-      <div style={{fontSize:10,color:C.dim,letterSpacing:3,marginTop:2}}>CUPOM NÃO FISCAL</div>
-      <div style={{margin:"14px 0",borderTop:"1px dashed "+C.brd,borderBottom:"1px dashed "+C.brd,padding:"10px 0"}}>
-        <div style={{fontSize:13,fontWeight:700}}>{sale.cupom}</div>
-        <div style={{fontSize:12,color:C.dim}}>{fmtDate(sale.date)} • {sale.seller}</div>
-        <div style={{fontSize:12,marginTop:4}}>Cliente: {sale.customer}</div>
-      </div>
-      {sale.items.map(function(it,i){return <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"4px 0",borderBottom:"1px solid "+C.brd}}><span>{it.qty}x {it.name}</span><span style={{fontWeight:600}}>{fmt(it.price*it.qty)}</span></div>;})}
-      {sale.discount>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"6px 0",color:C.red}}><span>Desconto{sale.discountLabel?" ("+sale.discountLabel+")":""}</span><span>-{fmt(sale.discount)}</span></div>}
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:18,fontWeight:900,padding:"12px 0",color:C.gold,borderTop:"2px solid "+C.gold}}><span>TOTAL</span><span>{fmt(sale.total)}</span></div>
-      <div style={{fontSize:12,color:C.dim,margin:"6px 0",padding:"6px 0",borderTop:"1px dashed "+C.brd}}>
-        {sale.payments?sale.payments.map(function(p,i){return <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"2px 0"}}><span>{p.method}</span><span style={{fontWeight:600}}>{fmt(p.value)}{p.change>0?" (troco: "+fmt(p.change)+")":""}</span></div>;}):
-        <div>{sale.payment}</div>}
-      </div>
-      <div style={{marginTop:10}}>
-        <svg width="200" height="50" viewBox="0 0 200 50" style={{display:"block",margin:"0 auto"}}>
-          {bars.map(function(w,i){var x=10+i*2.5;return i%2===0?<rect key={i} x={x} y="2" width={Math.max(1,w*1.2)} height="30" fill={C.txt}/>:null;})}
-          <text x="100" y="46" textAnchor="middle" fill={C.dim} fontSize="10" fontFamily="monospace">{sale.cupom}</text>
+    <div ref={contentRef} id="receipt-print" style={{...W,padding:"6px 4px",fontSize:11,lineHeight:1.6}}>
+      <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+      <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>CUPOM NAO FISCAL</div>
+      <div style={{textAlign:"center",fontSize:10}}>{STORES.find(s=>s.id===sale.storeId)?.name||""}</div>
+      <HR/>
+      <Row l={sale.cupom} r={fmtDate(sale.date)} bold/>
+      <Row l={"Vendedor: "+sale.seller} r=""/>
+      <Row l={"Cliente: "+sale.customer} r=""/>
+      <HR/>
+      <div style={{fontWeight:700,fontSize:10}}>ITENS</div>
+      {sale.items.map(function(it,i){return <div key={i} style={{padding:"1px 0"}}>
+        <div style={{fontSize:10}}>{it.qty}x {it.name}</div>
+        <Row l={"  "+it.qty+" x "+fmt(it.price)} r={fmt(it.price*it.qty)}/>
+      </div>;})}
+      <HR/>
+      {sale.discount>0&&<><Row l="Subtotal" r={fmt((sale.subtotal||0)+(sale.discount||0))}/><Row l={"Desconto"+(sale.discountLabel?" ("+sale.discountLabel+")":"")} r={"-"+fmt(sale.discount)} bold/></>}
+      <HR2/>
+      <Row l="TOTAL" r={fmt(sale.total)} bold/>
+      <HR/>
+      <div style={{fontWeight:700,fontSize:10}}>PAGAMENTO</div>
+      {sale.payments&&sale.payments.length>0
+        ?sale.payments.map(function(p,i){return <Row key={i} l={p.method} r={fmt(p.value)+(p.change>0?" troco:"+fmt(p.change):"")}/>;})
+        :<Row l={sale.payment} r={fmt(sale.total)}/>}
+      <HR/>
+      <div style={{textAlign:"center",margin:"4px 0"}}>
+        <svg width="190" height="40" viewBox="0 0 190 40" style={{display:"block",margin:"0 auto",maxWidth:"100%"}}>
+          {bars.map(function(w,i){var x=5+i*2.6;return i%2===0?<rect key={i} x={x} y="0" width={Math.max(1.2,w*1.3)} height="30" fill="#000"/>:null;})}
+          <text x="95" y="39" textAnchor="middle" fill="#000" fontSize="8" fontFamily="Courier New">{sale.cupom}</text>
         </svg>
       </div>
-      <div style={{fontSize:11,color:C.dim,marginTop:6}}>Obrigado pela preferência!</div>
+      <HR/>
+      <div style={{textAlign:"center",fontSize:11,lineHeight:1.7}}>Obrigado pela preferencia!<br/>Volte sempre - D'Black Store<br/>@d_blackloja</div>
+      <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
     </div>
   );
 
-  // Conteúdo cupom troca
+  // Cupom de troca
   const CupomTroca=()=>(
-    <div ref={contentRef} style={{textAlign:"center",padding:24}}>
-      <div style={{fontSize:24,fontWeight:900,letterSpacing:4,background:"linear-gradient(135deg,"+C.pur+",#fff)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>D'BLACK</div>
-      <div style={{fontSize:10,color:C.pur,letterSpacing:3,marginTop:2,fontWeight:700}}>CUPOM DE TROCA</div>
-      <div style={{fontSize:11,color:C.dim,marginTop:4}}>Válido para troca em qualquer loja D'Black</div>
-      <div style={{margin:"14px 0",borderTop:"1px dashed rgba(224,64,251,.2)",borderBottom:"1px dashed rgba(224,64,251,.2)",padding:"12px 0"}}>
-        {sale.items.map(function(it,i){return <div key={i} style={{fontSize:14,padding:"3px 0",fontWeight:600}}>{it.qty}x {it.name}</div>;})}
-        <div style={{fontSize:12,color:C.dim,marginTop:6}}>{fmtDate(sale.date)}</div>
-      </div>
-      <div style={{margin:"14px 0",padding:14,background:C.s2,borderRadius:12,border:"1px solid rgba(224,64,251,.15)"}}>
-        <div style={{fontSize:11,color:C.dim,marginBottom:6,fontWeight:600}}>CÓDIGO PARA TROCA</div>
-        <svg width="220" height="60" viewBox="0 0 220 60" style={{display:"block",margin:"0 auto"}}>
-          {bars.map(function(w,i){var x=8+i*2.8;return i%2===0?<rect key={i} x={x} y="0" width={Math.max(1.5,w*1.5)} height="40" fill={C.txt}/>:null;})}
-          <text x="110" y="55" textAnchor="middle" fill={C.pur} fontSize="13" fontFamily="monospace" fontWeight="700">{sale.cupom}</text>
+    <div ref={contentRef} id="receipt-print" style={{...W,padding:"6px 4px",fontSize:11,lineHeight:1.6}}>
+      <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+      <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>*** CUPOM DE TROCA ***</div>
+      <div style={{textAlign:"center",fontSize:10}}>{STORES.find(s=>s.id===sale.storeId)?.name||""}</div>
+      <HR/>
+      <Row l={sale.cupom} r={fmtDate(sale.date)} bold/>
+      <Row l={"Cliente: "+(sale.customer||"Avulso")} r=""/>
+      <HR/>
+      <div style={{fontWeight:700,fontSize:10}}>ITENS PARA TROCA</div>
+      {sale.items.map(function(it,i){return <Row key={i} l={it.qty+"x "+it.name} r={fmt(it.price*it.qty)}/>;}) }
+      <HR/>
+      <div style={{textAlign:"center",margin:"4px 0"}}>
+        <svg width="190" height="40" viewBox="0 0 190 40" style={{display:"block",margin:"0 auto",maxWidth:"100%"}}>
+          {bars.map(function(w,i){var x=5+i*2.6;return i%2===0?<rect key={i} x={x} y="0" width={Math.max(1.2,w*1.3)} height="30" fill="#000"/>:null;})}
+          <text x="95" y="39" textAnchor="middle" fill="#000" fontSize="8" fontFamily="Courier New">{sale.cupom}</text>
         </svg>
       </div>
-      <div style={{fontSize:11,color:C.dim,lineHeight:1.6}}>Apresente este cupom para realizar a troca.<br/>Sujeito à disponibilidade de estoque.</div>
+      <HR/>
+      <div style={{textAlign:"center",fontSize:11,lineHeight:1.7}}>Apresente este cupom para realizar<br/>a troca em qualquer loja D'Black.<br/>Sujeito a disponibilidade de estoque.</div>
+      <HR/>
+      <div style={{textAlign:"center",fontSize:11,fontWeight:700,lineHeight:1.7}}>PRAZO PARA TROCAS E DE 7 DIAS.<br/>TROCAS SOMENTE COM A ETIQUETA<br/>FIXADA NA PECA E MEDIANTE<br/>APRESENTACAO DESTE CUPOM!</div>
+      <HR/>
+      <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
     </div>
   );
 
@@ -1425,7 +1555,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             <button autoFocus
               style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${C.pur},#AD1457)`,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
-              onClick={()=>{setPhase("troca");setTimeout(()=>{if(contentRef.current)contentRef.current.id="receipt-print";window.print();if(contentRef.current)contentRef.current.removeAttribute("id");onClose();},120);}}>
+              onClick={()=>{setPhase("troca");setTimeout(()=>{triggerPrint(contentRef,onClose);},120);}}>
               🎁 Imprimir Cupom de Troca <span style={{fontSize:11,opacity:.7,marginLeft:4}}>[Enter]</span>
             </button>
             <button
@@ -1462,7 +1592,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
 
         <div style={{display:"flex",gap:8,padding:"0 24px 12px"}}>
           <button style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid "+C.brd,background:C.s2,color:C.dim,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} onClick={onClose}>Fechar</button>
-          <button style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.gold+","+C.goldD+")",color:C.bg,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:6}} onClick={function(){if(contentRef.current)contentRef.current.id="receipt-print";window.print();if(contentRef.current)contentRef.current.removeAttribute("id");}}>🖨️ Imprimir</button>
+          <button style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.gold+","+C.goldD+")",color:C.bg,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:6}} onClick={function(){triggerPrint(contentRef);}}>🖨️ Imprimir</button>
         </div>
         {/* WhatsApp na reimpressão */}
         {showWaBtn&&<div style={{margin:"0 24px 20px",background:"rgba(37,211,102,.08)",border:"1px solid rgba(37,211,102,.2)",borderRadius:10,padding:"10px 12px"}}>
@@ -3116,13 +3246,36 @@ const CSS = `
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
   button:hover{filter:brightness(1.1)}button:active{transform:scale(.97)}
   @media print {
-    body, html { background: #fff !important; }
-    * { color: #000 !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    nav, aside, header, button, select, input[type="range"], .no-print { display: none !important; }
-    #receipt-print { position: fixed; top: 0; left: 0; width: 100%; background: #fff !important; z-index: 99999; }
-    #receipt-print * { color: #000 !important; }
-    #receipt-print [style*="color: rgb(46, 125, 50)"], #receipt-print [style*="#2E7D32"] { color: #2E7D32 !important; }
-    #receipt-print [style*="color: rgb(198, 40, 40)"], #receipt-print [style*="#C62828"] { color: #C62828 !important; }
+    @page { margin: 0; size: 80mm auto; }
+    html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    body * { visibility: hidden !important; }
+    #receipt-print, #receipt-print * { visibility: visible !important; }
+    #receipt-print {
+      position: absolute !important;
+      top: 0 !important; left: 0 !important;
+      width: 70mm !important; max-width: 70mm !important;
+      padding: 3mm 2mm !important;
+      background: #fff !important;
+      font-family: 'Courier New', Courier, monospace !important;
+      font-size: 9pt !important;
+      line-height: 1.55 !important;
+      color: #000 !important;
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    #receipt-print * {
+      color: #000 !important;
+      background: transparent !important;
+      border-color: #000 !important;
+      font-family: 'Courier New', Courier, monospace !important;
+      font-weight: 700 !important;
+      -webkit-text-fill-color: #000 !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+    #receipt-print svg { max-width: 66mm !important; height: auto !important; }
   }
   @media (max-width: 768px) {
     body { font-size: 13px; }

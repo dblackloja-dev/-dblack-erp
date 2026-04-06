@@ -683,6 +683,70 @@ app.post('/api/investments', async (req, res) => {
 // ═══  START SERVER                       ═══
 // ═══════════════════════════════════════════
 // Health check (sem autenticação)
+// ── QZ Tray: assina requisições de impressão com chave privada ──
+const QZ_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCiEB7ITZpq59ec
+JyjBkfapVTsClOdBp69qid4DwoKKFK3LRI85W6CfuVQBFnFb/8LvnFxsSqKnlJ+K
+qokxCcFxVvd6wwhRQc/6uOsRC7sh8qbpI8UDK7voaVt4ztqZjp27APt2PbbiiKTT
+uuBMlgCaTUGhQNhxpHJMm1KO2qKAh+Ljys0I8d3gGLfgxAat13R51I4+qUa5WD+Y
+QzZ41Opu+pS63M9QTRD7MCUevew74DmVPPrjVw0ftlkvBfI9ReiTKnViOiUzTJxA
+qo2y+B0Gesp319ZwIynvcJAZ5wGBFBkHcFpVnTRnl5CMRojSP+ab5k306+WQMzJu
+xKtQuIt/AgMBAAECggEANhR2CTZoQKN0Hh4tKgcYziHsaqygzRZ1YXJ3PT7zy7sh
+0bJjrurGG3a/Mwu3sVEUTlwZtWNkitJ8OMw2ssAEJtu0AunBRUhWbF63xnzpKeds
+zmDK1geKkYBS72nrpZFjTiuCPk9Sz550jlkOj1ABDHyaWYKnl6ieIbU1JAmOb6Ag
+5A+fST2N/FWGim3I23eeTqAsL4R4rG7r4LRIJxKriC8PMnRkZv3DOAcluIrLElyG
+ko+tGvNHFPp6fmd5DZoBf3hxfjd87fyjJeHRxtDIPBt3V6NN+FB0tCZ7Lg8kY/qi
+qOA8LpP+EC/A5pbEDl+69AxkWwwpnbO0JZO4arjq1QKBgQDMGH1sRSFqIRjqvCZz
+AbTBGzJe6bAE0ivD5yn20DaewYlx0rFK75ocgkgMjg2y7v1gGLlqIlPOCvnWqenB
+G6dJX0/5oeTNZS9yV4opiBcjIwH81PXbe48coqk1BwFjB9r8xMPtBRz680ewnmpZ
+5jkjovXcf9Mx0I1rr6keTL0KLQKBgQDLRx7F7BQG7iZqFU5vug9UiEJ1Aiu8iLrx
+6b26gcNU38abjvWDmcTMSepOMW6ohuwfDwzR4jAzwK0idSrOnst+siFlxxN9hAJz
+EllQkgYWuiLoHRJvaL3gZqz3jnWo1O0P4aU4rneW+cofi9DzKwePQ784r1sl8Lbr
+2EJTjW2T2wKBgQDAWIQ7uZsYLkERWGjUElOLeloqYQpmQLzGT+GYnfob/EHQZ8R2
+3wDaxV2pl2cJr3pTSnnTsK5SjL2QtWl7eNhbqdvxY8YCXM4ucJnhMkS79I42/W0H
+gJcLYbEeLI/+CLU1aytLAXqidwylQ2bveq13DGmxeTZMyEO/rTkxORkfsQKBgBrE
+lMLPYZvABIL3p0qDH72r68RossWy45szgm5q5APrK8YUPzRDLW0RVq9RRxceHT3B
+x5hjxqEqACKHd0maE4XtgwRaALEIjyIECorXj8GyZSJXobPWARrpqmE2+ztuPoFW
+32DlaI4S+pDI4o0C3434B9g5DzGhzxSjd6h0+Tb9AoGBAJ/+bl08OW68cDkRL+4F
+WoMF83+abq2tFjVIjAslZFlxKPiaTazoONTOQFRvzZACZe8CPX+TfZTLwaNif8Sl
+wuixt4g1DiVjaYtsirrEaoj9Hs5/pxSOIZX+GASWwL9HGpI84ud6cfAJau6RwORt
+5QGq8K6l33zJWI2xBJhXAqel
+-----END PRIVATE KEY-----`;
+
+const QZ_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIDCzCCAfOgAwIBAgIURKOCoVnkTVwNuY4WqIeiQ00FYvQwDQYJKoZIhvcNAQEL
+BQAwFTETMBEGA1UEAwwKREJsYWNrIEVSUDAeFw0yNjA0MDYxNjU3MDBaFw0zNjA0
+MDMxNjU3MDBaMBUxEzARBgNVBAMMCkRCbGFjayBFUlAwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQCiEB7ITZpq59ecJyjBkfapVTsClOdBp69qid4DwoKK
+FK3LRI85W6CfuVQBFnFb/8LvnFxsSqKnlJ+KqokxCcFxVvd6wwhRQc/6uOsRC7sh
+8qbpI8UDK7voaVt4ztqZjp27APt2PbbiiKTTuuBMlgCaTUGhQNhxpHJMm1KO2qKA
+h+Ljys0I8d3gGLfgxAat13R51I4+qUa5WD+YQzZ41Opu+pS63M9QTRD7MCUevew7
+4DmVPPrjVw0ftlkvBfI9ReiTKnViOiUzTJxAqo2y+B0Gesp319ZwIynvcJAZ5wGB
+FBkHcFpVnTRnl5CMRojSP+ab5k306+WQMzJuxKtQuIt/AgMBAAGjUzBRMB0GA1Ud
+DgQWBBScfVt6JXhp1mG1iOdXu6ExuGSo7TAfBgNVHSMEGDAWgBScfVt6JXhp1mG1
+iOdXu6ExuGSo7TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAH
+NmkJCztq/9/GBBFNiLOZPuOn3nDtWOpuFSeB3OhyY7rOe+GKjPvSTzmY3Il1FnxR
++1HeO+RaWeVhmRpkckglwXFaD3kNDEO+djLZrGEuQ8JqT8tO0hrHMh4tm0E96/pe
+hYGYd20IW2Z4PcOL9UdFDpRQ1HF2Ht5T9ZZ4dPBll6jjS29Xf6hKO/RcR1tt7TLu
+LSEttkHgQEuEK604NwJ9/uDpnGA2a5vzj6wXKfbC2gqFBkEyWxHAEShVI27ku2UY
+g1+BFOIlRWTVWrmby0c7Qrv7rq9LZWgRtgobVn/X7s7sYvELudHu/TOSjsvNk1ep
+cR8LceoswU8spRqTq2ev
+-----END CERTIFICATE-----`;
+
+app.post('/api/qz-sign', (req, res) => {
+  try {
+    const { data } = req.body;
+    const sign = require('crypto').createSign('SHA512');
+    sign.update(data);
+    const signature = sign.sign(QZ_PRIVATE_KEY, 'base64');
+    res.json({ signature });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qz-cert', (req, res) => {
+  res.type('text/plain').send(QZ_CERTIFICATE);
+});
+
 app.get('/health', async (req, res) => {
   try {
     const { pool } = require('./database');
