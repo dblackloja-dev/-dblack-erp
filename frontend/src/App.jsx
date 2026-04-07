@@ -1444,6 +1444,8 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   function _c39Bars(text){var chars=['*'].concat(text.toUpperCase().replace(/[^0-9A-Z\-]/g,'').split([''])).concat(['*']);var res=[];chars.forEach(function(ch,ci){var pat=_C39[ch];if(!pat)return;pat.split('').forEach(function(b,i){res.push({w:b==='1'?_W:_N,dark:i%2===0});});if(ci<chars.length-1)res.push({w:_N,dark:false});});return res;}
   function C39SVG(props){var brs=_c39Bars(props.text);var h=props.h||32;var xs=[];var x=4;brs.forEach(function(b){xs.push({x:x,w:b.w,dark:b.dark});x+=b.w;});var tw=x+4;return React.createElement('svg',{width:tw,height:h+10,viewBox:'0 0 '+tw+' '+(h+10),style:{display:'block',margin:'0 auto',maxWidth:'100%'}},xs.filter(function(b){return b.dark;}).map(function(b,i){return React.createElement('rect',{key:i,x:b.x,y:0,width:b.w,height:h,fill:'#000'});}),React.createElement('text',{x:tw/2,y:h+9,textAnchor:'middle',fill:'#000',fontSize:'8',fontFamily:'Courier New'},props.text));}
   var barcode=sale.cupom||"CNF-000000";
+  // Calcula subtotal direto dos itens (mais confiável que sale.subtotal)
+  var _itemsTotal=(sale.items||[]).reduce(function(s,i){return s+(i.price||0)*(i.qty||1);},0);
 
   // Auto-print cupom de venda ao abrir (somente no fluxo de venda nova)
   useEffect(()=>{
@@ -1488,7 +1490,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
         <Row l={"  "+it.qty+" x "+fmt(it.price)} r={fmt(it.price*it.qty)}/>
       </div>;})}
       <HR/>
-      {sale.discount>0&&<><Row l="Subtotal" r={fmt(sale.subtotal||0)}/><Row l={"Desconto"+(sale.discountLabel?" ("+sale.discountLabel+")":"")} r={"-"+fmt(sale.discount)} bold/></>}
+      {sale.discount>0&&<><Row l="Subtotal" r={fmt(_itemsTotal)}/><Row l={"Desconto"+(sale.discountLabel?" ("+sale.discountLabel+")":"")} r={"-"+fmt(sale.discount)} bold/></>}
       <HR2/>
       <Row l="TOTAL" r={fmt(sale.total)} bold/>
       <HR/>
