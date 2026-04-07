@@ -2025,10 +2025,11 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const applyCount=()=>{
     const diffs=countData.filter(c=>c.countedQty!==c.systemQty);
     if(diffs.length===0){showToast("Estoque confere! Sem divergências.");setCountData(null);setCountDone(true);return;}
-    setStock(prev=>{const n={...prev};const st={...(n[activeStore]||{})};diffs.forEach(d=>{st[d.productId]=d.countedQty;});n[activeStore]=st;return n;});
+    setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};diffs.forEach(d=>{st[d.productId]=d.countedQty;});n[activeStockId]=st;return n;});
+    const today=new Date().toISOString().split("T")[0];
     diffs.forEach(d=>{
       const diff=d.countedQty-d.systemQty;
-      setMovHistory(prev=>[{id:genId(),date:"2026-04-04",time:new Date().toLocaleTimeString("pt-BR"),type:diff>0?"ajuste_entrada":"ajuste_saida",productId:d.productId,productName:d.productName,qty:Math.abs(diff),reason:"Contagem de estoque (sistema: "+d.systemQty+", contado: "+d.countedQty+")",store:currentStore.name},...prev]);
+      setMovHistory(prev=>[{id:genId(),date:today,time:new Date().toLocaleTimeString("pt-BR"),type:diff>0?"ajuste_entrada":"ajuste_saida",productId:d.productId,productName:d.productName,qty:Math.abs(diff),reason:"Contagem de estoque (sistema: "+d.systemQty+", contado: "+d.countedQty+")",store:currentStore.name},...prev]);
     });
     showToast(diffs.length+" produto(s) ajustados pela contagem!");
     setCountData(null);setCountDone(true);
@@ -3050,7 +3051,7 @@ function CRMModule({customers,setCustomers,storeSales,showToast}){
 // ═══  FINANCEIRO MODULE          ═══
 // ═══════════════════════════════════
 function FinanceiroModule({storeSales,storeProducts,storeExpenses,storeSellers,totalRev,currentStore}){
-  const totalCost=storeSales.reduce((s,sale)=>s+sale.items.reduce((si,it)=>{const p=storeProducts.find(pr=>pr.name===it.name);return si+(p?p.cost*it.qty:0);},0),0);
+  const totalCost=storeSales.reduce((s,sale)=>s+sale.items.reduce((si,it)=>{const p=storeProducts.find(pr=>pr.id===it.id)||storeProducts.find(pr=>pr.name===it.name);return si+(p?p.cost*it.qty:0);},0),0);
   const profit=totalRev-totalCost;const margin=totalRev>0?profit/totalRev*100:0;
   const totalComm=storeSellers.reduce((s,sl)=>s+sl.totalSold*sl.commission/100,0);
   const totalExp=storeExpenses.reduce((s,e)=>s+e.value,0);
