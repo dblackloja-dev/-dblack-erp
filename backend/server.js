@@ -35,6 +35,7 @@ app.use('/uploads', express.static(UPLOAD_DIR));
 // ─── AUTH MIDDLEWARE ───
 const authMiddleware = (req, res, next) => {
   if (req.path === '/auth/login') return next();
+  if (req.path === '/auth/verify') return next();
   if (req.path === '/qz-cert' || req.path === '/qz-sign') return next();
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token necessário' });
@@ -116,6 +117,28 @@ app.post('/api/auth/login', async (req, res) => {
     const { password: _p, pin: _pin, ...safeUser } = user;
     res.json({ ...safeUser, token });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Verifica se uma senha pertence a um usuário com permissão de cancelar
+app.post('/api/auth/verify', async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.json({ authorized: false });
+    const users = await queryAll(`SELECT * FROM users WHERE active = true AND role IN ('admin','gestor','gerente')`);
+    for (const u of users) {
+      let valid = false;
+      if (u.password?.startsWith('$2')) {
+        valid = await bcrypt.compare(password, u.password);
+      } else {
+        valid = u.password === password || u.pin === password;
+      }
+      if (valid) {
+        const { password: _p, pin: _pin, ...safeUser } = u;
+        return res.json({ authorized: true, user: safeUser });
+      }
+    }
+    res.json({ authorized: false });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Retorna o usuário autenticado pelo token
