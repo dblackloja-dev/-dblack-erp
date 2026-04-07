@@ -511,9 +511,10 @@ export default function App() {
   const isSharedStock = sharedStockStores.length > 1;
 
   const storeProducts = catalog.map(p => ({...p, stock: storeStock[p.id] || 0}));
-  const todaySales = storeSales.filter(s => s.date === "2026-04-04");
+  const _todayStr = new Date().toISOString().split("T")[0];
+  const todaySales = storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada");
   const todayRev = todaySales.reduce((s,v) => s + v.total, 0);
-  const totalRev = storeSales.reduce((s,v) => s + v.total, 0);
+  const totalRev = storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0);
   const lowStock = storeProducts.filter(p => p.stock <= p.minStock);
   const storeExchanges = exchanges[activeStore] || [];
   const storeSellers = sellers.filter(s => s.storeId === activeStore);
@@ -601,7 +602,7 @@ export default function App() {
           {tab==="despesas" && <DespesasModule {...{storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast}} />}
 
           {/* VENDAS */}
-          {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast}} />}
+          {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}} />}
 
           {/* CAIXA */}
           {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser}} />}
@@ -687,12 +688,13 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
     const ss = sales[store.id] || [];
     const exps = expenses[store.id] || [];
     const st = stock[store.stockId] || {};
-    const rev = ss.reduce((s,v) => s + v.total, 0);
+    const _today = new Date().toISOString().split("T")[0];
+    const rev = ss.filter(s=>s.status!=="Cancelada").reduce((s,v) => s + v.total, 0);
     const exp = exps.reduce((s,e) => s + e.value, 0);
-    const todayRev = ss.filter(s=>s.date==="2026-04-04").reduce((s,v)=>s+v.total,0);
+    const todayRev = ss.filter(s=>s.date===_today&&s.status!=="Cancelada").reduce((s,v)=>s+v.total,0);
     const pieces = catalog.reduce((s,p) => s + (st[p.id]||0), 0);
     const stockVal = catalog.reduce((s,p) => s + p.cost * (st[p.id]||0), 0);
-    const cash = cashState[store.id];
+    const cash = Object.entries(cashState).filter(([k])=>k.startsWith(store.id+"_")).find(([,v])=>v.open)?.[1] || cashState[store.id];
     const isShared = STORES.filter(s=>s.stockId===store.stockId).length > 1;
     return { ...store, rev, exp, todayRev, salesCount:ss.length, pieces, stockVal, cashOpen:cash?.open, isShared };
   });
@@ -1441,8 +1443,8 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   // ─── Code 39 barcode (padrão real, lido por qualquer scanner) ───
   var _C39={'0':'000110100','1':'100100001','2':'001100001','3':'101100000','4':'000110001','5':'100110000','6':'001110000','7':'000100101','8':'100100100','9':'001100100','A':'100001001','B':'001001001','C':'101001000','D':'000011001','E':'100011000','F':'001011000','G':'000001101','H':'100001100','I':'001001100','J':'000011100','K':'100000011','L':'001000011','M':'101000010','N':'000010011','O':'100010010','P':'001010010','Q':'000000111','R':'100000110','S':'001000110','T':'000010110','U':'110000001','V':'011000001','W':'111000000','X':'010010001','Y':'110010000','Z':'011010000','-':'010000101','*':'010010100'};
   var _N=2,_W=5;
-  function _c39Bars(text){var chars=['*'].concat(text.toUpperCase().replace(/[^0-9A-Z\-]/g,'').split([''])).concat(['*']);var res=[];chars.forEach(function(ch,ci){var pat=_C39[ch];if(!pat)return;pat.split('').forEach(function(b,i){res.push({w:b==='1'?_W:_N,dark:i%2===0});});if(ci<chars.length-1)res.push({w:_N,dark:false});});return res;}
-  function C39SVG(props){var brs=_c39Bars(props.text);var h=props.h||32;var xs=[];var x=4;brs.forEach(function(b){xs.push({x:x,w:b.w,dark:b.dark});x+=b.w;});var tw=x+4;return React.createElement('svg',{width:tw,height:h+10,viewBox:'0 0 '+tw+' '+(h+10),style:{display:'block',margin:'0 auto',maxWidth:'100%'}},xs.filter(function(b){return b.dark;}).map(function(b,i){return React.createElement('rect',{key:i,x:b.x,y:0,width:b.w,height:h,fill:'#000'});}),React.createElement('text',{x:tw/2,y:h+9,textAnchor:'middle',fill:'#000',fontSize:'8',fontFamily:'Courier New'},props.text));}
+  function _c39Bars(text){var chars=['*'].concat(text.toUpperCase().replace(/[^0-9A-Z\-]/g,'').split('')).concat(['*']);var res=[];chars.forEach(function(ch,ci){var pat=_C39[ch];if(!pat)return;pat.split('').forEach(function(b,i){res.push({w:b==='1'?_W:_N,dark:i%2===0});});if(ci<chars.length-1)res.push({w:_N,dark:false});});return res;}
+  function C39SVG({text,h=32}){var brs=_c39Bars(text);var xs=[];var x=4;brs.forEach(function(b){xs.push({x:x,w:b.w,dark:b.dark});x+=b.w;});var tw=x+4;return <svg width={tw} height={h+10} viewBox={'0 0 '+tw+' '+(h+10)} style={{display:'block',margin:'0 auto',maxWidth:'100%'}}>{xs.filter(b=>b.dark).map((b,i)=><rect key={i} x={b.x} y={0} width={b.w} height={h} fill="#000"/>)}<text x={tw/2} y={h+9} textAnchor="middle" fill="#000" fontSize="8" fontFamily="Courier New">{text}</text></svg>;}
   var barcode=sale.cupom||"CNF-000000";
   // Calcula subtotal direto dos itens (mais confiável que sale.subtotal)
   var _itemsTotal=(sale.items||[]).reduce(function(s,i){return s+(i.price||0)*(i.qty||1);},0);
@@ -3533,7 +3535,7 @@ const S = {
 // ═══════════════════════════════════════
 // ═══  VENDAS MODULE                  ═══
 // ═══════════════════════════════════════
-function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast}){
+function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}){
   const todayStr=new Date().toISOString().split("T")[0];
   const [dateFilter,setDateFilter]=useState(todayStr);
   const [search,setSearch]=useState("");
@@ -3565,23 +3567,35 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const totalDesc=ativas.reduce((s,v)=>s+(v.discount||0),0);
   const canceladas=allSales.filter(s=>s.date===dateFilter&&s.status==="Cancelada").length;
 
-  // Cancela venda com autorização
-  const confirmarCancelamento=()=>{
-    const auth=users.find(u=>{
-      const passMatch=(u.password||u.pin)===authPass;
-      const temPermissao=["admin","gestor","gerente"].includes(u.role);
-      return passMatch&&temPermissao&&u.active;
-    });
-    if(!auth){setAuthError("Senha inválida ou usuário sem permissão de cancelar");return;}
-    setSales(prev=>{
-      const n={...prev};
-      n[activeStore]=(n[activeStore]||[]).map(s=>
-        s.id===cancelModal.id?{...s,status:"Cancelada",canceledBy:auth.name,canceledAt:new Date().toLocaleTimeString("pt-BR")}:s
-      );
-      return n;
-    });
-    setCancelModal(null);setAuthPass("");setAuthError("");
-    showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name);
+  // Cancela venda com autorização via backend
+  const confirmarCancelamento=async()=>{
+    try{
+      const r=await fetch('/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:authPass})});
+      const data=await r.json();
+      if(!data.authorized){setAuthError("Senha inválida ou usuário sem permissão de cancelar");return;}
+      const auth=data.user;
+      const canceledAt=new Date().toLocaleTimeString("pt-BR");
+      setSales(prev=>{
+        const n={...prev};
+        n[activeStore]=(n[activeStore]||[]).map(s=>
+          s.id===cancelModal.id?{...s,status:"Cancelada",canceledBy:auth.name,canceledAt}:s
+        );
+        return n;
+      });
+      // Restaura estoque dos itens cancelados
+      if(cancelModal.items?.length){
+        setStock(prev=>{
+          const n={...prev};
+          const sid=getStockId(activeStore);
+          const st={...(n[sid]||{})};
+          cancelModal.items.forEach(item=>{if(item.id)st[item.id]=(st[item.id]||0)+item.qty;});
+          n[sid]=st;return n;
+        });
+      }
+      api.updateSale&&api.updateSale(cancelModal.id,{status:"Cancelada",canceledBy:auth.name,canceledAt}).catch(()=>{});
+      setCancelModal(null);setAuthPass("");setAuthError("");
+      showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name);
+    }catch(e){setAuthError("Erro ao verificar senha. Tente novamente.");}
   };
 
   // Abre modal de alterar pagamento
