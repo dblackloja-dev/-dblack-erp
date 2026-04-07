@@ -506,7 +506,7 @@ export default function App() {
   const storeStock = stock[activeStockId] || {};
   const storeExpenses = expenses[activeStore] || [];
   const cashKey = activeStore + "_" + (loggedUser?.id || "main");
-  const storeCash = cashState[cashKey] || { open:false, initial:500, history:[] };
+  const storeCash = cashState[cashKey] || { open:false, initial:0, history:[] };
   const sharedStockStores = STORES.filter(s=>s.stockId===activeStockId);
   const isSharedStock = sharedStockStores.length > 1;
 
