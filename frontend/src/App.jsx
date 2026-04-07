@@ -2341,7 +2341,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const cashKey = activeStore + "_" + (loggedUser?.id || "main");
   const [openVal,setOpenVal]=useState(()=>storeCash.initial!=null?storeCash.initial:0);
   // Sincroniza openVal quando o caixa fecha ou o saldo muda
-  React.useEffect(()=>{ if(!storeCash.open) setOpenVal(storeCash.initial!=null?storeCash.initial:0); },[storeCash.open,storeCash.initial]);
+  useEffect(()=>{ if(!storeCash.open) setOpenVal(storeCash.initial!=null?storeCash.initial:0); },[storeCash.open,storeCash.initial]);
   const [sangria,setSangria]=useState("");
   const [sangriaDesc,setSangriaDesc]=useState("");
   const [showCloseModal,setShowCloseModal]=useState(false);
