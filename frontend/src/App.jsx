@@ -169,7 +169,7 @@ const INIT_SALES = { loja1:[], loja2:[], loja3:[], loja4:[] };
 
 const INIT_EXPENSES = { loja1:[], loja2:[], loja3:[], loja4:[] };
 
-const INIT_CASH = { loja1:{open:false,initial:500,history:[]}, loja2:{open:false,initial:500,history:[]}, loja3:{open:false,initial:500,history:[]}, loja4:{open:false,initial:500,history:[]} };
+const INIT_CASH = { loja1:{open:false,initial:0,history:[]}, loja2:{open:false,initial:0,history:[]}, loja3:{open:false,initial:0,history:[]}, loja4:{open:false,initial:0,history:[]} };
 
 const INIT_CUSTOMERS = [];
 
@@ -779,7 +779,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale}){
   // ── MULTI-TAB SALES ──
-  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemId:"",payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
+  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
   const [activeTabIdx,setActiveTabIdx]=useState(0);
   const [search,setSearch]=useState("");
@@ -795,7 +795,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const cartDiscount=tab.discount;
   const discountType=tab.discountType;
   const discountScope=tab.discountScope;
-  const discountItemId=tab.discountItemId;
+  const discountItemIds=tab.discountItemIds||[];
   const payments=tab.payments;
   const showPayPanel=tab.showPayPanel;
   const currentMethod=tab.currentMethod;
@@ -810,7 +810,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const setCartDiscount=(v)=>upTab({discount:v});
   const setDiscountType=(v)=>upTab({discountType:v});
   const setDiscountScope=(v)=>upTab({discountScope:v});
-  const setDiscountItemId=(v)=>upTab({discountItemId:v});
+  const toggleDiscountItemId=(id)=>upTab({discountItemIds:discountItemIds.includes(id)?discountItemIds.filter(x=>x!==id):[...discountItemIds,id]});
   const setPayments=(fn)=>{if(typeof fn==="function"){setSaleTabs(prev=>prev.map((t,i)=>i===activeTabIdx?{...t,payments:fn(t.payments)}:t));}else{upTab({payments:fn});}};
   const setShowPayPanel=(v)=>upTab({showPayPanel:typeof v==="function"?v(tab.showPayPanel):v});
   const setCurrentMethod=(v)=>upTab({currentMethod:v});
@@ -938,7 +938,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         case "F6": quickPay("Débito"); break;
         case "F7": finalizeSale(); break;
         case "F8": setCart([]);setPayments([]);setShowPayPanel(false);showToast("Carrinho limpo!"); break;
-        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemId:"",payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
+        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
         case "F10": if(lastReceipt)setReceiptSale(lastReceipt); else showToast("Nenhum cupom anterior","error"); break;
         case "F12": setShowShortcuts(p=>!p); break;
         default: break;
@@ -963,15 +963,17 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         discountValue=cartDiscount;
         discountLabel=fmt(cartDiscount)+" na venda toda";
       }
-    } else if(discountScope==="item"&&discountItemId){
-      var discItem=cart.find(function(i){return i.id===discountItemId;});
-      if(discItem){
+    } else if(discountScope==="item"&&discountItemIds.length>0){
+      var selItems=cart.filter(function(i){return discountItemIds.includes(i.id);});
+      if(selItems.length>0){
+        var selTotal=selItems.reduce(function(s,i){return s+i.price*i.qty;},0);
+        var selNames=selItems.length===1?selItems[0].name:(selItems.length+" produtos");
         if(discountType==="percent"){
-          discountValue=discItem.price*discItem.qty*cartDiscount/100;
-          discountLabel=cartDiscount+"% em "+discItem.name;
+          discountValue=Math.round(selTotal*cartDiscount/100*100)/100;
+          discountLabel=cartDiscount+"% em "+selNames;
         } else {
-          discountValue=Math.min(cartDiscount,discItem.price*discItem.qty);
-          discountLabel=fmt(cartDiscount)+" em "+discItem.name;
+          discountValue=Math.min(cartDiscount,selTotal);
+          discountLabel=fmt(cartDiscount)+" em "+selNames;
         }
       }
     }
@@ -1050,7 +1052,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId }).catch(console.error);
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};cart.forEach(c=>{st[c.id]=Math.max(0,(st[c.id]||0)-c.qty);});n[activeStockId]=st;return n;});
-    setCashState(prev=>{const n={...prev};const cs={...(n[activeStore]||{})};cs.history=[...cs.history,{type:"entrada",value:cartTotal,desc:"Venda "+cupomNum,time:new Date().toLocaleTimeString("pt-BR")}];n[activeStore]=cs;return n;});
+    setCashState(prev=>{const n={...prev};const ck=activeStore+"_"+(loggedUser?.id||"main");const cs={...(n[ck]||{open:false,initial:0,history:[]})};cs.history=[...(cs.history||[]),{type:"entrada",value:cartTotal,desc:"Venda "+cupomNum,time:new Date().toLocaleTimeString("pt-BR")}];n[ck]=cs;return n;});
     setAutoFlow(true);
     setReceiptSale(newSale);
     setLastReceipt(newSale);
@@ -1058,7 +1060,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     if(saleTabs.length>1){
       closeSaleTab(activeTabIdx);
     } else {
-      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemId:"",payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
+      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
     }
     setShowDiscountPanel(false);
     showToast("Venda "+fmt(cartTotal)+" finalizada!");
@@ -1129,8 +1131,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         </div>
         <div style={{flex:1,overflowY:"auto",padding:8}}>
           {cart.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:12}}>🛒 Carrinho vazio</div>:
-          cart.map(item=><div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(discountScope==="item"&&discountItemId===item.id&&discountValue>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>{item.photo?<img src={item.photo} alt={item.name} style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>:<span style={{fontSize:28,lineHeight:1}}>{item.img}</span>}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:600}}>{item.name}</div>{discountScope==="item"&&discountItemId===item.id&&discountValue>0&&<div style={{fontSize:9,color:C.red}}>🏷️ {discountLabel}</div>}</div></div>
+          cart.map(item=><div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(discountScope==="item"&&discountItemIds.includes(item.id)&&discountValue>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>{item.photo?<img src={item.photo} alt={item.name} style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>:<span style={{fontSize:28,lineHeight:1}}>{item.img}</span>}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:600}}>{item.name}</div>{discountScope==="item"&&discountItemIds.includes(item.id)&&discountValue>0&&<div style={{fontSize:9,color:C.red}}>🏷️ {discountLabel}</div>}</div></div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <button style={S.qBtn} onClick={()=>setCart(prev=>prev.map(i=>i.id===item.id?(i.qty>1?{...i,qty:i.qty-1}:null):i).filter(Boolean))}>{I.minus}</button>
               <span style={{fontSize:14,fontWeight:700,minWidth:24,textAlign:"center"}}>{item.qty}</span>
@@ -1163,16 +1165,18 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
 
                 {/* Scope: whole sale or specific item */}
                 <div style={{display:"flex",gap:3,marginBottom:6}}>
-                  <button onClick={()=>{setDiscountScope("sale");setDiscountItemId("");}} style={{flex:1,padding:"5px",borderRadius:6,border:"1px solid "+(discountScope==="sale"?C.gold:C.brd),background:discountScope==="sale"?"rgba(255,215,64,.1)":C.s1,color:discountScope==="sale"?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>Venda toda</button>
-                  <button onClick={()=>setDiscountScope("item")} style={{flex:1,padding:"5px",borderRadius:6,border:"1px solid "+(discountScope==="item"?C.gold:C.brd),background:discountScope==="item"?"rgba(255,215,64,.1)":C.s1,color:discountScope==="item"?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>Um produto</button>
+                  <button onClick={()=>{setDiscountScope("sale");upTab({discountItemIds:[]});}} style={{flex:1,padding:"5px",borderRadius:6,border:"1px solid "+(discountScope==="sale"?C.gold:C.brd),background:discountScope==="sale"?"rgba(255,215,64,.1)":C.s1,color:discountScope==="sale"?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>Venda toda</button>
+                  <button onClick={()=>setDiscountScope("item")} style={{flex:1,padding:"5px",borderRadius:6,border:"1px solid "+(discountScope==="item"?C.gold:C.brd),background:discountScope==="item"?"rgba(255,215,64,.1)":C.s1,color:discountScope==="item"?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>Por produto</button>
                 </div>
 
-                {/* If per item, select which product */}
-                {discountScope==="item"&&cart.length>0&&<div style={{marginBottom:6}}>
-                  <select style={{...S.sel,width:"100%",fontSize:11}} value={discountItemId} onChange={e=>setDiscountItemId(e.target.value)}>
-                    <option value="">Selecione o produto</option>
-                    {cart.map(i=><option key={i.id} value={i.id}>{i.img} {i.name} ({fmt(i.price*i.qty)})</option>)}
-                  </select>
+                {/* Checkboxes para selecionar um ou mais produtos */}
+                {discountScope==="item"&&cart.length>0&&<div style={{marginBottom:6,background:C.s2,borderRadius:8,padding:"6px 8px"}}>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:4,fontWeight:600}}>Selecione os produtos (pode ser mais de um):</div>
+                  {cart.map(i=><label key={i.id} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",cursor:"pointer",borderBottom:`1px solid ${C.brd}`}}>
+                    <input type="checkbox" checked={discountItemIds.includes(i.id)} onChange={()=>toggleDiscountItemId(i.id)} style={{accentColor:C.gold,width:14,height:14,flexShrink:0}}/>
+                    <span style={{fontSize:11,flex:1}}>{i.img} {i.name}</span>
+                    <span style={{fontSize:11,color:C.gold,fontFamily:"monospace"}}>{fmt(i.price*i.qty)}</span>
+                  </label>)}
                 </div>}
 
                 {/* Value input */}
@@ -1188,7 +1192,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                 </div>}
 
                 {/* Clear */}
-                {cartDiscount>0&&<button style={{width:"100%",marginTop:4,padding:"4px",borderRadius:5,border:"none",background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={()=>{setCartDiscount(0);setDiscountItemId("");}}>Remover desconto</button>}
+                {cartDiscount>0&&<button style={{width:"100%",marginTop:4,padding:"4px",borderRadius:5,border:"none",background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={()=>{setCartDiscount(0);upTab({discountItemIds:[]});}}>Remover desconto</button>}
               </div>
             }
           </div>
@@ -2334,7 +2338,9 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
 // ═══════════════════════════════════
 function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser}){
   const cashKey = activeStore + "_" + (loggedUser?.id || "main");
-  const [openVal,setOpenVal]=useState(500);
+  const [openVal,setOpenVal]=useState(()=>storeCash.initial!=null?storeCash.initial:0);
+  // Sincroniza openVal quando o caixa fecha ou o saldo muda
+  React.useEffect(()=>{ if(!storeCash.open) setOpenVal(storeCash.initial!=null?storeCash.initial:0); },[storeCash.open,storeCash.initial]);
   const [sangria,setSangria]=useState("");
   const [sangriaDesc,setSangriaDesc]=useState("");
   const [showCloseModal,setShowCloseModal]=useState(false);
@@ -2384,7 +2390,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const saidas=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
   const saldoSistema=storeCash.open?storeCash.initial+entradas-saidas:0;
 
-  const updateCash=(fn)=>{setCashState(prev=>{const n={...prev};n[cashKey]=fn({...(n[cashKey]||{open:false,initial:500,history:[]})});return n;});};
+  const updateCash=(fn)=>{setCashState(prev=>{const n={...prev};n[cashKey]=fn({...(n[cashKey]||{open:false,initial:0,history:[]})});return n;});};
   const openCash=()=>{updateCash(cs=>({...cs,open:true,initial:openVal,history:[]}));showToast("Caixa aberto com fundo de "+fmt(openVal)+"!");};
   const doSangria=()=>{
     if(!sangria||+sangria<=0)return showToast("Valor inválido","error");
@@ -3159,7 +3165,13 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
     resetFlow();showToast(hasNew?"Troca finalizada!":"Devolução finalizada!");
   };
 
-  const filteredNew=storeProducts.filter(p=>p.stock>0&&(p.name.toLowerCase().includes(newSearch.toLowerCase())||p.sku.toLowerCase().includes(newSearch.toLowerCase())));
+  const filteredNew=storeProducts.filter(p=>
+    !newSearch
+      ? p.stock>0
+      : p.name.toLowerCase().includes(newSearch.toLowerCase())||
+        (p.sku||"").toLowerCase().includes(newSearch.toLowerCase())||
+        (p.ean||"").includes(newSearch)
+  );
   const steps=["Bipar Cupom","Devolver","Novo Item","Finalizar"];
 
   return(
@@ -3243,13 +3255,26 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
               <button style={{...S.qBtn,color:C.red}} onClick={()=>removeNewItem(n.id)}>✕</button>
             </div>)}
           </div>}
-          <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar produto..." value={newSearch} onChange={e=>setNewSearch(e.target.value)} autoFocus/></div>
+          <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU ou bipe o código de barras..." value={newSearch} onChange={e=>setNewSearch(e.target.value)} autoFocus
+            onKeyDown={e=>{
+              if(e.key!=="Enter")return;
+              const q=newSearch.trim();
+              if(!q)return;
+              // Tenta match exato por EAN ou SKU primeiro (scanner de código de barras)
+              const exact=storeProducts.find(p=>(p.ean||"")=== q||(p.sku||"").toLowerCase()===q.toLowerCase());
+              const target=exact||(filteredNew.length===1?filteredNew[0]:null);
+              if(target){
+                if(target.stock>0) addNewItem(target);
+                else showToast("Produto sem estoque!","error");
+                setNewSearch("");
+              }
+            }}/></div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8,marginTop:10,maxHeight:260,overflowY:"auto"}}>
-            {filteredNew.map(p=>{const inCart=newItems.find(n=>n.id===p.id);return <button key={p.id} onClick={()=>addNewItem(p)} style={{background:inCart?"rgba(255,215,64,.08)":C.s2,border:`1px solid ${inCart?C.gold:C.brd}`,borderRadius:10,padding:10,cursor:"pointer",fontFamily:"inherit",color:C.txt,textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+            {filteredNew.map(p=>{const inCart=newItems.find(n=>n.id===p.id);const noStock=p.stock<=0;return <button key={p.id} onClick={()=>!noStock&&addNewItem(p)} style={{background:inCart?"rgba(255,215,64,.08)":noStock?"rgba(255,82,82,.04)":C.s2,border:`1px solid ${inCart?C.gold:noStock?"rgba(255,82,82,.3)":C.brd}`,borderRadius:10,padding:10,cursor:noStock?"not-allowed":"pointer",fontFamily:"inherit",color:noStock?C.dim:C.txt,textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:3,opacity:noStock?.5:1}}>
               <div style={{fontSize:26}}>{p.img}</div>
               <div style={{fontSize:10,fontWeight:600}}>{p.name}</div>
-              <div style={{fontSize:13,fontWeight:800,color:C.gold}}>{fmt(p.price)}</div>
-              {inCart&&<div style={{fontSize:9,color:C.gold,fontWeight:700}}>+{inCart.qty} add.</div>}
+              <div style={{fontSize:13,fontWeight:800,color:noStock?C.red:C.gold}}>{fmt(p.price)}</div>
+              {noStock?<div style={{fontSize:9,color:C.red,fontWeight:700}}>Sem estoque</div>:inCart?<div style={{fontSize:9,color:C.gold,fontWeight:700}}>+{inCart.qty} add.</div>:<div style={{fontSize:9,color:C.dim}}>{p.stock} em estoque</div>}
             </button>;})}
           </div>
         </div>
