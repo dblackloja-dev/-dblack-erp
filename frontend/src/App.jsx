@@ -779,7 +779,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale}){
   // ── MULTI-TAB SALES ──
-  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
+  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
   const [activeTabIdx,setActiveTabIdx]=useState(0);
   const [search,setSearch]=useState("");
@@ -811,6 +811,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const setDiscountType=(v)=>upTab({discountType:v});
   const setDiscountScope=(v)=>upTab({discountScope:v});
   const toggleDiscountItemId=(id)=>upTab({discountItemIds:discountItemIds.includes(id)?discountItemIds.filter(x=>x!==id):[...discountItemIds,id]});
+  const itemDiscounts=tab.itemDiscounts||{};
+  const setItemDiscount=(id,val)=>upTab({itemDiscounts:{...itemDiscounts,[id]:+val}});
   const setPayments=(fn)=>{if(typeof fn==="function"){setSaleTabs(prev=>prev.map((t,i)=>i===activeTabIdx?{...t,payments:fn(t.payments)}:t));}else{upTab({payments:fn});}};
   const setShowPayPanel=(v)=>upTab({showPayPanel:typeof v==="function"?v(tab.showPayPanel):v});
   const setCurrentMethod=(v)=>upTab({currentMethod:v});
@@ -938,7 +940,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         case "F6": quickPay("Débito"); break;
         case "F7": finalizeSale(); break;
         case "F8": setCart([]);setPayments([]);setShowPayPanel(false);showToast("Carrinho limpo!"); break;
-        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
+        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
         case "F10": if(lastReceipt)setReceiptSale(lastReceipt); else showToast("Nenhum cupom anterior","error"); break;
         case "F12": setShowShortcuts(p=>!p); break;
         default: break;
@@ -963,18 +965,19 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         discountValue=cartDiscount;
         discountLabel=fmt(cartDiscount)+" na venda toda";
       }
-    } else if(discountScope==="item"&&discountItemIds.length>0){
-      var selItems=cart.filter(function(i){return discountItemIds.includes(i.id);});
-      if(selItems.length>0){
-        var selTotal=selItems.reduce(function(s,i){return s+i.price*i.qty;},0);
-        var selNames=selItems.length===1?selItems[0].name:(selItems.length+" produtos");
-        if(discountType==="percent"){
-          discountValue=Math.round(selTotal*cartDiscount/100*100)/100;
-          discountLabel=cartDiscount+"% em "+selNames;
-        } else {
-          discountValue=Math.min(cartDiscount,selTotal);
-          discountLabel=fmt(cartDiscount)+" em "+selNames;
-        }
+    } else if(discountScope==="item"){
+      var activeItems=cart.filter(function(i){return (itemDiscounts[i.id]||0)>0;});
+      if(activeItems.length>0){
+        activeItems.forEach(function(i){
+          var val=itemDiscounts[i.id]||0;
+          if(discountType==="percent"){
+            discountValue+=Math.round(i.price*i.qty*val/100*100)/100;
+          } else {
+            discountValue+=Math.min(val,i.price*i.qty);
+          }
+        });
+        var selNames=activeItems.length===1?activeItems[0].name:(activeItems.length+" produtos");
+        discountLabel="desconto em "+selNames;
       }
     }
   }
@@ -1052,7 +1055,6 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId }).catch(console.error);
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};cart.forEach(c=>{st[c.id]=Math.max(0,(st[c.id]||0)-c.qty);});n[activeStockId]=st;return n;});
-    setCashState(prev=>{const n={...prev};const ck=activeStore+"_"+(loggedUser?.id||"main");const cs={...(n[ck]||{open:false,initial:0,history:[]})};cs.history=[...(cs.history||[]),{type:"entrada",value:cartTotal,desc:"Venda "+cupomNum,time:new Date().toLocaleTimeString("pt-BR")}];n[ck]=cs;return n;});
     setAutoFlow(true);
     setReceiptSale(newSale);
     setLastReceipt(newSale);
@@ -1060,7 +1062,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     if(saleTabs.length>1){
       closeSaleTab(activeTabIdx);
     } else {
-      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
+      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
     }
     setShowDiscountPanel(false);
     showToast("Venda "+fmt(cartTotal)+" finalizada!");
@@ -1131,15 +1133,15 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         </div>
         <div style={{flex:1,overflowY:"auto",padding:8}}>
           {cart.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:12}}>🛒 Carrinho vazio</div>:
-          cart.map(item=><div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(discountScope==="item"&&discountItemIds.includes(item.id)&&discountValue>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>{item.photo?<img src={item.photo} alt={item.name} style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>:<span style={{fontSize:28,lineHeight:1}}>{item.img}</span>}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:600}}>{item.name}</div>{discountScope==="item"&&discountItemIds.includes(item.id)&&discountValue>0&&<div style={{fontSize:9,color:C.red}}>🏷️ {discountLabel}</div>}</div></div>
+          cart.map(item=>{const itemDisc=discountScope==="item"&&(itemDiscounts[item.id]||0)>0?(discountType==="percent"?Math.round(item.price*item.qty*(itemDiscounts[item.id]||0)/100*100)/100:Math.min(itemDiscounts[item.id]||0,item.price*item.qty)):0;return <div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(itemDisc>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>{item.photo?<img src={item.photo} alt={item.name} style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>:<span style={{fontSize:28,lineHeight:1}}>{item.img}</span>}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:600}}>{item.name}</div>{itemDisc>0&&<div style={{fontSize:9,color:C.red}}>🏷️ -{fmt(itemDisc)}</div>}</div></div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <button style={S.qBtn} onClick={()=>setCart(prev=>prev.map(i=>i.id===item.id?(i.qty>1?{...i,qty:i.qty-1}:null):i).filter(Boolean))}>{I.minus}</button>
               <span style={{fontSize:14,fontWeight:700,minWidth:24,textAlign:"center"}}>{item.qty}</span>
               <button style={S.qBtn} onClick={()=>setCart(prev=>prev.map(i=>i.id===item.id?{...i,qty:i.qty+1}:i))}>{I.plus}</button>
               <span style={{marginLeft:"auto",fontWeight:700,color:C.gold,fontSize:13}}>{fmt(item.price*item.qty)}</span>
             </div>
-          </div>)}
+          </div>;})}
         </div>
 
         {/* FOOTER - Payment Area */}
@@ -1169,21 +1171,28 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                   <button onClick={()=>setDiscountScope("item")} style={{flex:1,padding:"5px",borderRadius:6,border:"1px solid "+(discountScope==="item"?C.gold:C.brd),background:discountScope==="item"?"rgba(255,215,64,.1)":C.s1,color:discountScope==="item"?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>Por produto</button>
                 </div>
 
-                {/* Checkboxes para selecionar um ou mais produtos */}
+                {/* Por produto: input individual por item */}
                 {discountScope==="item"&&cart.length>0&&<div style={{marginBottom:6,background:C.s2,borderRadius:8,padding:"6px 8px"}}>
-                  <div style={{fontSize:10,color:C.dim,marginBottom:4,fontWeight:600}}>Selecione os produtos (pode ser mais de um):</div>
-                  {cart.map(i=><label key={i.id} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",cursor:"pointer",borderBottom:`1px solid ${C.brd}`}}>
-                    <input type="checkbox" checked={discountItemIds.includes(i.id)} onChange={()=>toggleDiscountItemId(i.id)} style={{accentColor:C.gold,width:14,height:14,flexShrink:0}}/>
-                    <span style={{fontSize:11,flex:1}}>{i.img} {i.name}</span>
-                    <span style={{fontSize:11,color:C.gold,fontFamily:"monospace"}}>{fmt(i.price*i.qty)}</span>
-                  </label>)}
+                  <div style={{fontSize:10,color:C.dim,marginBottom:6,fontWeight:600}}>Desconto por produto ({discountType==="percent"?"%":"R$"}):</div>
+                  {cart.map(i=>{
+                    const val=itemDiscounts[i.id]||"";
+                    const disc=+val>0?(discountType==="percent"?Math.round(i.price*i.qty*+val/100*100)/100:Math.min(+val,i.price*i.qty)):0;
+                    return <div key={i.id} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 0",borderBottom:`1px solid ${C.brd}`}}>
+                      <span style={{flex:1,fontSize:11}}>{i.name}</span>
+                      <span style={{fontSize:10,color:C.dim,fontFamily:"monospace"}}>{fmt(i.price*i.qty)}</span>
+                      <input type="number" placeholder="0" value={val} onChange={e=>setItemDiscount(i.id,e.target.value)}
+                        style={{...S.inp,width:64,padding:"3px 6px",fontSize:12,textAlign:"center"}} min={0}/>
+                      <span style={{fontSize:10,color:C.dim,minWidth:14}}>{discountType==="percent"?"%":"R$"}</span>
+                      {disc>0&&<span style={{fontSize:10,color:C.red,fontFamily:"monospace",minWidth:48}}>-{fmt(disc)}</span>}
+                    </div>;
+                  })}
                 </div>}
 
-                {/* Value input */}
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                {/* Venda toda: input único */}
+                {discountScope==="sale"&&<div style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:13,fontWeight:700,color:C.red}}>{discountType==="percent"?"%":"R$"}</span>
                   <input style={{...S.inp,flex:1,textAlign:"center",fontSize:16,fontWeight:700}} type="number" placeholder={discountType==="percent"?"10":"50"} value={cartDiscount||""} onChange={e=>setCartDiscount(+e.target.value)} min={0} max={discountType==="percent"?100:cartSub}/>
-                </div>
+                </div>}
 
                 {/* Preview */}
                 {discountValue>0&&<div style={{marginTop:6,padding:"6px 8px",background:"rgba(255,82,82,.08)",borderRadius:6,display:"flex",justifyContent:"space-between",fontSize:12}}>
@@ -1192,7 +1201,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                 </div>}
 
                 {/* Clear */}
-                {cartDiscount>0&&<button style={{width:"100%",marginTop:4,padding:"4px",borderRadius:5,border:"none",background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={()=>{setCartDiscount(0);upTab({discountItemIds:[]});}}>Remover desconto</button>}
+                {(cartDiscount>0||Object.values(itemDiscounts).some(v=>v>0))&&<button style={{width:"100%",marginTop:4,padding:"4px",borderRadius:5,border:"none",background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={()=>{setCartDiscount(0);upTab({discountItemIds:[],itemDiscounts:{}});}}>Remover desconto</button>}
               </div>
             }
           </div>
@@ -1621,6 +1630,113 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
             <button style={{padding:"6px 12px",borderRadius:8,border:"none",background:"#25D366",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}} onClick={openWhatsApp}>Enviar</button>
           </div>
         </div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Receipt / Comprovante Caixa, Sangria, Despesa ───
+function ReceiptComprovante({data,onClose}){
+  const contentRef=useRef(null);
+
+  // Auto-print ao abrir (mesmo padrão do ReceiptCupom)
+  useEffect(()=>{
+    const t=setTimeout(()=>{triggerPrint(contentRef);},120);
+    return()=>clearTimeout(t);
+  },[]);
+
+  // Estilos térmico 80mm (mesmo do CupomVenda)
+  const W={fontFamily:"'Courier New',Courier,monospace",color:"#000",background:"#fff",width:"100%",boxSizing:"border-box",wordBreak:"break-word",fontWeight:700};
+  const HR=()=><div style={{borderTop:"1px dashed #000",margin:"5px 0"}}/>;
+  const HR2=()=><div style={{borderTop:"2px solid #000",margin:"5px 0"}}/>;
+  const Row=({l,r})=><div style={{display:"flex",justifyContent:"space-between",gap:4,padding:"1px 0",fontWeight:700}}><span style={{flex:1,wordBreak:"break-word"}}>{l}</span><span style={{whiteSpace:"nowrap",fontWeight:700}}>{r}</span></div>;
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(6px)"}} onClick={onClose}>
+      <div style={{background:C.s1,border:"1px solid "+C.brdH,borderRadius:18,maxWidth:420,width:"92%",maxHeight:"92vh",overflowY:"auto",animation:"fadeIn .3s ease"}} onClick={function(e){e.stopPropagation();}}>
+
+        {/* Conteúdo do cupom */}
+        <div ref={contentRef} id="receipt-print" style={{...W,padding:"6px 4px",fontSize:11,lineHeight:1.6}}>
+
+          {/* ── SANGRIA / SUPRIMENTO ── */}
+          {data.type==="sangria"&&<>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+            <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>COMPROVANTE DE {data.movType==="saida"?"SANGRIA":"SUPRIMENTO"}</div>
+            <div style={{textAlign:"center",fontSize:10}}>{data.store}</div>
+            <HR/>
+            <Row l={"Data: "+data.date} r={"Hora: "+data.time}/>
+            <Row l={"Operador: "+data.operator} r=""/>
+            <HR/>
+            <Row l="Tipo" r={data.movType==="saida"?"Sangria (Retirada)":"Suprimento (Entrada)"}/>
+            <Row l="Descricao" r={data.desc}/>
+            <HR2/>
+            <div style={{textAlign:"center",fontSize:22,fontWeight:900,margin:"8px 0"}}>{data.movType==="saida"?"- ":"+ "}{fmt(data.value)}</div>
+            <HR2/>
+            <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
+          </>}
+
+          {/* ── FECHAMENTO DE CAIXA ── */}
+          {data.type==="fechamento"&&<>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+            <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>FECHAMENTO DE CAIXA</div>
+            <div style={{textAlign:"center",fontSize:10}}>{data.store}</div>
+            <HR/>
+            <Row l={"Data: "+data.date} r={data.report.closedBy}/>
+            <Row l={"Operador: "+data.operator} r=""/>
+            <HR2/>
+            <div style={{fontWeight:700,fontSize:10,letterSpacing:1}}>RESUMO DE VENDAS</div>
+            <Row l="Qtd. vendas" r={String(data.vendas)}/>
+            <Row l="Total faturado" r={fmt(data.totalVendas)}/>
+            <Row l="Total descontos" r={fmt(data.totalDesc)}/>
+            <HR/>
+            {data.history.filter(h=>h.type==="saida").length>0&&<>
+              <div style={{fontWeight:700,fontSize:10,letterSpacing:1}}>SANGRIAS</div>
+              {data.history.filter(h=>h.type==="saida").map((h,i)=><Row key={i} l={h.time+" - "+h.desc} r={"-"+fmt(h.value)}/>)}
+              <Row l="Total sangrias" r={"-"+fmt(data.sangrias)}/>
+              <HR/>
+            </>}
+            {data.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).length>0&&<>
+              <div style={{fontWeight:700,fontSize:10,letterSpacing:1}}>SUPRIMENTOS</div>
+              {data.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).map((h,i)=><Row key={i} l={h.time+" - "+h.desc} r={"+"+fmt(h.value)}/>)}
+              <HR/>
+            </>}
+            <div style={{fontWeight:700,fontSize:10,letterSpacing:1}}>CONFERENCIA POR FORMA PGTO</div>
+            <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:9,borderBottom:"1px solid #000",paddingBottom:2,marginBottom:2}}><span style={{flex:1}}>FORMA</span><span style={{width:50,textAlign:"right"}}>ESPER.</span><span style={{width:50,textAlign:"right"}}>CONT.</span><span style={{width:50,textAlign:"right"}}>DIF.</span></div>
+            {data.groups.map(g=>{const esp=data.report.esperado[g.key];const cnt=data.report.counted[g.key];const d=cnt!==""?(+cnt)-esp:null;const lbl=({dinheiro:"Dinheiro",pix:"PIX",credito:"Credito",debito:"Debito",outros:"Outros"})[g.key];return(esp>0||cnt!=="")&&<div key={g.key} style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:10,padding:"1px 0"}}><span style={{flex:1}}>{lbl}</span><span style={{width:50,textAlign:"right"}}>{fmt(esp)}</span><span style={{width:50,textAlign:"right"}}>{cnt!==""?fmt(+cnt):"--"}</span><span style={{width:50,textAlign:"right"}}>{d!=null?(d>=0?"+":"")+fmt(d):"--"}</span></div>;})}
+            <HR2/>
+            <Row l="ESPERADO" r={fmt(Object.values(data.report.esperado).reduce((s,v)=>s+v,0))}/>
+            <Row l="CONTADO" r={fmt(data.groups.reduce((s,g)=>s+(+data.report.counted[g.key]||0),0))}/>
+            <HR/>
+            <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:14,margin:"4px 0"}}><span>DIFERENCA:</span><span>{data.report.diferenca>=0?"+":""}{fmt(data.report.diferenca)}</span></div>
+            {data.report.diferenca!==0&&<div style={{textAlign:"center",fontWeight:900,fontSize:11}}>{data.report.diferenca>0?"*** SOBRA ***":"*** FALTA ***"}</div>}
+            {data.report.obs&&<><HR/><Row l="Obs" r={data.report.obs}/></>}
+            <HR/>
+            <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
+          </>}
+
+          {/* ── DESPESA ── */}
+          {data.type==="despesa"&&<>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+            <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>COMPROVANTE DE DESPESA</div>
+            <div style={{textAlign:"center",fontSize:10}}>{data.store}</div>
+            <HR/>
+            <Row l={"Data: "+fmtDate(data.date)} r=""/>
+            <HR/>
+            <Row l="Categoria" r={data.category}/>
+            <Row l="Descricao" r={data.description}/>
+            <Row l="Tipo" r={data.recurring?"Despesa Fixa":"Despesa Variavel"}/>
+            <HR2/>
+            <div style={{textAlign:"center",fontSize:22,fontWeight:900,margin:"8px 0"}}>{fmt(data.value)}</div>
+            <HR2/>
+            <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
+          </>}
+        </div>
+
+        {/* Botões (mesmo padrão do ReceiptCupom) */}
+        <div style={{display:"flex",gap:8,padding:"0 24px 12px"}}>
+          <button style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid "+C.brd,background:C.s2,color:C.dim,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} onClick={onClose}>Fechar</button>
+          <button style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,"+C.gold+","+C.goldD+")",color:C.bg,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:6}} onClick={function(){triggerPrint(contentRef);}}>🖨️ Imprimir</button>
+        </div>
       </div>
     </div>
   );
@@ -2312,11 +2428,19 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
   const [nd,setNd]=useState({date:"2026-04-04",category:"Aluguel",description:"",value:"",recurring:false});
   const categories=["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Outros"];
   const total=storeExpenses.reduce((s,e)=>s+e.value,0);
+  const [printExpense,setPrintExpense]=useState(null);
+
   const addExp=()=>{
     if(!nd.description||!nd.value)return showToast("Preencha!","error");
-    setExpenses(prev=>{const n={...prev};n[activeStore]=[{...nd,id:genId(),value:+nd.value},...(n[activeStore]||[])];return n;});
+    const newExp={...nd,id:genId(),value:+nd.value};
+    setExpenses(prev=>{const n={...prev};n[activeStore]=[newExp,...(n[activeStore]||[])];return n;});
+    setPrintExpense({type:"despesa",...newExp,store:currentStore.name,date:nd.date});
     setNd({date:"2026-04-04",category:"Aluguel",description:"",value:"",recurring:false});setShowForm(false);showToast("Despesa lançada!");
   };
+
+  // Reimprimir despesa existente
+  const reprintExpense=(e)=>{setPrintExpense({type:"despesa",...e,store:currentStore.name});};
+
   return(
     <div>
       <div style={S.kpiRow}><KPI icon={I.money} label={"Despesas — "+currentStore.name} value={fmt(total)} sub={storeExpenses.length+" lançamentos"} color={C.red}/></div>
@@ -2328,8 +2452,11 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
         <input style={S.inp} type="number" placeholder="Valor R$" value={nd.value} onChange={e=>setNd(d=>({...d,value:e.target.value}))}/>
         <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.dim,cursor:"pointer"}}><input type="checkbox" checked={nd.recurring} onChange={e=>setNd(d=>({...d,recurring:e.target.checked}))} style={{accentColor:C.gold}}/>Fixa</label>
       </div><div style={S.formAct}><button style={S.secBtn} onClick={()=>setShowForm(false)}>Cancelar</button><button style={S.primBtn} onClick={addExp}>Lançar</button></div></div>}
-      <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Categoria</th><th style={S.th}>Descrição</th><th style={S.th}>Valor</th><th style={S.th}>Tipo</th></tr></thead>
-      <tbody>{storeExpenses.map(e=><tr key={e.id} style={S.tr}><td style={S.td}>{fmtDate(e.date)}</td><td style={S.td}><span style={S.payBadge}>{e.category}</span></td><td style={S.td}>{e.description}</td><td style={{...S.td,fontWeight:700,color:C.red}}>{fmt(e.value)}</td><td style={S.td}>{e.recurring?<span style={{...S.stBadge,...S.stLow}}>Fixa</span>:<span style={{...S.stBadge,...S.stOk}}>Variável</span>}</td></tr>)}</tbody></table></div>
+      <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Categoria</th><th style={S.th}>Descrição</th><th style={S.th}>Valor</th><th style={S.th}>Tipo</th><th style={S.th}></th></tr></thead>
+      <tbody>{storeExpenses.map(e=><tr key={e.id} style={S.tr}><td style={S.td}>{fmtDate(e.date)}</td><td style={S.td}><span style={S.payBadge}>{e.category}</span></td><td style={S.td}>{e.description}</td><td style={{...S.td,fontWeight:700,color:C.red}}>{fmt(e.value)}</td><td style={S.td}>{e.recurring?<span style={{...S.stBadge,...S.stLow}}>Fixa</span>:<span style={{...S.stBadge,...S.stOk}}>Variável</span>}</td><td style={S.td}><button style={S.smBtn} onClick={()=>reprintExpense(e)} title="Imprimir comprovante">{I.printer}</button></td></tr>)}</tbody></table></div>
+
+      {/* ── COMPROVANTE DESPESA ── */}
+      {printExpense&&<ReceiptComprovante data={printExpense} onClose={()=>setPrintExpense(null)}/>}
     </div>
   );
 }
@@ -2344,8 +2471,10 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   useEffect(()=>{ if(!storeCash.open) setOpenVal(storeCash.initial!=null?storeCash.initial:0); },[storeCash.open,storeCash.initial]);
   const [sangria,setSangria]=useState("");
   const [sangriaDesc,setSangriaDesc]=useState("");
+  const [sangriaType,setSangriaType]=useState("saida");
   const [showCloseModal,setShowCloseModal]=useState(false);
   const [closeObs,setCloseObs]=useState("");
+  const [printData,setPrintData]=useState(null);
 
   // Grupos de formas de pagamento para o fechamento
   const PAY_GROUPS=[
@@ -2374,10 +2503,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
         if(groupKey===g.key)total+=+p.value||0;
       });
     });
-    // Para dinheiro: soma também o fundo inicial, desconta sangrias
+    // Para dinheiro: soma fundo inicial e suprimentos, desconta sangrias
     if(g.key==="dinheiro"){
       total+=storeCash.initial||0;
+      const suprimentos=storeCash.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).reduce((s,h)=>s+h.value,0);
       const sangrias=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
+      total+=suprimentos;
       total-=sangrias;
     }
     return [g.key,total];
@@ -2387,28 +2518,34 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const totalContado=PAY_GROUPS.reduce((s,g)=>s+(+counted[g.key]||0),0);
   const diferenca=totalContado-totalEsperado;
 
-  const entradas=storeCash.history.filter(h=>h.type==="entrada").reduce((s,h)=>s+h.value,0);
   const saidas=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
-  const saldoSistema=storeCash.open?storeCash.initial+entradas-saidas:0;
+  // saldoSistema = dinheiro esperado no caixa físico (inicial + vendas dinheiro + suprimentos - sangrias)
+  const saldoSistema=storeCash.open?esperado["dinheiro"]:0;
 
   const updateCash=(fn)=>{setCashState(prev=>{const n={...prev};n[cashKey]=fn({...(n[cashKey]||{open:false,initial:0,history:[]})});return n;});};
   const openCash=()=>{updateCash(cs=>({...cs,open:true,initial:openVal,history:[]}));showToast("Caixa aberto com fundo de "+fmt(openVal)+"!");};
   const doSangria=()=>{
     if(!sangria||+sangria<=0)return showToast("Valor inválido","error");
-    updateCash(cs=>({...cs,history:[...cs.history,{type:"saida",value:+sangria,desc:sangriaDesc||"Sangria",time:new Date().toLocaleTimeString("pt-BR")}]}));
-    setSangria("");setSangriaDesc("");showToast("Sangria registrada!");
+    const label=sangriaType==="saida"?"Sangria":"Suprimento";
+    const mov={type:sangriaType,value:+sangria,desc:sangriaDesc||label,time:new Date().toLocaleTimeString("pt-BR")};
+    updateCash(cs=>({...cs,history:[...cs.history,mov]}));
+    setPrintData({type:"sangria",label,movType:sangriaType,value:+sangria,desc:sangriaDesc||label,time:mov.time,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—"});
+    setSangria("");setSangriaDesc("");showToast(label+" registrado!");
   };
 
   const confirmarFechamento=()=>{
-    // Verifica se todos os grupos com valor esperado >0 foram preenchidos
     const faltando=PAY_GROUPS.filter(g=>esperado[g.key]>0&&counted[g.key]==="");
     if(faltando.length>0)return showToast("Preencha: "+faltando.map(g=>g.label).join(", "),"error");
+    const totalVendas=vendas.reduce((s,v)=>s+v.total,0);
+    const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);
+    const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
     updateCash(cs=>({
       ...cs,
       open:false,
       closedAt:new Date().toISOString(),
-      closeReport:{counted,esperado,diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")}
+      closeReport:reportData
     }));
+    setPrintData({type:"fechamento",report:reportData,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—",vendas:vendas.length,totalVendas,totalDesc,groups:PAY_GROUPS,sangrias:saidas,history:storeCash.history});
     setShowCloseModal(false);
     setCounted(initCounted());
     setCloseObs("");
@@ -2453,13 +2590,23 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
       {/* CAIXA ABERTO */}
       {storeCash.open&&<>
         <div style={S.grid2}>
-          {/* Sangria */}
+          {/* Sangria / Suprimento */}
           <div style={S.card}>
             <h3 style={S.cardTitle}>💸 Sangria / Suprimento</h3>
+            <div style={{display:"flex",gap:6,marginBottom:8}}>
+              <button onClick={()=>setSangriaType("saida")}
+                style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${sangriaType==="saida"?C.red:C.brd}`,background:sangriaType==="saida"?"rgba(255,82,82,.12)":"transparent",color:sangriaType==="saida"?C.red:C.dim,fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>
+                ↓ Sangria (retirada)
+              </button>
+              <button onClick={()=>setSangriaType("entrada")}
+                style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${sangriaType==="entrada"?C.grn:C.brd}`,background:sangriaType==="entrada"?"rgba(0,230,118,.12)":"transparent",color:sangriaType==="entrada"?C.grn:C.dim,fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>
+                ↑ Suprimento (entrada)
+              </button>
+            </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               <input style={{...S.inp,width:100}} type="number" placeholder="Valor R$" value={sangria} onChange={e=>setSangria(e.target.value)}/>
-              <input style={{...S.inp,flex:1}} placeholder="Motivo (ex: pagamento fornecedor)" value={sangriaDesc} onChange={e=>setSangriaDesc(e.target.value)}/>
-              <button style={S.primBtn} onClick={doSangria}>Registrar</button>
+              <input style={{...S.inp,flex:1}} placeholder={sangriaType==="saida"?"Motivo (ex: pagamento fornecedor)":"Motivo (ex: reforço de troco)"} value={sangriaDesc} onChange={e=>setSangriaDesc(e.target.value)}/>
+              <button style={{...S.primBtn,background:sangriaType==="saida"?`linear-gradient(135deg,${C.red},#B71C1C)`:`linear-gradient(135deg,${C.grn},#00C853)`}} onClick={doSangria}>Registrar</button>
             </div>
           </div>
           {/* Fechar */}
@@ -2495,7 +2642,15 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
       {showCloseModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",overflowY:"auto",padding:16}}>
         <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:20,width:520,maxWidth:"100%",padding:28}} onClick={e=>e.stopPropagation()}>
           <h3 style={{margin:"0 0 4px",fontSize:18}}>🔒 Fechamento de Caixa</h3>
-          <p style={{fontSize:12,color:C.dim,marginBottom:20}}>Informe o valor contado fisicamente para cada forma de pagamento.</p>
+          <p style={{fontSize:12,color:C.dim,marginBottom:12}}>Informe o valor contado fisicamente para cada forma de pagamento.</p>
+
+          {/* Resumo de vendas do operador */}
+          {(()=>{const totalVendas=vendas.reduce((s,v)=>s+v.total,0);const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);return(
+          <div style={{background:"rgba(0,230,118,.06)",border:"1px solid rgba(0,230,118,.2)",borderRadius:10,padding:"10px 14px",marginBottom:16,display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,textAlign:"center"}}>
+            <div><div style={{fontSize:18,fontWeight:800,color:C.grn}}>{vendas.length}</div><div style={{fontSize:10,color:C.dim}}>vendas no dia</div></div>
+            <div><div style={{fontSize:18,fontWeight:800,color:C.gold}}>{fmt(totalVendas)}</div><div style={{fontSize:10,color:C.dim}}>total faturado</div></div>
+            <div><div style={{fontSize:18,fontWeight:800,color:C.red}}>{fmt(totalDesc)}</div><div style={{fontSize:10,color:C.dim}}>em descontos</div></div>
+          </div>);})()}
 
           {/* Cabeçalho da tabela */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 110px 110px 90px",gap:8,padding:"6px 8px",background:C.s2,borderRadius:8,fontSize:10,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:8}}>
@@ -2551,6 +2706,9 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
           </div>
         </div>
       </div>}
+
+      {/* ── COMPROVANTE CAIXA/SANGRIA ── */}
+      {printData&&<ReceiptComprovante data={printData} onClose={()=>setPrintData(null)}/>}
     </div>
   );
 }
@@ -3101,6 +3259,13 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
   const [newItems,setNewItems]=useState([]);
   const [reason,setReason]=useState("");
   const [newSearch,setNewSearch]=useState("");
+  const [payMethod,setPayMethod]=useState("PIX");
+  const [cashRecTroca,setCashRecTroca]=useState("");
+  // Split de pagamento (2 formas)
+  const [splitMode,setSplitMode]=useState(false);
+  const [pay1,setPay1]=useState({method:"PIX",value:""});
+  const [pay2,setPay2]=useState({method:"Dinheiro",value:""});
+  const [cashRecSplit,setCashRecSplit]=useState("");
 
   const todayStr=new Date().toISOString().split("T")[0];
 
@@ -3144,17 +3309,44 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
   const newValue=newItems.reduce((s,n)=>s+n.price*n.qty,0);
   const diff=newValue-returnValue;
 
-  const resetFlow=()=>{setStep(0);setCupomInput("");setFoundSale(null);setReturnItems([]);setNewItems([]);setReason("");setNewSearch("");};
+  const resetFlow=()=>{setStep(0);setCupomInput("");setFoundSale(null);setReturnItems([]);setNewItems([]);setReason("");setNewSearch("");setPayMethod("PIX");setCashRecTroca("");setSplitMode(false);setPay1({method:"PIX",value:""});setPay2({method:"Dinheiro",value:""});setCashRecSplit("");};
 
   const finalize=()=>{
     if(returnItems.length===0)return showToast("Selecione ao menos uma peça para devolver","error");
     const hasNew=newItems.length>0;
+    if(diff>0&&!splitMode&&!payMethod)return showToast("Selecione a forma de pagamento!","error");
+    if(diff>0&&splitMode){
+      const v1=+pay1.value||0;const v2=+pay2.value||0;
+      if(!pay1.method||!pay2.method)return showToast("Selecione as duas formas de pagamento!","error");
+      const soma=Math.round((v1+v2)*100);const diffCent=Math.round(diff*100);
+      if(soma<diffCent)return showToast("A soma dos valores ("+fmt(v1+v2)+") é menor que a diferença ("+fmt(diff)+")","error");
+    }
+    let trocoTroca=0;let paymentField=null;let paymentsArr=null;
+    if(diff>0){
+      if(splitMode){
+        const v1=+pay1.value||0;const v2=+pay2.value||0;
+        const hasCash=pay1.method==="Dinheiro"||pay2.method==="Dinheiro";
+        trocoTroca=hasCash&&cashRecSplit?Math.max(0,+cashRecSplit-(pay1.method==="Dinheiro"?v1:v2)):0;
+        if(Math.round((v1+v2)*100)>Math.round(diff*100)&&!hasCash){
+          // Se não tem dinheiro mas a soma excede, ajusta o segundo valor
+          const adjusted=Math.round(diff*100-Math.round(v1*100))/100;
+          paymentsArr=[{method:pay1.method,value:v1},{method:pay2.method,value:Math.max(0,adjusted)}];
+        } else {
+          paymentsArr=[{method:pay1.method,value:v1,change:pay1.method==="Dinheiro"?trocoTroca:0},{method:pay2.method,value:v2,change:pay2.method==="Dinheiro"?trocoTroca:0}];
+        }
+        paymentField=pay1.method+"/"+pay2.method;
+      } else {
+        trocoTroca=payMethod==="Dinheiro"&&cashRecTroca?Math.max(0,+cashRecTroca-diff):0;
+        paymentField=payMethod;
+      }
+    }
     const ex={
       id:genId(),date:todayStr,customer:foundSale.customer,
       type:hasNew?"Troca":"Devolução",reason:reason||"-",
       items:returnItems.map(r=>({name:r.name,qty:r.qty,price:r.price,id:r.id})),
       newItems:newItems.map(n=>({name:n.name,qty:n.qty,price:n.price,id:n.id})),
-      difference:diff,cupomOriginal:foundSale.cupom,status:"Concluída"
+      difference:diff,payment:paymentField,payments:paymentsArr,change:trocoTroca||null,
+      cupomOriginal:foundSale.cupom,status:"Concluída"
     };
     setExchanges(prev=>{const n={...prev};n[activeStore]=[ex,...(n[activeStore]||[])];return n;});
     setStock(prev=>{
@@ -3306,6 +3498,82 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
         <div style={{background:C.s2,borderRadius:12,padding:16,textAlign:"center",marginBottom:16,border:`2px solid ${diff>0?C.org:diff<0?"rgba(0,230,118,.3)":C.brd}`}}>
           {newItems.length>0?(<>{diff>0&&<><div style={{fontSize:12,color:C.org,fontWeight:600}}>CLIENTE PAGA</div><div style={{fontSize:32,fontWeight:900,color:C.org}}>{fmt(diff)}</div></>}{diff<0&&<><div style={{fontSize:12,color:C.grn,fontWeight:600}}>TROCO</div><div style={{fontSize:32,fontWeight:900,color:C.grn}}>{fmt(Math.abs(diff))}</div></>}{diff===0&&<div style={{fontSize:28,fontWeight:900,color:C.blu}}>Sem diferença ✓</div>}</>):(<><div style={{fontSize:12,color:C.red,fontWeight:600}}>DEVOLVER AO CLIENTE</div><div style={{fontSize:32,fontWeight:900,color:C.red}}>{fmt(returnValue)}</div></>)}
         </div>
+
+        {diff>0&&<div style={{background:"rgba(255,152,0,.06)",border:"1px solid rgba(255,152,0,.25)",borderRadius:12,padding:16,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.org,letterSpacing:1}}>FORMA DE PAGAMENTO DA DIFERENÇA</div>
+            <button onClick={()=>{setSplitMode(!splitMode);if(!splitMode){setPay1({method:"PIX",value:""});setPay2({method:"Dinheiro",value:""});setCashRecSplit("");}}}
+              style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${splitMode?C.org:C.brd}`,background:splitMode?"rgba(255,152,0,.15)":"transparent",color:splitMode?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>
+              {splitMode?"1 forma":"2 formas"}
+            </button>
+          </div>
+
+          {!splitMode&&<>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:6,marginBottom:10}}>
+              {["PIX","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPayMethod(m)}
+                style={{padding:"8px 4px",borderRadius:8,border:`2px solid ${payMethod===m?C.org:C.brd}`,background:payMethod===m?"rgba(255,152,0,.15)":"transparent",color:payMethod===m?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>
+                {m==="PIX"?"📱":m==="Dinheiro"?"💵":m==="Crédito"?"💳":"💳"} {m}
+              </button>)}
+            </div>
+            {payMethod==="Dinheiro"&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+              <span style={{fontSize:12,color:C.dim}}>Recebido:</span>
+              <input type="number" placeholder={fmt(diff)} value={cashRecTroca} onChange={e=>setCashRecTroca(e.target.value)}
+                style={{...S.inp,width:110,textAlign:"center",fontSize:14,fontWeight:700}}/>
+              {+cashRecTroca>diff&&<span style={{fontSize:13,fontWeight:700,color:C.grn}}>Troco: {fmt(+cashRecTroca-diff)}</span>}
+            </div>}
+          </>}
+
+          {splitMode&&<>
+            {/* Pagamento 1 */}
+            <div style={{background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,borderRadius:10,padding:12,marginBottom:8}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.dim,marginBottom:6}}>PAGAMENTO 1</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:4,marginBottom:8}}>
+                {["PIX","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPay1(p=>({...p,method:m}))}
+                  style={{padding:"6px 2px",borderRadius:6,border:`2px solid ${pay1.method===m?C.org:C.brd}`,background:pay1.method===m?"rgba(255,152,0,.15)":"transparent",color:pay1.method===m?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
+                  {m}
+                </button>)}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11,color:C.dim}}>Valor:</span>
+                <input type="number" placeholder="R$ 0,00" value={pay1.value}
+                  onChange={e=>{const v=e.target.value;setPay1(p=>({...p,value:v}));if(+v>0&&+v<=diff)setPay2(p=>({...p,value:String(Math.round((diff-+v)*100)/100)}));}}
+                  style={{...S.inp,flex:1,textAlign:"center",fontSize:13,fontWeight:700}}/>
+              </div>
+            </div>
+            {/* Pagamento 2 */}
+            <div style={{background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,borderRadius:10,padding:12,marginBottom:8}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.dim,marginBottom:6}}>PAGAMENTO 2</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:4,marginBottom:8}}>
+                {["PIX","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPay2(p=>({...p,method:m}))}
+                  style={{padding:"6px 2px",borderRadius:6,border:`2px solid ${pay2.method===m?C.org:C.brd}`,background:pay2.method===m?"rgba(255,152,0,.15)":"transparent",color:pay2.method===m?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
+                  {m}
+                </button>)}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11,color:C.dim}}>Valor:</span>
+                <input type="number" placeholder="R$ 0,00" value={pay2.value}
+                  onChange={e=>setPay2(p=>({...p,value:e.target.value}))}
+                  style={{...S.inp,flex:1,textAlign:"center",fontSize:13,fontWeight:700}}/>
+              </div>
+            </div>
+            {/* Troco se um dos métodos for Dinheiro */}
+            {(pay1.method==="Dinheiro"||pay2.method==="Dinheiro")&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+              <span style={{fontSize:12,color:C.dim}}>Dinheiro recebido:</span>
+              <input type="number" placeholder={fmt(pay1.method==="Dinheiro"?+pay1.value:+pay2.value)} value={cashRecSplit} onChange={e=>setCashRecSplit(e.target.value)}
+                style={{...S.inp,width:110,textAlign:"center",fontSize:14,fontWeight:700}}/>
+              {+cashRecSplit>(pay1.method==="Dinheiro"?+pay1.value:+pay2.value)&&<span style={{fontSize:13,fontWeight:700,color:C.grn}}>Troco: {fmt(+cashRecSplit-(pay1.method==="Dinheiro"?+pay1.value:+pay2.value))}</span>}
+            </div>}
+            {/* Resumo do split */}
+            {(+pay1.value>0||+pay2.value>0)&&<div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(255,152,0,.08)",fontSize:12,fontWeight:600}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>{pay1.method}:</span><span style={{color:C.org}}>{fmt(+pay1.value||0)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>{pay2.method}:</span><span style={{color:C.org}}>{fmt(+pay2.value||0)}</span></div>
+              <div style={{borderTop:`1px solid ${C.brd}`,marginTop:4,paddingTop:4,display:"flex",justifyContent:"space-between",fontWeight:800}}>
+                <span>Total:</span>
+                <span style={{color:Math.round(((+pay1.value||0)+(+pay2.value||0))*100)>=Math.round(diff*100)?C.grn:C.red}}>{fmt((+pay1.value||0)+(+pay2.value||0))}</span>
+              </div>
+            </div>}
+          </>}
+        </div>}
         <div style={{display:"flex",gap:10}}>
           <button style={{...S.secBtn,flex:1,padding:12}} onClick={()=>setStep(newItems.length>0?2:1)}>← Voltar</button>
           <button style={{...S.finBtn,flex:2}} onClick={finalize}>{I.check} CONFIRMAR</button>
@@ -3527,7 +3795,7 @@ const S = {
   tdM:{fontWeight:700,color:C.grn,fontFamily:"'JetBrains Mono',monospace"},
   // PDV
   pdvCard:{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:10,padding:10,cursor:"pointer",transition:"all .2s",textAlign:"center",fontFamily:"inherit",color:C.txt,display:"flex",flexDirection:"column",alignItems:"center",gap:2},
-  cartPanel:{width:320,maxWidth:"100%",background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,display:"flex",flexDirection:"column",maxHeight:"85vh"},
+  cartPanel:{flex:"0 0 44%",minWidth:320,maxWidth:"100%",background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,display:"flex",flexDirection:"column",maxHeight:"90vh"},
   cartHead:{display:"flex",alignItems:"center",gap:8,padding:"12px 14px",borderBottom:`1px solid ${C.brd}`,color:C.gold},
   cartBadge:{background:C.gold,color:C.bg,fontSize:10,fontWeight:800,width:20,height:20,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",marginLeft:"auto"},
   // Form
@@ -3592,6 +3860,11 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const totalRev=ativas.reduce((s,v)=>s+v.total,0);
   const totalDesc=ativas.reduce((s,v)=>s+(v.discount||0),0);
   const canceladas=allSales.filter(s=>s.date===dateFilter&&s.status==="Cancelada").length;
+
+  // Vendas do operador logado hoje
+  const minhasVendas=allSales.filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?s.sellerId===loggedUser.id:true));
+  const meuTotal=minhasVendas.reduce((s,v)=>s+v.total,0);
+  const meuTicket=minhasVendas.length>0?meuTotal/minhasVendas.length:0;
 
   // Cancela venda com autorização via backend
   const confirmarCancelamento=async()=>{
@@ -3662,6 +3935,27 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
           {showCanceled?"🙈 Ocultar":"👁 Mostrar"} canceladas {canceladas>0&&`(${canceladas})`}
         </button>
       </div>
+
+      {/* ── MINHAS VENDAS HOJE ── */}
+      {dateFilter===todayStr&&<div style={{background:"linear-gradient(135deg,rgba(255,215,64,.08),rgba(255,215,64,.03))",border:`1px solid rgba(255,215,64,.25)`,borderRadius:14,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+        <div style={{fontSize:22,lineHeight:1}}>🧑‍💼</div>
+        <div style={{flex:1,minWidth:160}}>
+          <div style={{fontSize:11,color:C.dim,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:2}}>Minhas vendas hoje</div>
+          <div style={{fontSize:13,color:C.gold,fontWeight:700}}>{loggedUser?.name||"Operador"}</div>
+        </div>
+        <div style={{textAlign:"center",minWidth:80}}>
+          <div style={{fontSize:22,fontWeight:800,color:C.grn}}>{minhasVendas.length}</div>
+          <div style={{fontSize:10,color:C.dim}}>vendas</div>
+        </div>
+        <div style={{textAlign:"center",minWidth:110}}>
+          <div style={{fontSize:22,fontWeight:800,color:C.gold}}>{fmt(meuTotal)}</div>
+          <div style={{fontSize:10,color:C.dim}}>faturamento</div>
+        </div>
+        <div style={{textAlign:"center",minWidth:110}}>
+          <div style={{fontSize:22,fontWeight:800,color:C.blu}}>{meuTicket>0?fmt(meuTicket):"—"}</div>
+          <div style={{fontSize:10,color:C.dim}}>ticket médio</div>
+        </div>
+      </div>}
 
       {/* ── RESUMO DO DIA ── */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:14}}>
