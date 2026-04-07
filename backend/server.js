@@ -739,7 +739,7 @@ app.post('/api/qz-sign', (req, res) => {
     const { data } = req.body;
     // Lê a chave do arquivo para evitar problemas de encoding
     const privateKey = fs.readFileSync(path.join(__dirname, 'qz-private.pem'), 'utf8');
-    const sign = require('crypto').createSign('RSA-SHA512');
+    const sign = require('crypto').createSign('SHA1');
     sign.update(data);
     const signature = sign.sign(privateKey, 'base64');
     res.json({ signature });
