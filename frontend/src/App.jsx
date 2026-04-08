@@ -1459,11 +1459,88 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
     return lines.join("\n");
   };
 
-  const openWhatsApp=()=>{
+  const generateReceiptImage=()=>{
+    return new Promise((resolve)=>{
+      const W=380,PAD=20,LH=18,LHS=15;
+      const storeName=STORES.find(s=>s.id===sale.storeId)?.name||"D'Black Store";
+      const items=sale.items||[];
+      const payments=sale.payments&&sale.payments.length>0?sale.payments:[{method:sale.payment||"",value:sale.total}];
+      // Calcula altura necessária
+      const h=PAD+30+LH+LH+10+LH*3+10+LH+items.length*(LH*2)+10+(sale.discount>0?LH*2:0)+10+LH+10+LH+payments.length*LH+10+LH*4+PAD+40;
+      const canvas=document.createElement("canvas");
+      canvas.width=W;canvas.height=h;
+      const ctx=canvas.getContext("2d");
+      // Fundo branco
+      ctx.fillStyle="#fff";ctx.fillRect(0,0,W,h);
+      ctx.fillStyle="#000";
+      let y=PAD;
+      const center=(text,size,bold)=>{ctx.font=(bold?"bold ":"")+size+"px Arial";ctx.textAlign="center";ctx.fillText(text,W/2,y);y+=size+4;};
+      const row=(l,r,bold)=>{ctx.font=(bold?"bold ":"")+"12px Arial";ctx.textAlign="left";ctx.fillText(l,PAD,y);ctx.textAlign="right";ctx.fillText(r,W-PAD,y);y+=LH;};
+      const line=()=>{ctx.strokeStyle="#000";ctx.lineWidth=0.5;ctx.setLineDash([2,2]);ctx.beginPath();ctx.moveTo(PAD,y);ctx.lineTo(W-PAD,y);ctx.stroke();ctx.setLineDash([]);y+=8;};
+      const lineS=()=>{ctx.strokeStyle="#000";ctx.lineWidth=1.5;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(PAD,y);ctx.lineTo(W-PAD,y);ctx.stroke();y+=8;};
+
+      // Header
+      center("D'BLACK STORE",18,true);
+      center("COMPROVANTE DE VENDA",11,false);
+      center(storeName,10,false);
+      line();
+      // Info
+      row(sale.cupom||"",fmtDate(sale.date),true);
+      row("Vendedor: "+(sale.seller||"-"),"");
+      row("Cliente: "+(sale.customer||"Avulso"),"");
+      line();
+      // Itens
+      ctx.font="bold 11px Arial";ctx.textAlign="left";ctx.fillText("ITENS",PAD,y);y+=LH;
+      items.forEach(it=>{
+        ctx.font="11px Arial";ctx.textAlign="left";ctx.fillText(it.qty+"x "+it.name,PAD,y);y+=LHS;
+        row("  "+it.qty+" x "+fmt(it.price),fmt(it.price*it.qty));
+      });
+      line();
+      // Desconto
+      if(sale.discount>0){
+        row("Subtotal",fmt(_itemsTotal));
+        ctx.fillStyle="#C62828";row("Desconto"+(sale.discountLabel?" ("+sale.discountLabel+")":""),"-"+fmt(sale.discount),true);ctx.fillStyle="#000";
+      }
+      lineS();
+      ctx.font="bold 14px Arial";ctx.textAlign="left";ctx.fillText("TOTAL",PAD,y);ctx.textAlign="right";ctx.fillText(fmt(sale.total),W-PAD,y);y+=LH+4;
+      line();
+      // Pagamento
+      ctx.font="bold 11px Arial";ctx.textAlign="left";ctx.fillText("PAGAMENTO",PAD,y);y+=LH;
+      payments.forEach(p=>{row(p.method,fmt(p.value));});
+      line();
+      // Footer
+      y+=4;
+      center("Obrigado pela preferencia!",11,false);
+      center("Volte sempre - D'Black Store",11,false);
+      center("@d_blackloja",11,true);
+      y+=4;
+      ctx.fillStyle="#888";center(new Date().toLocaleString("pt-BR"),9,false);
+
+      canvas.toBlob(blob=>resolve(blob),"image/png");
+    });
+  };
+
+  const openWhatsApp=async()=>{
     const phone=(waPhone||"").replace(/\D/g,"");
     if(!phone){return;}
-    const msg=encodeURIComponent(buildWaMsg());
-    window.open(`https://wa.me/${phone}?text=${msg}`,"_blank");
+    try{
+      const blob=await generateReceiptImage();
+      const file=new File([blob],"comprovante-dblack-"+sale.cupom+".png",{type:"image/png"});
+      // Tenta Web Share API (funciona no celular)
+      if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+        await navigator.share({files:[file],title:"Comprovante D'Black",text:"Comprovante de venda "+sale.cupom});
+      } else {
+        // Fallback: baixa a imagem e abre WhatsApp com texto
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a");a.href=url;a.download=file.name;a.click();URL.revokeObjectURL(url);
+        const msg=encodeURIComponent(buildWaMsg());
+        window.open(`https://wa.me/${phone}?text=${msg}`,"_blank");
+      }
+    }catch(e){
+      // Fallback final: envia como texto
+      const msg=encodeURIComponent(buildWaMsg());
+      window.open(`https://wa.me/${phone}?text=${msg}`,"_blank");
+    }
   };
 
   // ─── Code 39 barcode (padrão real, lido por qualquer scanner) ───
