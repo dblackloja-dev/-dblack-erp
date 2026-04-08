@@ -109,10 +109,18 @@ const api = {
   getEmployees: () => request('/employees'),
   createEmployee: (data) => request('/employees', { method: 'POST', body: data }),
   updateEmployee: (id, data) => request(`/employees/${id}`, { method: 'PUT', body: data }),
+  deleteEmployee: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
 
   // Payrolls
   getPayrolls: () => request('/payrolls'),
   createPayroll: (data) => request('/payrolls', { method: 'POST', body: data }),
+  updatePayroll: (id, data) => request(`/payrolls/${id}`, { method: 'PUT', body: data }),
+  deletePayroll: (id) => request(`/payrolls/${id}`, { method: 'DELETE' }),
+
+  // Cash Withdrawals (Retiradas)
+  getWithdrawals: (storeId) => request(`/withdrawals${storeId ? `?store_id=${storeId}` : ''}`),
+  createWithdrawal: (data) => request('/withdrawals', { method: 'POST', body: data }),
+  deleteWithdrawal: (id) => request(`/withdrawals/${id}`, { method: 'DELETE' }),
 
   // Sellers
   getSellers: () => request('/sellers'),

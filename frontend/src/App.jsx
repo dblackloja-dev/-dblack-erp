@@ -258,6 +258,7 @@ export default function App() {
     {id:"pay1",month:"2026-03",empId:"emp1",empName:"Ana Beatriz",storeId:"loja1",baseSalary:3200,metaBonus:500,awards:200,overtime:0,storeDiscount:150,advances:0,otherDeductions:0,totalEarnings:3900,totalDeductions:150,netPay:3750,paid:true,paidDate:"2026-04-05",notes:"Bateu meta de março"},
     {id:"pay2",month:"2026-03",empId:"emp2",empName:"Carlos Silva",storeId:"loja1",baseSalary:1800,metaBonus:0,awards:0,overtime:180,storeDiscount:80,advances:200,otherDeductions:0,totalEarnings:1980,totalDeductions:280,netPay:1700,paid:true,paidDate:"2026-04-05",notes:""},
   ]));
+  const [withdrawals, setWithdrawals] = useState(() => ls('withdrawals', []));
 
   // ─── AUTO-SAVE no localStorage ───
   useEffect(() => { lsSave('users', users); }, [users]);
@@ -273,6 +274,7 @@ export default function App() {
   useEffect(() => { lsSave('sellers', sellers); }, [sellers]);
   useEffect(() => { lsSave('employees', employees); }, [employees]);
   useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
+  useEffect(() => { lsSave('withdrawals', withdrawals); }, [withdrawals]);
 
   // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
 
@@ -304,7 +306,8 @@ export default function App() {
       api.getPromos(),
       api.getInvestments(),
       api.getUsers(),
-    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs]) => {
+      api.getWithdrawals(),
+    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs]) => {
       if(prods?.length) setCatalog(prods.map(prodFromApi));
       if(stk&&Object.keys(stk).length) setStock(stk);
       if(sls?.length) setSales(salesFromApi(sls));
@@ -317,6 +320,7 @@ export default function App() {
       if(proms?.length) setPromos(proms.map(promoFromApi));
       if(invs?.length) setInvestments(invs);
       if(usrs?.length) setUsers(usrs);
+      if(wdrs?.length) setWithdrawals(wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})));
     }).catch(e => console.error('Erro ao carregar do servidor:', e))
       .finally(() => setApiLoaded(true));
   }, [loggedUser?.id]);
@@ -605,7 +609,7 @@ export default function App() {
           {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}} />}
 
           {/* CAIXA */}
-          {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser}} />}
+          {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals}} />}
 
           {/* RH / FOLHA */}
           {tab==="rh" && <RHModule {...{employees,setEmployees,payrolls,setPayrolls,showToast}} />}
@@ -2042,6 +2046,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
         <td style={S.td}><div style={{display:"flex",gap:3}}>
           <button style={S.smBtn} onClick={()=>startEdit(p)}>✏️</button>
           <button style={{...S.smBtn,color:p.active?C.red:C.grn}} onClick={()=>toggleProduct(p.id)}>{p.active?"Desativar":"Ativar"}</button>
+          <button style={{...S.smBtn,color:C.red}} onClick={()=>{if(!confirm("Tem certeza que deseja EXCLUIR este produto? Esta ação não pode ser desfeita."))return;setCatalog(prev=>prev.filter(x=>x.id!==p.id));api.deleteProduct(p.id).catch(console.error);showToast("Produto excluído!");}}>🗑️</button>
         </div></td>
       </tr>)}</tbody></table></div>
 
@@ -2464,8 +2469,9 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
 // ═══════════════════════════════════
 // ═══  CAIXA MODULE               ═══
 // ═══════════════════════════════════
-function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser}){
+function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals}){
   const cashKey = activeStore + "_" + (loggedUser?.id || "main");
+  const [caixaTab,setCaixaTab]=useState("operacao"); // operacao, retiradas
   const [openVal,setOpenVal]=useState(()=>storeCash.initial!=null?storeCash.initial:0);
   // Sincroniza openVal quando o caixa fecha ou o saldo muda
   useEffect(()=>{ if(!storeCash.open) setOpenVal(storeCash.initial!=null?storeCash.initial:0); },[storeCash.open,storeCash.initial]);
@@ -2555,8 +2561,71 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   // Último relatório de fechamento
   const lastReport=storeCash.closeReport;
 
+  // ─── Retiradas grandes ───
+  const [wdVal,setWdVal]=useState("");
+  const [wdDesc,setWdDesc]=useState("");
+  const [wdResp,setWdResp]=useState(loggedUser?.name||"");
+  const [wdDest,setWdDest]=useState("");
+  const [wdFilterDate,setWdFilterDate]=useState("");
+
+  const storeWithdrawals=(withdrawals||[]).filter(w=>(w.storeId||w.store_id)===activeStore);
+  const filteredWithdrawals=wdFilterDate?storeWithdrawals.filter(w=>{const d=new Date(w.createdAt||w.created_at).toISOString().split("T")[0];return d===wdFilterDate;}):storeWithdrawals;
+  const totalRetiradas=storeWithdrawals.reduce((s,w)=>s+(+w.value||0),0);
+
+  const registerWithdrawal=()=>{
+    if(!wdVal||+wdVal<=0)return showToast("Informe o valor da retirada!","error");
+    if(!wdDesc)return showToast("Informe o motivo da retirada!","error");
+    const newW={id:genId(),storeId:activeStore,store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp||loggedUser?.name||"",destination:wdDest,createdAt:new Date().toISOString(),created_at:new Date().toISOString()};
+    setWithdrawals(prev=>[newW,...prev]);
+    api.createWithdrawal({store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp,destination:wdDest}).catch(console.error);
+    setWdVal("");setWdDesc("");setWdDest("");
+    showToast("Retirada de "+fmt(+wdVal)+" registrada!");
+  };
+
+  const deleteWithdrawal=(id)=>{
+    if(!confirm("Excluir esta retirada?"))return;
+    setWithdrawals(prev=>prev.filter(w=>w.id!==id));
+    api.deleteWithdrawal(id).catch(console.error);
+    showToast("Retirada excluída!");
+  };
+
+  const printWithdrawalReport=()=>{
+    const data=filteredWithdrawals;
+    const storeName=STORES.find(s=>s.id===activeStore)?.name||"";
+    const total=data.reduce((s,w)=>s+(+w.value||0),0);
+    const w=window.open("","_blank","width=400,height=600");
+    w.document.write(`<html><head><title>Relatório de Retiradas</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#000}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #ccc;padding:6px 8px;font-size:12px;text-align:left}th{background:#f5f5f5;font-weight:700}.total{font-size:16px;font-weight:700;margin-top:12px;text-align:right}h2{margin:0 0 4px}p{margin:2px 0;color:#666;font-size:12px}</style></head><body>`);
+    w.document.write(`<h2>D'BLACK - RELATÓRIO DE RETIRADAS</h2>`);
+    w.document.write(`<p>${storeName}</p>`);
+    w.document.write(`<p>Gerado em: ${new Date().toLocaleString("pt-BR")}</p>`);
+    if(wdFilterDate)w.document.write(`<p>Filtro: ${new Date(wdFilterDate+"T12:00:00").toLocaleDateString("pt-BR")}</p>`);
+    w.document.write(`<table><thead><tr><th>Data/Hora</th><th>Valor</th><th>Motivo</th><th>Responsável</th><th>Destino</th></tr></thead><tbody>`);
+    data.forEach(wd=>{
+      const dt=new Date(wd.createdAt||wd.created_at).toLocaleString("pt-BR");
+      w.document.write(`<tr><td>${dt}</td><td style="font-weight:700;color:#B71C1C">R$ ${(+wd.value).toFixed(2).replace(".",",")}</td><td>${wd.description||"-"}</td><td>${wd.responsible||"-"}</td><td>${wd.destination||"-"}</td></tr>`);
+    });
+    w.document.write(`</tbody></table>`);
+    w.document.write(`<div class="total">Total: R$ ${total.toFixed(2).replace(".",",")}</div>`);
+    w.document.write(`<p style="margin-top:30px;border-top:1px solid #000;padding-top:10px">_________________________<br/>Assinatura do responsável</p>`);
+    w.document.write(`</body></html>`);
+    w.document.close();
+    w.print();
+  };
+
+  const caixaTabs=[
+    {id:"operacao",label:"Operação",icon:"💰"},
+    {id:"retiradas",label:"Retiradas Grandes",icon:"💸"},
+  ];
+
   return(
     <div>
+      {/* Sub-abas do Caixa */}
+      <div style={{display:"flex",gap:4,marginBottom:14,overflowX:"auto",paddingBottom:4}}>
+        {caixaTabs.map(st=><button key={st.id} onClick={()=>setCaixaTab(st.id)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+(caixaTab===st.id?C.gold:C.brd),background:caixaTab===st.id?"rgba(255,215,64,.08)":C.s1,color:caixaTab===st.id?C.gold:C.dim,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"inherit",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{st.icon}</span>{st.label}{st.id==="retiradas"&&storeWithdrawals.length>0?<span style={{background:C.red,color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700,marginLeft:4}}>{storeWithdrawals.length}</span>:null}</button>)}
+      </div>
+
+      {/* ═══ ABA OPERAÇÃO (conteúdo existente) ═══ */}
+      {caixaTab==="operacao"&&<div>
       {/* KPIs */}
       <div style={S.kpiRow}>
         <KPI icon={storeCash.open?I.unlock:I.lock} label="Status" value={storeCash.open?"ABERTO":"FECHADO"} sub="" color={storeCash.open?C.grn:C.red}/>
@@ -2709,6 +2778,70 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
       {/* ── COMPROVANTE CAIXA/SANGRIA ── */}
       {printData&&<ReceiptComprovante data={printData} onClose={()=>setPrintData(null)}/>}
+      </div>}
+
+      {/* ═══ ABA RETIRADAS GRANDES ═══ */}
+      {caixaTab==="retiradas"&&<div>
+        <div style={S.kpiRow}>
+          <KPI icon="💸" label="Total Retiradas" value={fmt(totalRetiradas)} sub={storeWithdrawals.length+" registros"} color={C.red}/>
+          <KPI icon="📋" label="Última Retirada" value={storeWithdrawals.length>0?fmt(+storeWithdrawals[0].value):"-"} sub={storeWithdrawals.length>0?new Date(storeWithdrawals[0].createdAt||storeWithdrawals[0].created_at).toLocaleDateString("pt-BR"):"-"} color={C.gold}/>
+        </div>
+
+        {/* Formulário de nova retirada */}
+        <div style={S.card}>
+          <h3 style={S.cardTitle}>💸 Registrar Retirada Grande</h3>
+          <p style={{fontSize:12,color:C.dim,marginBottom:12}}>Registre retiradas grandes de dinheiro do caixa para controle e verificação.</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Valor R$ *</label><input style={{...S.inp,width:"100%",fontSize:16,fontWeight:700}} type="number" placeholder="0,00" value={wdVal} onChange={e=>setWdVal(e.target.value)}/></div>
+            <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Responsável</label><input style={{...S.inp,width:"100%"}} placeholder="Quem retirou" value={wdResp} onChange={e=>setWdResp(e.target.value)}/></div>
+            <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Motivo da retirada *</label><input style={{...S.inp,width:"100%"}} placeholder="Ex: Pagamento fornecedor, depósito bancário..." value={wdDesc} onChange={e=>setWdDesc(e.target.value)}/></div>
+            <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Destino do dinheiro</label><input style={{...S.inp,width:"100%"}} placeholder="Ex: Banco, cofre, fornecedor X..." value={wdDest} onChange={e=>setWdDest(e.target.value)}/></div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:12}}>
+            <button style={{...S.primBtn,background:`linear-gradient(135deg,${C.red},#B71C1C)`}} onClick={registerWithdrawal}>💸 Registrar Retirada</button>
+          </div>
+        </div>
+
+        {/* Filtro e relatório */}
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:12}}>
+            <h3 style={{...S.cardTitle,margin:0}}>📋 Histórico de Retiradas</h3>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input style={{...S.inp,width:160}} type="date" value={wdFilterDate} onChange={e=>setWdFilterDate(e.target.value)}/>
+              {wdFilterDate&&<button style={S.secBtn} onClick={()=>setWdFilterDate("")}>Limpar filtro</button>}
+              <button style={S.primBtn} onClick={printWithdrawalReport}>🖨️ Imprimir Relatório</button>
+            </div>
+          </div>
+
+          {filteredWithdrawals.length===0
+            ?<div style={{opacity:.4,fontSize:12,textAlign:"center",padding:16}}>Nenhuma retirada registrada{wdFilterDate?" nesta data":""}</div>
+            :<div style={S.tWrap}><table style={S.table}>
+              <thead><tr>
+                <th style={S.th}>Data/Hora</th>
+                <th style={S.th}>Valor</th>
+                <th style={S.th}>Motivo</th>
+                <th style={S.th}>Responsável</th>
+                <th style={S.th}>Destino</th>
+                <th style={S.th}>Ação</th>
+              </tr></thead>
+              <tbody>{filteredWithdrawals.map(w=><tr key={w.id} style={S.tr}>
+                <td style={{...S.td,fontFamily:"monospace",fontSize:11}}>{new Date(w.createdAt||w.created_at).toLocaleString("pt-BR")}</td>
+                <td style={{...S.td,fontWeight:800,color:C.red,fontSize:14}}>{fmt(+w.value)}</td>
+                <td style={S.td}>{w.description||"-"}</td>
+                <td style={S.td}>{w.responsible||"-"}</td>
+                <td style={S.td}>{w.destination||"-"}</td>
+                <td style={S.td}><button style={{...S.smBtn,color:C.red}} onClick={()=>deleteWithdrawal(w.id)}>🗑️</button></td>
+              </tr>)}</tbody>
+            </table></div>
+          }
+
+          {/* Totalizador */}
+          {filteredWithdrawals.length>0&&<div style={{marginTop:12,padding:"12px 16px",background:"rgba(255,82,82,.06)",border:`1px solid rgba(255,82,82,.2)`,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:600,color:C.dim}}>{filteredWithdrawals.length} retirada(s){wdFilterDate?" no dia":""}</span>
+            <span style={{fontSize:18,fontWeight:900,color:C.red}}>{fmt(filteredWithdrawals.reduce((s,w)=>s+(+w.value||0),0))}</span>
+          </div>}
+        </div>
+      </div>}
     </div>
   );
 }
@@ -2730,14 +2863,51 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
   // Payroll form
   const [pay,setPay]=useState({month:"2026-04",empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
 
+  const [editEmpId,setEditEmpId]=useState(null);
+
   const addEmployee=()=>{
     if(!ne.name||!ne.salary)return showToast("Preencha nome e salário!","error");
-    setEmployees(prev=>[...prev,{...ne,id:genId(),salary:+ne.salary,active:true}]);
+    if(editEmpId){
+      const updated={...ne,salary:+ne.salary};
+      setEmployees(prev=>prev.map(e=>e.id===editEmpId?{...e,...updated}:e));
+      api.updateEmployee(editEmpId,{name:ne.name,cpf:ne.cpf,role:ne.role,store_id:ne.storeId,salary:+ne.salary,pix:ne.pix,admission:ne.admission,active:true}).catch(console.error);
+      setEditEmpId(null);setShowEmpForm(false);showToast("Colaborador atualizado!");
+    } else {
+      const newEmp={...ne,id:genId(),salary:+ne.salary,active:true};
+      setEmployees(prev=>[...prev,newEmp]);
+      api.createEmployee({name:ne.name,cpf:ne.cpf,role:ne.role,store_id:ne.storeId,salary:+ne.salary,pix:ne.pix,admission:ne.admission}).catch(console.error);
+      setShowEmpForm(false);showToast("Colaborador cadastrado!");
+    }
     setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:"2026-04-01"});
-    setShowEmpForm(false);showToast("Colaborador cadastrado!");
   };
 
-  const toggleEmployee=(id)=>{setEmployees(prev=>prev.map(e=>e.id===id?{...e,active:!e.active}:e));};
+  const startEditEmp=(emp)=>{
+    setNe({name:emp.name,cpf:emp.cpf||"",role:emp.role,storeId:emp.storeId,salary:String(emp.salary),pix:emp.pix||"",admission:emp.admission||""});
+    setEditEmpId(emp.id);setShowEmpForm(true);
+  };
+
+  const deleteEmployee=(id)=>{
+    if(!confirm("Tem certeza que deseja EXCLUIR este colaborador? Esta ação não pode ser desfeita."))return;
+    setEmployees(prev=>prev.filter(e=>e.id!==id));
+    api.deleteEmployee(id).catch(console.error);
+    showToast("Colaborador excluído!");
+  };
+
+  const toggleEmployee=(id)=>{
+    setEmployees(prev=>prev.map(e=>{
+      if(e.id!==id)return e;
+      const updated={...e,active:!e.active};
+      api.updateEmployee(id,{name:e.name,cpf:e.cpf,role:e.role,store_id:e.storeId,salary:e.salary,pix:e.pix,admission:e.admission,active:!e.active}).catch(console.error);
+      return updated;
+    }));
+  };
+
+  const deletePayroll=(id)=>{
+    if(!confirm("Tem certeza que deseja EXCLUIR este pagamento? Esta ação não pode ser desfeita."))return;
+    setPayrolls(prev=>prev.filter(p=>p.id!==id));
+    api.deletePayroll(id).catch(console.error);
+    showToast("Pagamento excluído!");
+  };
 
   // Select employee for payroll
   const selectEmpForPay=(emp)=>{
@@ -2805,10 +2975,10 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
             {STORES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <div style={{flex:1}}/>
-          <button style={S.primBtn} onClick={()=>setShowEmpForm(!showEmpForm)}>{I.plus} Novo Colaborador</button>
+          <button style={S.primBtn} onClick={()=>{setEditEmpId(null);setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:"2026-04-01"});setShowEmpForm(!showEmpForm);}}>{I.plus} Novo Colaborador</button>
         </div>
 
-        {showEmpForm&&<div style={S.formCard}><h3 style={S.formTitle}>Cadastrar Colaborador</h3><div style={S.formGrid}>
+        {showEmpForm&&<div style={S.formCard}><h3 style={S.formTitle}>{editEmpId?"✏️ Editar Colaborador":"Cadastrar Colaborador"}</h3><div style={S.formGrid}>
           <input style={S.inp} placeholder="Nome completo" value={ne.name} onChange={e=>setNe(n=>({...n,name:e.target.value}))}/>
           <input style={S.inp} placeholder="CPF" value={ne.cpf} onChange={e=>setNe(n=>({...n,cpf:e.target.value}))}/>
           <select style={S.sel} value={ne.role} onChange={e=>setNe(n=>({...n,role:e.target.value}))}>
@@ -2820,7 +2990,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
           <input style={S.inp} type="number" placeholder="Salário base R$" value={ne.salary} onChange={e=>setNe(n=>({...n,salary:e.target.value}))}/>
           <input style={S.inp} placeholder="Chave PIX" value={ne.pix} onChange={e=>setNe(n=>({...n,pix:e.target.value}))}/>
           <input style={S.inp} type="date" value={ne.admission} onChange={e=>setNe(n=>({...n,admission:e.target.value}))}/>
-        </div><div style={S.formAct}><button style={S.secBtn} onClick={()=>setShowEmpForm(false)}>Cancelar</button><button style={S.primBtn} onClick={addEmployee}>Cadastrar</button></div></div>}
+        </div><div style={S.formAct}><button style={S.secBtn} onClick={()=>{setShowEmpForm(false);setEditEmpId(null);}}>Cancelar</button><button style={S.primBtn} onClick={addEmployee}>{editEmpId?"Salvar Alterações":"Cadastrar"}</button></div></div>}
 
         <div style={S.tWrap}><table style={S.table}><thead><tr>
           <th style={S.th}>Nome</th><th style={S.th}>CPF</th><th style={S.th}>Cargo</th><th style={S.th}>Loja</th><th style={S.th}>Salário</th><th style={S.th}>PIX</th><th style={S.th}>Admissão</th><th style={S.th}>Status</th><th style={S.th}>Ação</th>
@@ -2835,7 +3005,11 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
             <td style={{...S.td,fontSize:11,color:C.dim}}>{e.pix||"-"}</td>
             <td style={S.td}>{fmtDate(e.admission)}</td>
             <td style={S.td}><span style={{...S.stBadge,...(e.active?S.stOk:S.stLow)}}>{e.active?"Ativo":"Inativo"}</span></td>
-            <td style={S.td}><button style={S.smBtn} onClick={()=>toggleEmployee(e.id)}>{e.active?"Desativar":"Ativar"}</button></td>
+            <td style={S.td}><div style={{display:"flex",gap:3}}>
+              <button style={S.smBtn} onClick={()=>startEditEmp(e)}>✏️</button>
+              <button style={S.smBtn} onClick={()=>toggleEmployee(e.id)}>{e.active?"Desativar":"Ativar"}</button>
+              <button style={{...S.smBtn,color:C.red}} onClick={()=>deleteEmployee(e.id)}>🗑️</button>
+            </div></td>
           </tr>;
         })}</tbody></table></div>
       </div>}
@@ -2968,7 +3142,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
         <div style={S.card}>
           <h3 style={S.cardTitle}>Todos os Pagamentos</h3>
           <div style={S.tWrap}><table style={S.table}><thead><tr>
-            <th style={S.th}>Mês</th><th style={S.th}>Colaborador</th><th style={S.th}>Loja</th><th style={S.th}>Salário</th><th style={S.th}>Meta</th><th style={S.th}>Prêmios</th><th style={S.th}>H.Extra</th><th style={S.th}>Desc.Loja</th><th style={S.th}>Vales</th><th style={S.th}>Outros</th><th style={S.th}>Líquido</th><th style={S.th}>Obs.</th>
+            <th style={S.th}>Mês</th><th style={S.th}>Colaborador</th><th style={S.th}>Loja</th><th style={S.th}>Salário</th><th style={S.th}>Meta</th><th style={S.th}>Prêmios</th><th style={S.th}>H.Extra</th><th style={S.th}>Desc.Loja</th><th style={S.th}>Vales</th><th style={S.th}>Outros</th><th style={S.th}>Líquido</th><th style={S.th}>Obs.</th><th style={S.th}>Ação</th>
           </tr></thead><tbody>{payrolls.map(p=>{
             const store=STORES.find(s=>s.id===p.storeId);
             return <tr key={p.id} style={S.tr}>
@@ -2984,6 +3158,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
               <td style={{...S.td,color:p.otherDeductions>0?C.red:C.dim}}>{p.otherDeductions>0?"-"+fmt(p.otherDeductions):"-"}</td>
               <td style={{...S.td,fontWeight:800,color:C.gold,fontSize:14}}>{fmt(p.netPay)}</td>
               <td style={{...S.td,fontSize:10,color:C.dim,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}}>{p.notes||"-"}</td>
+              <td style={S.td}><button style={{...S.smBtn,color:C.red}} onClick={()=>deletePayroll(p.id)}>🗑️</button></td>
             </tr>;
           })}</tbody></table></div>
         </div>

@@ -247,6 +247,16 @@ async function initDB() {
       id SERIAL PRIMARY KEY,
       name TEXT UNIQUE NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS cash_withdrawals (
+      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL,
+      value NUMERIC NOT NULL,
+      description TEXT,
+      responsible TEXT,
+      destination TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
   `);
 
   await seedIfEmpty();

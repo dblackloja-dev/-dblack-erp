@@ -541,6 +541,38 @@ app.post('/api/cash/:storeId', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════
+// ═══  CASH WITHDRAWALS (Retiradas)       ═══
+// ═══════════════════════════════════════════
+app.get('/api/withdrawals', async (req, res) => {
+  try {
+    const storeId = req.query.store_id;
+    const withdrawals = storeId
+      ? await queryAll('SELECT * FROM cash_withdrawals WHERE store_id = $1 ORDER BY created_at DESC', [storeId])
+      : await queryAll('SELECT * FROM cash_withdrawals ORDER BY created_at DESC');
+    res.json(withdrawals);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/withdrawals', async (req, res) => {
+  try {
+    const w = req.body;
+    const id = genId();
+    await queryRun(
+      'INSERT INTO cash_withdrawals (id, store_id, value, description, responsible, destination) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, w.store_id, w.value, w.description || '', w.responsible || '', w.destination || '']
+    );
+    res.json({ id, ...w, created_at: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/withdrawals/:id', async (req, res) => {
+  try {
+    await queryRun('DELETE FROM cash_withdrawals WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════
 // ═══  EMPLOYEES                          ═══
 // ═══════════════════════════════════════════
 app.get('/api/employees', async (req, res) => {
@@ -573,6 +605,13 @@ app.put('/api/employees/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/api/employees/:id', async (req, res) => {
+  try {
+    await queryRun('DELETE FROM employees WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════
 // ═══  PAYROLLS                           ═══
 // ═══════════════════════════════════════════
@@ -598,6 +637,30 @@ app.post('/api/payrolls', async (req, res) => {
        p.total_earnings || 0, p.total_deductions || 0, p.net_pay || 0, true, p.paid_date || today(), p.notes || '']
     );
     res.json({ id, ...p });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/payrolls/:id', async (req, res) => {
+  try {
+    const p = req.body;
+    await queryRun(
+      `UPDATE payrolls SET month=$1, emp_name=$2, emp_cpf=$3, emp_role=$4, emp_pix=$5,
+       store_id=$6, store_name=$7, base_salary=$8, meta_bonus=$9, awards=$10, overtime=$11,
+       store_discount=$12, advances=$13, other_deductions=$14,
+       total_earnings=$15, total_deductions=$16, net_pay=$17, notes=$18 WHERE id=$19`,
+      [p.month, p.emp_name || '', p.emp_cpf || '', p.emp_role || '', p.emp_pix || '',
+       p.store_id || '', p.store_name || '', p.base_salary || 0, p.meta_bonus || 0, p.awards || 0,
+       p.overtime || 0, p.store_discount || 0, p.advances || 0, p.other_deductions || 0,
+       p.total_earnings || 0, p.total_deductions || 0, p.net_pay || 0, p.notes || '', req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/payrolls/:id', async (req, res) => {
+  try {
+    await queryRun('DELETE FROM payrolls WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
