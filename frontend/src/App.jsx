@@ -2115,7 +2115,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
     }
     adjustStock(movProduct, movType==="entrada"?qty:-qty);
-    const mov={id:genId(),date:"2026-04-04",time:new Date().toLocaleTimeString("pt-BR"),type:movType,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
+    const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:movType,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
     setMovHistory(prev=>[mov,...prev]);
     showToast((movType==="entrada"?"Entrada":"Saída")+" de "+qty+" un. registrada!");
     setMovProduct("");setMovQty("");setMovReason("");
@@ -2131,7 +2131,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     const destStore=STORES.find(s=>s.id===transTo);
     adjustStock(transProduct,-qty,activeStockId);
     adjustStock(transProduct,qty,getStockId(transTo));
-    const mov={id:genId(),date:"2026-04-04",time:new Date().toLocaleTimeString("pt-BR"),type:"transferencia",productId:transProduct,productName:prod?.name||"",qty,reason:"Transferência para "+destStore?.name,store:currentStore.name,from:currentStore.name,to:destStore?.name};
+    const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"transferencia",productId:transProduct,productName:prod?.name||"",qty,reason:"Transferência para "+destStore?.name,store:currentStore.name,from:currentStore.name,to:destStore?.name};
     setMovHistory(prev=>[mov,...prev]);
     showToast(qty+" un. de "+prod?.name+" transferidos para "+destStore?.name+"!");
     setTransProduct("");setTransQty("");setTransTo("");
@@ -2200,7 +2200,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           <td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>
           <td style={S.td}><span style={{...S.stBadge,...(p.stock<=p.minStock?S.stLow:S.stOk)}}>{p.stock}</span></td>
           <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(p.cost*p.stock)}</td>
-          <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1);setMovHistory(prev=>[{id:genId(),date:"2026-04-04",time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1);setMovHistory(prev=>[{id:genId(),date:"2026-04-04",time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
+          <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1);setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1);setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
         </tr>)}</tbody></table></div>
       </div>}
 
@@ -2430,7 +2430,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
 // ═══════════════════════════════════
 function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast}){
   const [showForm,setShowForm]=useState(false);
-  const [nd,setNd]=useState({date:"2026-04-04",category:"Aluguel",description:"",value:"",recurring:false});
+  const [nd,setNd]=useState({date:new Date().toISOString().split("T")[0],category:"Aluguel",description:"",value:"",recurring:false});
   const categories=["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Outros"];
   const total=storeExpenses.reduce((s,e)=>s+e.value,0);
   const [printExpense,setPrintExpense]=useState(null);
@@ -2440,7 +2440,7 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
     const newExp={...nd,id:genId(),value:+nd.value};
     setExpenses(prev=>{const n={...prev};n[activeStore]=[newExp,...(n[activeStore]||[])];return n;});
     setPrintExpense({type:"despesa",...newExp,store:currentStore.name,date:nd.date});
-    setNd({date:"2026-04-04",category:"Aluguel",description:"",value:"",recurring:false});setShowForm(false);showToast("Despesa lançada!");
+    setNd({date:new Date().toISOString().split("T")[0],category:"Aluguel",description:"",value:"",recurring:false});setShowForm(false);showToast("Despesa lançada!");
   };
 
   // Reimprimir despesa existente
@@ -2858,10 +2858,10 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
   const [receiptData,setReceiptData]=useState(null); // payroll receipt to print
 
   // New employee form
-  const [ne,setNe]=useState({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:"2026-04-01"});
+  const [ne,setNe]=useState({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});
 
   // Payroll form
-  const [pay,setPay]=useState({month:"2026-04",empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
+  const [pay,setPay]=useState({month:new Date().toISOString().slice(0,7),empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
 
   const [editEmpId,setEditEmpId]=useState(null);
 
@@ -2878,7 +2878,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
       api.createEmployee({name:ne.name,cpf:ne.cpf,role:ne.role,store_id:ne.storeId,salary:+ne.salary,pix:ne.pix,admission:ne.admission}).catch(console.error);
       setShowEmpForm(false);showToast("Colaborador cadastrado!");
     }
-    setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:"2026-04-01"});
+    setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});
   };
 
   const startEditEmp=(emp)=>{
@@ -2974,7 +2974,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
             {STORES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <div style={{flex:1}}/>
-          <button style={S.primBtn} onClick={()=>{setEditEmpId(null);setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:"2026-04-01"});setShowEmpForm(!showEmpForm);}}>{I.plus} Novo Colaborador</button>
+          <button style={S.primBtn} onClick={()=>{setEditEmpId(null);setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});setShowEmpForm(!showEmpForm);}}>{I.plus} Novo Colaborador</button>
         </div>
 
         {showEmpForm&&<div style={S.formCard}><h3 style={S.formTitle}>{editEmpId?"✏️ Editar Colaborador":"Cadastrar Colaborador"}</h3><div style={S.formGrid}>
@@ -3884,7 +3884,7 @@ function WhatsAppModule({customers}){
 // ═══════════════════════════════════
 function InvestimentosModule({investments,setInvestments,showToast}){
   const [showForm,setShowForm]=useState(false);
-  const [ni,setNi]=useState({week:"",date:"2026-04-04",value:"",supplier:"",cats:"",notes:""});
+  const [ni,setNi]=useState({week:"",date:new Date().toISOString().split("T")[0],value:"",supplier:"",cats:"",notes:""});
   const addInv=()=>{
     if(!ni.value||!ni.supplier)return showToast("Preencha!","error");
     const wk=ni.week||("Sem. "+fmtDate(ni.date));
