@@ -2930,7 +2930,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
       baseSalary:+pay.baseSalary,metaBonus:+pay.metaBonus||0,awards:+pay.awards||0,overtime:+pay.overtime||0,
       storeDiscount:+pay.storeDiscount||0,advances:+pay.advances||0,otherDeductions:+pay.otherDeductions||0,
       totalEarnings:payEarnings,totalDeductions:payDeductions,netPay:payNet,
-      paid:true,paidDate:"2026-04-04",notes:pay.notes
+      paid:true,paidDate:new Date().toISOString().split("T")[0],notes:pay.notes
     };
     setPayrolls(prev=>[newPay,...prev]);
     setReceiptData(newPay); // Open receipt
