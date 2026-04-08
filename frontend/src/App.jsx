@@ -3164,87 +3164,113 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
         </div>
       </div>}
 
-      {/* ═══ RECIBO DE PAGAMENTO (Print Modal) ═══ */}
+      {/* ═══ RECIBO DE PAGAMENTO (PDF A4 - 2 vias) ═══ */}
       {receiptData&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(6px)"}} onClick={()=>setReceiptData(null)}>
-        <div style={{background:"#fff",color:"#000",width:460,maxWidth:"95%",maxHeight:"95vh",overflowY:"auto",borderRadius:4,fontFamily:"'Outfit',sans-serif"}} onClick={e=>e.stopPropagation()}>
-          {/* Receipt Content */}
-          <div id="receipt-print" style={{padding:"32px 28px"}}>
-            {/* Header */}
-            <div style={{textAlign:"center",marginBottom:20}}>
-              <div style={{fontSize:28,fontWeight:900,letterSpacing:6,color:"#000"}}>D'BLACK</div>
-              <div style={{fontSize:9,letterSpacing:4,color:"#888",marginTop:2}}>RECIBO DE PAGAMENTO</div>
-              <div style={{width:60,height:2,background:"#000",margin:"10px auto"}}/>
-            </div>
+        <div style={{background:"#fff",color:"#000",width:700,maxWidth:"95%",maxHeight:"95vh",overflowY:"auto",borderRadius:8,fontFamily:"'Outfit',sans-serif"}} onClick={e=>e.stopPropagation()}>
 
-            {/* Info grid */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16,fontSize:12}}>
-              <div><span style={{color:"#888",fontSize:10}}>COLABORADOR</span><div style={{fontWeight:700,fontSize:14}}>{receiptData.empName}</div></div>
-              <div style={{textAlign:"right"}}><span style={{color:"#888",fontSize:10}}>CPF</span><div style={{fontWeight:600}}>{receiptData.empCpf||"—"}</div></div>
-              <div><span style={{color:"#888",fontSize:10}}>CARGO</span><div style={{fontWeight:600}}>{receiptData.empRole}</div></div>
-              <div style={{textAlign:"right"}}><span style={{color:"#888",fontSize:10}}>LOJA</span><div style={{fontWeight:600}}>{receiptData.storeName}</div></div>
-              <div><span style={{color:"#888",fontSize:10}}>MÊS REFERÊNCIA</span><div style={{fontWeight:700}}>{receiptData.month}</div></div>
-              <div style={{textAlign:"right"}}><span style={{color:"#888",fontSize:10}}>DATA PAGAMENTO</span><div style={{fontWeight:600}}>{fmtDate(receiptData.paidDate)}</div></div>
-            </div>
-
-            <div style={{borderTop:"2px solid #000",borderBottom:"1px solid #ddd",padding:"12px 0",marginBottom:4}}>
-              <div style={{fontSize:11,fontWeight:800,letterSpacing:2,color:"#000"}}>PROVENTOS</div>
-            </div>
-
-            {/* Proventos rows */}
-            <div style={{fontSize:13}}>
-              <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Salário Base</span><span style={{fontWeight:700}}>{fmt(receiptData.baseSalary)}</span></div>
-              {receiptData.metaBonus>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Bônus por Meta</span><span style={{fontWeight:700,color:"#2E7D32"}}>{fmt(receiptData.metaBonus)}</span></div>}
-              {receiptData.awards>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Premiações</span><span style={{fontWeight:700,color:"#2E7D32"}}>{fmt(receiptData.awards)}</span></div>}
-              {receiptData.overtime>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Horas Extras</span><span style={{fontWeight:700,color:"#2E7D32"}}>{fmt(receiptData.overtime)}</span></div>}
-              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",fontWeight:800,fontSize:14,background:"#f5f5f5",padding:"8px 10px",borderRadius:4,marginTop:4}}><span>Total Proventos</span><span style={{color:"#2E7D32"}}>{fmt(receiptData.totalEarnings)}</span></div>
-            </div>
-
-            {receiptData.totalDeductions>0&&<>
-              <div style={{borderTop:"2px solid #000",borderBottom:"1px solid #ddd",padding:"12px 0",marginBottom:4,marginTop:16}}>
-                <div style={{fontSize:11,fontWeight:800,letterSpacing:2,color:"#000"}}>DESCONTOS</div>
-              </div>
-              <div style={{fontSize:13}}>
-                {receiptData.storeDiscount>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Desconto em Loja</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.storeDiscount)}</span></div>}
-                {receiptData.advances>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Vale / Adiantamento</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.advances)}</span></div>}
-                {receiptData.otherDeductions>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #eee"}}><span>Outros Descontos</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.otherDeductions)}</span></div>}
-                <div style={{display:"flex",justifyContent:"space-between",padding:"8px 10px",fontWeight:800,fontSize:14,background:"#fff5f5",borderRadius:4,marginTop:4}}><span>Total Descontos</span><span style={{color:"#C62828"}}>-{fmt(receiptData.totalDeductions)}</span></div>
-              </div>
-            </>}
-
-            {/* NET PAY */}
-            <div style={{marginTop:20,padding:16,border:"3px solid #000",borderRadius:8,textAlign:"center"}}>
-              <div style={{fontSize:11,fontWeight:800,letterSpacing:3,color:"#888",marginBottom:4}}>VALOR LÍQUIDO</div>
-              <div style={{fontSize:36,fontWeight:900,color:"#000"}}>{fmt(receiptData.netPay)}</div>
-            </div>
-
-            {receiptData.empPix&&<div style={{marginTop:12,fontSize:12,color:"#666",textAlign:"center"}}>
-              Chave PIX: <strong style={{color:"#000"}}>{receiptData.empPix}</strong>
-            </div>}
-
-            {receiptData.notes&&<div style={{marginTop:12,padding:10,background:"#f9f9f9",borderRadius:6,fontSize:12}}>
-              <span style={{color:"#888",fontSize:10}}>Observações:</span>
-              <div style={{marginTop:2}}>{receiptData.notes}</div>
-            </div>}
-
-            {/* Signatures */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:40,marginTop:40}}>
-              <div style={{textAlign:"center"}}>
-                <div style={{borderTop:"1px solid #000",paddingTop:6,fontSize:11,color:"#666"}}>Empregador</div>
-              </div>
-              <div style={{textAlign:"center"}}>
-                <div style={{borderTop:"1px solid #000",paddingTop:6,fontSize:11,color:"#666"}}>Colaborador</div>
-              </div>
-            </div>
-
-            <div style={{textAlign:"center",marginTop:20,fontSize:9,color:"#aaa"}}>
-              D'Black — Recibo gerado em {fmtDate(receiptData.paidDate)} — ID: {receiptData.id}
-            </div>
+          {/* Action buttons (topo) */}
+          <div style={{display:"flex",gap:8,padding:"16px 28px",borderBottom:"1px solid #eee",background:"#f5f5f5",borderRadius:"8px 8px 0 0"}}>
+            <button onClick={()=>setReceiptData(null)} style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid #ddd",background:"#fff",color:"#666",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
+            <button onClick={()=>{
+              const printW=window.open("","_blank","width=800,height=1100");
+              const content=document.getElementById("receipt-pdf-content").innerHTML;
+              printW.document.write(`<html><head><title>Recibo de Pagamento - ${receiptData.empName}</title><style>
+                @page{size:A4;margin:10mm 15mm}
+                *{margin:0;padding:0;box-sizing:border-box}
+                body{font-family:Arial,Helvetica,sans-serif;color:#000;font-size:11px}
+                .via{padding:16px 20px;border:1px solid #000;margin-bottom:12px;page-break-inside:avoid}
+                .via-label{font-size:9px;font-weight:700;letter-spacing:2px;color:#666;text-align:right;margin-bottom:8px}
+                .header{text-align:center;margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid #000}
+                .header h1{font-size:22px;font-weight:900;letter-spacing:4px;margin:0}
+                .header p{font-size:9px;letter-spacing:3px;color:#666;margin-top:2px}
+                .info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;font-size:10px}
+                .info-grid .item span{display:block;font-size:8px;color:#888;text-transform:uppercase;letter-spacing:1px}
+                .info-grid .item strong{font-size:11px}
+                .section-title{font-size:9px;font-weight:800;letter-spacing:2px;padding:6px 0;border-top:1.5px solid #000;border-bottom:1px solid #ddd;margin-top:10px;margin-bottom:4px}
+                .row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee;font-size:11px}
+                .row-total{display:flex;justify-content:space-between;padding:6px 8px;font-weight:800;font-size:12px;background:#f5f5f5;border-radius:3px;margin-top:4px}
+                .row-total.red{background:#fff5f5}
+                .net-box{margin-top:14px;padding:12px;border:2.5px solid #000;border-radius:6px;text-align:center}
+                .net-box .label{font-size:9px;font-weight:800;letter-spacing:3px;color:#888;margin-bottom:2px}
+                .net-box .value{font-size:28px;font-weight:900}
+                .pix{margin-top:8px;font-size:10px;color:#666;text-align:center}
+                .pix strong{color:#000}
+                .obs{margin-top:8px;padding:6px 8px;background:#f9f9f9;border-radius:4px;font-size:10px}
+                .obs span{font-size:8px;color:#888}
+                .signatures{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:30px}
+                .signatures div{text-align:center;border-top:1px solid #000;padding-top:4px;font-size:9px;color:#666}
+                .footer{text-align:center;margin-top:10px;font-size:8px;color:#aaa}
+                .cut-line{border-top:1.5px dashed #999;margin:8px 0;position:relative}
+                .cut-line::after{content:"✂ recorte aqui";position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:#fff;padding:0 8px;font-size:8px;color:#999}
+              </style></head><body>${content}</body></html>`);
+              printW.document.close();
+              printW.focus();
+              setTimeout(()=>printW.print(),300);
+            }} style={{flex:2,padding:"10px",borderRadius:8,border:"none",background:"#000",color:"#FFD740",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",letterSpacing:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🖨️ GERAR PDF / IMPRIMIR</button>
           </div>
 
-          {/* Action buttons (not printed) */}
-          <div style={{display:"flex",gap:8,padding:"16px 28px",borderTop:"1px solid #eee",background:"#f5f5f5"}}>
-            <button onClick={()=>setReceiptData(null)} style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid #ddd",background:"#fff",color:"#666",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
-            <button onClick={()=>{window.print();}} style={{flex:2,padding:"10px",borderRadius:8,border:"none",background:"#000",color:"#FFD740",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",letterSpacing:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>🖨️ IMPRIMIR RECIBO</button>
+          {/* Conteúdo do recibo (2 vias) */}
+          <div id="receipt-pdf-content" style={{padding:"20px 28px"}}>
+            {[{via:"1ª VIA — EMPRESA",idx:0},{via:"2ª VIA — COLABORADOR",idx:1}].map(({via,idx})=><div key={idx} style={{border:"1px solid #000",padding:"16px 20px",marginBottom:idx===0?0:0,...(idx===0?{marginBottom:12}:{})}}>
+              {/* Linha de corte entre as vias */}
+              {idx===1&&<div style={{borderTop:"1.5px dashed #999",margin:"-16px -20px 12px",position:"relative"}}><span style={{position:"absolute",top:-8,left:"50%",transform:"translateX(-50%)",background:"#fff",padding:"0 8px",fontSize:8,color:"#999"}}>✂ recorte aqui</span></div>}
+
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:"#666",textAlign:"right",marginBottom:8}}>{via}</div>
+
+              {/* Header */}
+              <div style={{textAlign:"center",marginBottom:12,paddingBottom:10,borderBottom:"2px solid #000"}}>
+                <div style={{fontSize:22,fontWeight:900,letterSpacing:4}}>D'BLACK</div>
+                <div style={{fontSize:9,letterSpacing:3,color:"#666",marginTop:2}}>RECIBO DE PAGAMENTO</div>
+              </div>
+
+              {/* Info grid */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:12,fontSize:10}}>
+                <div><span style={{fontSize:8,color:"#888",display:"block",letterSpacing:1}}>COLABORADOR</span><strong style={{fontSize:11}}>{receiptData.empName}</strong></div>
+                <div><span style={{fontSize:8,color:"#888",display:"block",letterSpacing:1}}>CPF</span><strong style={{fontSize:11}}>{receiptData.empCpf||"—"}</strong></div>
+                <div><span style={{fontSize:8,color:"#888",display:"block",letterSpacing:1}}>CARGO</span><strong style={{fontSize:11}}>{receiptData.empRole}</strong></div>
+                <div><span style={{fontSize:8,color:"#888",display:"block",letterSpacing:1}}>LOJA</span><strong style={{fontSize:11}}>{receiptData.storeName}</strong></div>
+                <div><span style={{fontSize:8,color:"#888",display:"block",letterSpacing:1}}>MÊS REFERÊNCIA</span><strong style={{fontSize:11}}>{receiptData.month}</strong></div>
+                <div><span style={{fontSize:8,color:"#888",display:"block",letterSpacing:1}}>DATA PAGAMENTO</span><strong style={{fontSize:11}}>{fmtDate(receiptData.paidDate)}</strong></div>
+              </div>
+
+              {/* Proventos */}
+              <div style={{fontSize:9,fontWeight:800,letterSpacing:2,padding:"6px 0",borderTop:"1.5px solid #000",borderBottom:"1px solid #ddd",marginBottom:4}}>PROVENTOS</div>
+              <div style={{fontSize:11}}>
+                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Salário Base</span><span style={{fontWeight:700}}>{fmt(receiptData.baseSalary)}</span></div>
+                {receiptData.metaBonus>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Bônus por Meta</span><span style={{fontWeight:700,color:"#2E7D32"}}>{fmt(receiptData.metaBonus)}</span></div>}
+                {receiptData.awards>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Premiações</span><span style={{fontWeight:700,color:"#2E7D32"}}>{fmt(receiptData.awards)}</span></div>}
+                {receiptData.overtime>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Horas Extras</span><span style={{fontWeight:700,color:"#2E7D32"}}>{fmt(receiptData.overtime)}</span></div>}
+                <div style={{display:"flex",justifyContent:"space-between",padding:"6px 8px",fontWeight:800,fontSize:12,background:"#f5f5f5",borderRadius:3,marginTop:4}}><span>Total Proventos</span><span style={{color:"#2E7D32"}}>{fmt(receiptData.totalEarnings)}</span></div>
+              </div>
+
+              {/* Descontos */}
+              {receiptData.totalDeductions>0&&<>
+                <div style={{fontSize:9,fontWeight:800,letterSpacing:2,padding:"6px 0",borderTop:"1.5px solid #000",borderBottom:"1px solid #ddd",marginTop:10,marginBottom:4}}>DESCONTOS</div>
+                <div style={{fontSize:11}}>
+                  {receiptData.storeDiscount>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Desconto em Loja</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.storeDiscount)}</span></div>}
+                  {receiptData.advances>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Vale / Adiantamento</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.advances)}</span></div>}
+                  {receiptData.otherDeductions>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Outros Descontos</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.otherDeductions)}</span></div>}
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"6px 8px",fontWeight:800,fontSize:12,background:"#fff5f5",borderRadius:3,marginTop:4}}><span>Total Descontos</span><span style={{color:"#C62828"}}>-{fmt(receiptData.totalDeductions)}</span></div>
+                </div>
+              </>}
+
+              {/* Valor líquido */}
+              <div style={{marginTop:14,padding:12,border:"2.5px solid #000",borderRadius:6,textAlign:"center"}}>
+                <div style={{fontSize:9,fontWeight:800,letterSpacing:3,color:"#888",marginBottom:2}}>VALOR LÍQUIDO</div>
+                <div style={{fontSize:28,fontWeight:900}}>{fmt(receiptData.netPay)}</div>
+              </div>
+
+              {receiptData.empPix&&<div style={{marginTop:8,fontSize:10,color:"#666",textAlign:"center"}}>Chave PIX: <strong style={{color:"#000"}}>{receiptData.empPix}</strong></div>}
+              {receiptData.notes&&<div style={{marginTop:8,padding:"6px 8px",background:"#f9f9f9",borderRadius:4,fontSize:10}}><span style={{fontSize:8,color:"#888"}}>Observações:</span><div style={{marginTop:2}}>{receiptData.notes}</div></div>}
+
+              {/* Assinaturas */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:30,marginTop:30}}>
+                <div style={{textAlign:"center",borderTop:"1px solid #000",paddingTop:4,fontSize:9,color:"#666"}}>Empregador</div>
+                <div style={{textAlign:"center",borderTop:"1px solid #000",paddingTop:4,fontSize:9,color:"#666"}}>Colaborador</div>
+              </div>
+
+              <div style={{textAlign:"center",marginTop:10,fontSize:8,color:"#aaa"}}>D'Black — Recibo gerado em {fmtDate(receiptData.paidDate)} — ID: {receiptData.id}</div>
+            </div>)}
           </div>
         </div>
       </div>}
