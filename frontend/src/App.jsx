@@ -204,7 +204,7 @@ const I = {
 };
 
 // ─── COLORS ───
-const C = { bg:"#0A0A0C", s1:"#111114", s2:"#18181C", s3:"#1F1F24", brd:"rgba(255,215,64,0.08)", brdH:"rgba(255,215,64,0.2)", gold:"#FFD740", goldD:"#FF8F00", txt:"#EEEEF0", dim:"rgba(255,255,255,0.5)", grn:"#00E676", red:"#FF5252", blu:"#40C4FF", pur:"#E040FB", org:"#FF6D00" };
+const C = { bg:"#0A0A0C", s1:"#111114", s2:"#18181C", s3:"#1F1F24", brd:"rgba(255,215,64,0.08)", brdH:"rgba(255,215,64,0.2)", gold:"#FFD740", goldD:"#FF8F00", txt:"#EEEEF0", dim:"rgba(255,255,255,0.75)", grn:"#00E676", red:"#FF5252", blu:"#40C4FF", pur:"#E040FB", org:"#FF6D00" };
 
 // ════════════════════════════════════════
 // ═══  MAIN APP — LOGIN + MULTISTORE  ═══
@@ -4107,7 +4107,7 @@ const S = {
   logoSub:{fontSize:8,letterSpacing:3,color:C.dim,marginTop:2,fontWeight:500},
   closeBtn:{position:"absolute",top:12,right:10,background:"none",border:"none",color:C.dim,cursor:"pointer",padding:4,display:"flex"},
   nav:{flex:1,padding:"8px 6px",display:"flex",flexDirection:"column",gap:1},
-  navBtn:{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:"none",border:"none",color:C.dim,cursor:"pointer",borderRadius:8,fontSize:12,fontFamily:"inherit",fontWeight:500,transition:"all .2s",textAlign:"left"},
+  navBtn:{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:"none",border:"none",color:"rgba(255,255,255,0.8)",cursor:"pointer",borderRadius:8,fontSize:12,fontFamily:"inherit",fontWeight:500,transition:"all .2s",textAlign:"left"},
   navAct:{background:`linear-gradient(135deg,rgba(255,215,64,.12),rgba(255,215,64,.04))`,color:C.gold,fontWeight:600},
   navIc:{display:"flex",alignItems:"center",flexShrink:0},
   main:{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",width:"100%"},
@@ -4131,7 +4131,7 @@ const S = {
   alertItem:{display:"flex",alignItems:"center",gap:6,background:"rgba(255,82,82,.08)",padding:"5px 10px",borderRadius:8,fontSize:11},
   // Table
   tWrap:{overflowX:"auto"},table:{width:"100%",borderCollapse:"collapse"},
-  th:{textAlign:"left",padding:"7px 10px",fontSize:10,fontWeight:700,letterSpacing:1,color:C.dim,borderBottom:`1px solid ${C.brd}`,textTransform:"uppercase",whiteSpace:"nowrap"},
+  th:{textAlign:"left",padding:"7px 10px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,0.85)",borderBottom:`1px solid ${C.brd}`,textTransform:"uppercase",whiteSpace:"nowrap"},
   tr:{transition:"background .15s"},td:{padding:"7px 10px",borderBottom:`1px solid ${C.brd}`,fontSize:12,whiteSpace:"nowrap"},
   tdM:{fontWeight:700,color:C.grn,fontFamily:"'JetBrains Mono',monospace"},
   // PDV
@@ -4150,8 +4150,8 @@ const S = {
   inp:{padding:"8px 12px",borderRadius:8,border:`1px solid ${C.brd}`,background:C.s2,color:C.txt,fontSize:13,fontFamily:"inherit",outline:"none"},
   sel:{padding:"8px 12px",borderRadius:8,border:`1px solid ${C.brd}`,background:C.s2,color:C.txt,fontSize:13,fontFamily:"inherit",outline:"none",cursor:"pointer"},
   primBtn:{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",borderRadius:10,border:"none",background:`linear-gradient(135deg,${C.gold},${C.goldD})`,color:C.bg,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",letterSpacing:.5,whiteSpace:"nowrap"},
-  secBtn:{padding:"8px 16px",borderRadius:10,border:`1px solid ${C.brd}`,background:C.s2,color:C.dim,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"},
-  smBtn:{padding:"3px 8px",borderRadius:5,border:`1px solid ${C.brd}`,background:C.s2,color:C.txt,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600},
+  secBtn:{padding:"8px 16px",borderRadius:10,border:`1px solid rgba(255,215,64,0.15)`,background:C.s2,color:C.txt,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"},
+  smBtn:{padding:"4px 10px",borderRadius:6,border:`1px solid rgba(255,215,64,0.15)`,background:C.s2,color:C.txt,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600},
   qBtn:{width:26,height:26,borderRadius:6,border:`1px solid ${C.brd}`,background:C.s1,color:C.txt,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"},
   finBtn:{width:"100%",padding:"12px",borderRadius:10,border:"none",background:`linear-gradient(135deg,${C.gold},${C.goldD})`,color:C.bg,fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"inherit",letterSpacing:2,display:"flex",alignItems:"center",justifyContent:"center",gap:8},
   // Badges
