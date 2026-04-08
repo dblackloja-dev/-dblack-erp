@@ -2964,7 +2964,6 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
         <KPI icon={I.users} label="Colaboradores" value={activeEmps.length+""} sub={employees.length+" total"} color={C.blu}/>
         <KPI icon={I.money} label="Folha Total" value={fmt(totalPayroll)} sub={payrolls.length+" pagamentos"} color={C.gold}/>
         <KPI icon={I.chart} label={"Folha "+pay.month} value={fmt(monthTotal)} sub={monthPayrolls.length+" processados"} color={C.pur}/>
-        <KPI icon={I.check} label="Sal. Médio" value={fmt(activeEmps.length>0?activeEmps.reduce((s,e)=>s+e.salary,0)/activeEmps.length:0)} sub="Base" color={C.grn}/>
       </div>
 
       {/* ═══ COLABORADORES ═══ */}
