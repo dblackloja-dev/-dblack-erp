@@ -291,11 +291,10 @@ export default function App() {
     }).catch(() => {}).finally(() => setCheckingSession(false));
   }, []);
 
-  // ─── CARREGA DADOS DA API APÓS LOGIN ───
-  useEffect(() => {
-    if (!loggedUser) return;
-    setApiLoaded(false);
-    Promise.all([
+  // ─── CARREGA DADOS DA API APÓS LOGIN + AUTO-REFRESH 30s ───
+  const loadAllData = useCallback((silent=false) => {
+    if(!silent) setApiLoaded(false);
+    return Promise.all([
       api.getProducts(),
       api.getStock(),
       api.getSales(),
@@ -326,7 +325,15 @@ export default function App() {
       if(wdrs?.length) setWithdrawals(wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})));
       if(expCats?.length) setExpenseCategories(expCats.map(c=>c.name));
     }).catch(e => console.error('Erro ao carregar do servidor:', e))
-      .finally(() => setApiLoaded(true));
+      .finally(() => { if(!silent) setApiLoaded(true); });
+  }, []);
+
+  useEffect(() => {
+    if (!loggedUser) return;
+    loadAllData(false);
+    // Auto-refresh a cada 30 segundos (silencioso, sem loading)
+    const interval = setInterval(() => loadAllData(true), 30000);
+    return () => clearInterval(interval);
   }, [loggedUser?.id]);
 
   const showToast = useCallback((msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); },[]);
