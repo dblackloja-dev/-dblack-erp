@@ -100,6 +100,13 @@ const api = {
   // Expenses
   getExpenses: (storeId) => request(`/expenses${storeId ? `?store_id=${storeId}` : ''}`),
   createExpense: (data) => request('/expenses', { method: 'POST', body: data }),
+  updateExpense: (id, data) => request(`/expenses/${id}`, { method: 'PUT', body: data }),
+  deleteExpense: (id) => request(`/expenses/${id}`, { method: 'DELETE' }),
+
+  // Expense Categories
+  getExpenseCategories: () => request('/expense-categories'),
+  createExpenseCategory: (name) => request('/expense-categories', { method: 'POST', body: { name } }),
+  deleteExpenseCategory: (name) => request(`/expense-categories/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // Cash
   getCash: (storeId) => request(`/cash/${storeId}`),

@@ -134,7 +134,13 @@ async function initDB() {
       description TEXT,
       value NUMERIC NOT NULL,
       recurring BOOLEAN DEFAULT false,
+      expense_type TEXT DEFAULT 'operacional',
       created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS expense_categories (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS cash_state (
@@ -258,6 +264,15 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
+
+  // Migrações: adicionar colunas novas se não existirem
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_type TEXT DEFAULT 'operacional'`).catch(()=>{});
+
+  // Seed categorias de despesas padrão
+  const defExpCats = ['Aluguel','Energia','Água','Internet','Funcionários','Marketing','Manutenção','Material','Impostos','Transporte','Alimentação','Fornecedor','Outros'];
+  for (const c of defExpCats) {
+    await pool.query('INSERT INTO expense_categories (name) VALUES ($1) ON CONFLICT DO NOTHING', [c]);
+  }
 
   await seedIfEmpty();
   console.log('✅ Banco de dados inicializado!');

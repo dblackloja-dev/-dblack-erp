@@ -502,10 +502,50 @@ app.post('/api/expenses', async (req, res) => {
     const e = req.body;
     const id = genId();
     await queryRun(
-      'INSERT INTO expenses (id, store_id, date, category, description, value, recurring) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, e.store_id, e.date || today(), e.category || '', e.description || '', e.value, e.recurring || false]
+      'INSERT INTO expenses (id, store_id, date, category, description, value, recurring, expense_type) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, e.store_id, e.date || today(), e.category || '', e.description || '', e.value, e.recurring || false, e.expense_type || 'operacional']
     );
     res.json({ id, ...e });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/expenses/:id', async (req, res) => {
+  try {
+    const e = req.body;
+    await queryRun(
+      'UPDATE expenses SET date=$1, category=$2, description=$3, value=$4, recurring=$5, expense_type=$6 WHERE id=$7',
+      [e.date, e.category || '', e.description || '', e.value, e.recurring || false, e.expense_type || 'operacional', req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+    await queryRun('DELETE FROM expenses WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Expense Categories ──
+app.get('/api/expense-categories', async (req, res) => {
+  try {
+    const cats = await queryAll('SELECT * FROM expense_categories ORDER BY name');
+    res.json(cats);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/expense-categories', async (req, res) => {
+  try {
+    await queryRun('INSERT INTO expense_categories (name) VALUES ($1)', [req.body.name]);
+    res.json({ success: true, name: req.body.name });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/expense-categories/:name', async (req, res) => {
+  try {
+    await queryRun('DELETE FROM expense_categories WHERE name = $1', [decodeURIComponent(req.params.name)]);
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

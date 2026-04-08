@@ -259,6 +259,7 @@ export default function App() {
     {id:"pay2",month:"2026-03",empId:"emp2",empName:"Carlos Silva",storeId:"loja1",baseSalary:1800,metaBonus:0,awards:0,overtime:180,storeDiscount:80,advances:200,otherDeductions:0,totalEarnings:1980,totalDeductions:280,netPay:1700,paid:true,paidDate:"2026-04-05",notes:""},
   ]));
   const [withdrawals, setWithdrawals] = useState(() => ls('withdrawals', []));
+  const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
 
   // ─── AUTO-SAVE no localStorage ───
   useEffect(() => { lsSave('users', users); }, [users]);
@@ -275,6 +276,7 @@ export default function App() {
   useEffect(() => { lsSave('employees', employees); }, [employees]);
   useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
   useEffect(() => { lsSave('withdrawals', withdrawals); }, [withdrawals]);
+  useEffect(() => { lsSave('expenseCategories', expenseCategories); }, [expenseCategories]);
 
   // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
 
@@ -307,7 +309,8 @@ export default function App() {
       api.getInvestments(),
       api.getUsers(),
       api.getWithdrawals(),
-    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs]) => {
+      api.getExpenseCategories(),
+    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,expCats]) => {
       if(prods?.length) setCatalog(prods.map(prodFromApi));
       if(stk&&Object.keys(stk).length) setStock(stk);
       if(sls?.length) setSales(salesFromApi(sls));
@@ -321,6 +324,7 @@ export default function App() {
       if(invs?.length) setInvestments(invs);
       if(usrs?.length) setUsers(usrs);
       if(wdrs?.length) setWithdrawals(wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})));
+      if(expCats?.length) setExpenseCategories(expCats.map(c=>c.name));
     }).catch(e => console.error('Erro ao carregar do servidor:', e))
       .finally(() => setApiLoaded(true));
   }, [loggedUser?.id]);
@@ -603,7 +607,7 @@ export default function App() {
           {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores}} />}
 
           {/* DESPESAS */}
-          {tab==="despesas" && <DespesasModule {...{storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast}} />}
+          {tab==="despesas" && <DespesasModule {...{storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast,expenseCategories,setExpenseCategories,cashState,setCashState,loggedUser}} />}
 
           {/* VENDAS */}
           {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}} />}
@@ -694,20 +698,25 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
     const st = stock[store.stockId] || {};
     const _today = new Date().toISOString().split("T")[0];
     const rev = ss.filter(s=>s.status!=="Cancelada").reduce((s,v) => s + v.total, 0);
-    const exp = exps.reduce((s,e) => s + e.value, 0);
+    const expCaixa = exps.filter(e=>(e.expense_type||e.expenseType)==="caixa").reduce((s,e) => s + (+e.value||0), 0);
+    const expOp = exps.filter(e=>(e.expense_type||e.expenseType)!=="caixa").reduce((s,e) => s + (+e.value||0), 0);
+    const exp = exps.reduce((s,e) => s + (+e.value||0), 0);
     const todayRev = ss.filter(s=>s.date===_today&&s.status!=="Cancelada").reduce((s,v)=>s+v.total,0);
     const pieces = catalog.reduce((s,p) => s + (st[p.id]||0), 0);
     const stockVal = catalog.reduce((s,p) => s + p.cost * (st[p.id]||0), 0);
     const cash = Object.entries(cashState).filter(([k])=>k.startsWith(store.id+"_")).find(([,v])=>v.open)?.[1] || cashState[store.id];
     const isShared = STORES.filter(s=>s.stockId===store.stockId).length > 1;
-    return { ...store, rev, exp, todayRev, salesCount:ss.length, pieces, stockVal, cashOpen:cash?.open, isShared };
+    return { ...store, rev, exp, expCaixa, expOp, todayRev, salesCount:ss.length, pieces, stockVal, cashOpen:cash?.open, isShared };
   });
 
   const totalRev = storeData.reduce((s,d) => s + d.rev, 0);
   const totalExp = storeData.reduce((s,d) => s + d.exp, 0);
+  const totalExpOp = storeData.reduce((s,d) => s + d.expOp, 0);
+  const totalExpCaixa = storeData.reduce((s,d) => s + d.expCaixa, 0);
   const totalInv = investments.reduce((s,i) => s + i.value, 0);
   const totalToday = storeData.reduce((s,d) => s + d.todayRev, 0);
   const allSalesCount = storeData.reduce((s,d) => s + d.salesCount, 0);
+  const resultado = totalRev - totalExpOp;
 
   return (
     <div style={{animation:"fadeIn .4s ease"}}>
@@ -720,8 +729,8 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
       <div style={S.kpiRow}>
         <KPI icon={I.money} label="Vendas Hoje (Geral)" value={fmt(totalToday)} sub="Todas as lojas" color={C.grn}/>
         <KPI icon={I.cart} label="Receita Total" value={fmt(totalRev)} sub={allSalesCount+" vendas"} color={C.gold}/>
-        <KPI icon={I.alert} label="Despesas Totais" value={fmt(totalExp)} sub="Todas as lojas" color={C.red}/>
-        <KPI icon={I.chart} label="Resultado" value={fmt(totalRev-totalExp)} sub={totalRev-totalExp>=0?"Positivo":"Negativo"} color={totalRev-totalExp>=0?C.grn:C.red}/>
+        <KPI icon="🏢" label="Desp. Operacionais" value={fmt(totalExpOp)} sub="Subtraem da receita" color={C.red}/>
+        <KPI icon={I.chart} label="Resultado" value={fmt(resultado)} sub={resultado>=0?"Positivo":"Negativo"} color={resultado>=0?C.grn:C.red}/>
       </div>
 
       {/* Per-store cards */}
@@ -742,8 +751,8 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
               <div><div style={{fontSize:10,color:C.dim}}>Vendas Hoje</div><div style={{fontSize:18,fontWeight:800,color:C.grn}}>{fmt(d.todayRev)}</div></div>
               <div><div style={{fontSize:10,color:C.dim}}>Receita Total</div><div style={{fontSize:18,fontWeight:800,color:C.gold}}>{fmt(d.rev)}</div></div>
-              <div><div style={{fontSize:10,color:C.dim}}>Despesas</div><div style={{fontSize:14,fontWeight:700,color:C.red}}>{fmt(d.exp)}</div></div>
-              <div><div style={{fontSize:10,color:C.dim}}>Resultado</div><div style={{fontSize:14,fontWeight:700,color:d.rev-d.exp>=0?C.grn:C.red}}>{fmt(d.rev-d.exp)}</div></div>
+              <div><div style={{fontSize:10,color:C.dim}}>Desp. Operacional</div><div style={{fontSize:14,fontWeight:700,color:C.red}}>{fmt(d.expOp)}</div></div>
+              <div><div style={{fontSize:10,color:C.dim}}>Resultado</div><div style={{fontSize:14,fontWeight:700,color:d.rev-d.expOp>=0?C.grn:C.red}}>{fmt(d.rev-d.expOp)}</div></div>
               <div><div style={{fontSize:10,color:C.dim}}>Estoque</div><div style={{fontSize:14,fontWeight:600}}>{d.pieces} pç</div></div>
               <div><div style={{fontSize:10,color:C.dim}}>Valor Estoque</div><div style={{fontSize:14,fontWeight:600}}>{fmt(d.stockVal)}</div></div>
             </div>
@@ -2428,39 +2437,171 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
 // ═══════════════════════════════════
 // ═══  DESPESAS MODULE            ═══
 // ═══════════════════════════════════
-function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast}){
+function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast,expenseCategories,setExpenseCategories,cashState,setCashState,loggedUser}){
+  const [activeTab,setActiveTab]=useState("caixa"); // caixa, operacional
   const [showForm,setShowForm]=useState(false);
-  const [nd,setNd]=useState({date:new Date().toISOString().split("T")[0],category:"Aluguel",description:"",value:"",recurring:false});
-  const categories=["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Outros"];
-  const total=storeExpenses.reduce((s,e)=>s+e.value,0);
+  const [editId,setEditId]=useState(null);
+  const [showCatManager,setShowCatManager]=useState(false);
+  const [newCat,setNewCat]=useState("");
+  const todayStr=new Date().toISOString().split("T")[0];
+  const [nd,setNd]=useState({date:todayStr,category:expenseCategories[0]||"Outros",description:"",value:"",recurring:false,expense_type:"caixa"});
   const [printExpense,setPrintExpense]=useState(null);
 
-  const addExp=()=>{
-    if(!nd.description||!nd.value)return showToast("Preencha!","error");
-    const newExp={...nd,id:genId(),value:+nd.value};
-    setExpenses(prev=>{const n={...prev};n[activeStore]=[newExp,...(n[activeStore]||[])];return n;});
-    setPrintExpense({type:"despesa",...newExp,store:currentStore.name,date:nd.date});
-    setNd({date:new Date().toISOString().split("T")[0],category:"Aluguel",description:"",value:"",recurring:false});setShowForm(false);showToast("Despesa lançada!");
+  // Separar despesas por tipo
+  const caixaExpenses=storeExpenses.filter(e=>(e.expense_type||e.expenseType)==="caixa");
+  const operacionalExpenses=storeExpenses.filter(e=>(e.expense_type||e.expenseType)!=="caixa");
+  const currentExpenses=activeTab==="caixa"?caixaExpenses:operacionalExpenses;
+  const totalCaixa=caixaExpenses.reduce((s,e)=>s+(+e.value||0),0);
+  const totalOp=operacionalExpenses.reduce((s,e)=>s+(+e.value||0),0);
+  const totalGeral=storeExpenses.reduce((s,e)=>s+(+e.value||0),0);
+
+  const resetForm=()=>{setNd({date:todayStr,category:expenseCategories[0]||"Outros",description:"",value:"",recurring:false,expense_type:activeTab});setEditId(null);setShowForm(false);};
+
+  const addOrEditExp=()=>{
+    if(!nd.description||!nd.value)return showToast("Preencha descrição e valor!","error");
+    const expType=activeTab;
+    if(editId){
+      const updated={...nd,value:+nd.value,expense_type:expType,expenseType:expType};
+      setExpenses(prev=>{const n={...prev};n[activeStore]=(n[activeStore]||[]).map(e=>e.id===editId?{...e,...updated}:e);return n;});
+      api.updateExpense(editId,{date:nd.date,category:nd.category,description:nd.description,value:+nd.value,recurring:nd.recurring,expense_type:expType}).catch(console.error);
+      showToast("Despesa atualizada!");
+    } else {
+      const newExp={...nd,id:genId(),value:+nd.value,expense_type:expType,expenseType:expType,store_id:activeStore};
+      setExpenses(prev=>{const n={...prev};n[activeStore]=[newExp,...(n[activeStore]||[])];return n;});
+      api.createExpense({store_id:activeStore,date:nd.date,category:nd.category,description:nd.description,value:+nd.value,recurring:nd.recurring,expense_type:expType}).catch(console.error);
+      // Se for despesa de caixa, registra como sangria automática
+      if(expType==="caixa"){
+        const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+        setCashState(prev=>{
+          const n={...prev};
+          const cs=n[cashKey]||{open:false,initial:0,history:[]};
+          if(cs.open){
+            n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:+nd.value,desc:"Despesa: "+nd.description,time:new Date().toLocaleTimeString("pt-BR")}]};
+          }
+          return n;
+        });
+      }
+      setPrintExpense({type:"despesa",...newExp,store:currentStore.name,date:nd.date});
+      showToast("Despesa lançada!"+(expType==="caixa"?" (descontada do caixa)":""));
+    }
+    resetForm();
   };
 
-  // Reimprimir despesa existente
+  const startEdit=(e)=>{
+    setNd({date:e.date,category:e.category,description:e.description,value:String(e.value),recurring:e.recurring||false,expense_type:e.expense_type||e.expenseType||activeTab});
+    setEditId(e.id);setShowForm(true);
+  };
+
+  const deleteExp=(id)=>{
+    if(!confirm("Excluir esta despesa?"))return;
+    setExpenses(prev=>{const n={...prev};n[activeStore]=(n[activeStore]||[]).filter(e=>e.id!==id);return n;});
+    api.deleteExpense(id).catch(console.error);
+    showToast("Despesa excluída!");
+  };
+
   const reprintExpense=(e)=>{setPrintExpense({type:"despesa",...e,store:currentStore.name});};
+
+  // Categorias
+  const addCategory=()=>{
+    if(!newCat.trim())return;
+    if(expenseCategories.includes(newCat.trim()))return showToast("Categoria já existe","error");
+    setExpenseCategories(prev=>[...prev,newCat.trim()]);
+    api.createExpenseCategory(newCat.trim()).catch(console.error);
+    setNewCat("");showToast("Categoria adicionada!");
+  };
+  const removeCategory=(cat)=>{
+    setExpenseCategories(prev=>prev.filter(c=>c!==cat));
+    api.deleteExpenseCategory(cat).catch(console.error);
+  };
+
+  const subTabs=[
+    {id:"caixa",label:"Despesas do Caixa",icon:"💰",color:C.gold},
+    {id:"operacional",label:"Despesas Operacionais",icon:"🏢",color:C.blu},
+  ];
 
   return(
     <div>
-      <div style={S.kpiRow}><KPI icon={I.money} label={"Despesas — "+currentStore.name} value={fmt(total)} sub={storeExpenses.length+" lançamentos"} color={C.red}/></div>
-      <div style={S.toolbar}><button style={S.primBtn} onClick={()=>setShowForm(!showForm)}>{I.plus} Nova Despesa</button></div>
-      {showForm&&<div style={S.formCard}><div style={S.formGrid}>
-        <input style={S.inp} type="date" value={nd.date} onChange={e=>setNd(d=>({...d,date:e.target.value}))}/>
-        <select style={S.sel} value={nd.category} onChange={e=>setNd(d=>({...d,category:e.target.value}))}>{categories.map(c=><option key={c}>{c}</option>)}</select>
-        <input style={S.inp} placeholder="Descrição" value={nd.description} onChange={e=>setNd(d=>({...d,description:e.target.value}))}/>
-        <input style={S.inp} type="number" placeholder="Valor R$" value={nd.value} onChange={e=>setNd(d=>({...d,value:e.target.value}))}/>
-        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.dim,cursor:"pointer"}}><input type="checkbox" checked={nd.recurring} onChange={e=>setNd(d=>({...d,recurring:e.target.checked}))} style={{accentColor:C.gold}}/>Fixa</label>
-      </div><div style={S.formAct}><button style={S.secBtn} onClick={()=>setShowForm(false)}>Cancelar</button><button style={S.primBtn} onClick={addExp}>Lançar</button></div></div>}
-      <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Categoria</th><th style={S.th}>Descrição</th><th style={S.th}>Valor</th><th style={S.th}>Tipo</th><th style={S.th}></th></tr></thead>
-      <tbody>{storeExpenses.map(e=><tr key={e.id} style={S.tr}><td style={S.td}>{fmtDate(e.date)}</td><td style={S.td}><span style={S.payBadge}>{e.category}</span></td><td style={S.td}>{e.description}</td><td style={{...S.td,fontWeight:700,color:C.red}}>{fmt(e.value)}</td><td style={S.td}>{e.recurring?<span style={{...S.stBadge,...S.stLow}}>Fixa</span>:<span style={{...S.stBadge,...S.stOk}}>Variável</span>}</td><td style={S.td}><button style={S.smBtn} onClick={()=>reprintExpense(e)} title="Imprimir comprovante">{I.printer}</button></td></tr>)}</tbody></table></div>
+      {/* Sub-abas */}
+      <div style={{display:"flex",gap:4,marginBottom:14,overflowX:"auto",paddingBottom:4}}>
+        {subTabs.map(st=><button key={st.id} onClick={()=>{setActiveTab(st.id);resetForm();}} style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+(activeTab===st.id?st.color:C.brd),background:activeTab===st.id?st.color+"14":C.s1,color:activeTab===st.id?st.color:C.dim,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"inherit",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{st.icon}</span>{st.label}</button>)}
+      </div>
 
-      {/* ── COMPROVANTE DESPESA ── */}
+      {/* KPIs */}
+      <div style={S.kpiRow}>
+        <KPI icon="💰" label="Despesas Caixa" value={fmt(totalCaixa)} sub={caixaExpenses.length+" lançamentos"} color={C.gold}/>
+        <KPI icon="🏢" label="Despesas Operacionais" value={fmt(totalOp)} sub={operacionalExpenses.length+" lançamentos"} color={C.blu}/>
+        <KPI icon={I.alert} label="Total Geral" value={fmt(totalGeral)} sub={currentStore.name} color={C.red}/>
+      </div>
+
+      {/* Info do tipo */}
+      <div style={{padding:"10px 14px",background:activeTab==="caixa"?"rgba(255,215,64,.06)":"rgba(64,196,255,.06)",border:`1px solid ${activeTab==="caixa"?C.gold+"33":C.blu+"33"}`,borderRadius:10,marginBottom:14,fontSize:12,color:C.dim}}>
+        {activeTab==="caixa"
+          ?"💰 Despesas pagas diretamente no caixa da loja. Ao registrar, o valor é descontado automaticamente do caixa aberto."
+          :"🏢 Despesas operacionais pagas pelo financeiro (transferência, boleto, etc). Subtraem da receita geral, não do caixa."
+        }
+      </div>
+
+      {/* Toolbar */}
+      <div style={S.toolbar}>
+        <button style={S.secBtn} onClick={()=>setShowCatManager(!showCatManager)}>📁 Categorias</button>
+        <div style={{flex:1}}/>
+        <button style={S.primBtn} onClick={()=>{resetForm();setShowForm(!showForm);}}>{I.plus} Nova Despesa</button>
+      </div>
+
+      {/* Gerenciador de Categorias */}
+      {showCatManager&&<div style={S.formCard}>
+        <h3 style={S.formTitle}>Gerenciar Categorias de Despesas</h3>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+          {expenseCategories.map(c=><span key={c} style={{padding:"4px 10px",borderRadius:6,background:C.s2,border:`1px solid ${C.brd}`,fontSize:12,fontWeight:600,color:C.txt,display:"flex",alignItems:"center",gap:4}}>
+            {c}
+            <button onClick={()=>removeCategory(c)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:10,padding:0}}>✕</button>
+          </span>)}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <input style={{...S.inp,flex:1}} placeholder="Nova categoria..." value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCategory()}/>
+          <button style={S.primBtn} onClick={addCategory}>{I.plus} Adicionar</button>
+        </div>
+      </div>}
+
+      {/* Formulário */}
+      {showForm&&<div style={S.formCard}>
+        <h3 style={S.formTitle}>{editId?"✏️ Editar Despesa":"➕ Nova Despesa"} — {activeTab==="caixa"?"Caixa":"Operacional"}</h3>
+        <div style={S.formGrid}>
+          <input style={S.inp} type="date" value={nd.date} onChange={e=>setNd(d=>({...d,date:e.target.value}))}/>
+          <select style={S.sel} value={nd.category} onChange={e=>setNd(d=>({...d,category:e.target.value}))}>
+            {expenseCategories.map(c=><option key={c}>{c}</option>)}
+          </select>
+          <input style={S.inp} placeholder="Descrição" value={nd.description} onChange={e=>setNd(d=>({...d,description:e.target.value}))}/>
+          <input style={S.inp} type="number" placeholder="Valor R$" value={nd.value} onChange={e=>setNd(d=>({...d,value:e.target.value}))}/>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.dim,cursor:"pointer"}}><input type="checkbox" checked={nd.recurring} onChange={e=>setNd(d=>({...d,recurring:e.target.checked}))} style={{accentColor:C.gold}}/>Fixa/Recorrente</label>
+        </div>
+        <div style={S.formAct}>
+          <button style={S.secBtn} onClick={resetForm}>Cancelar</button>
+          <button style={S.primBtn} onClick={addOrEditExp}>{editId?"Salvar Alterações":"Lançar Despesa"}</button>
+        </div>
+      </div>}
+
+      {/* Tabela */}
+      <div style={S.tWrap}><table style={S.table}><thead><tr>
+        <th style={S.th}>Data</th><th style={S.th}>Categoria</th><th style={S.th}>Descrição</th><th style={S.th}>Valor</th><th style={S.th}>Tipo</th><th style={S.th}>Ações</th>
+      </tr></thead>
+      <tbody>{currentExpenses.length===0
+        ?<tr><td colSpan={6} style={{...S.td,textAlign:"center",opacity:.4,padding:20}}>Nenhuma despesa {activeTab==="caixa"?"de caixa":"operacional"} registrada</td></tr>
+        :currentExpenses.map(e=><tr key={e.id} style={S.tr}>
+          <td style={S.td}>{fmtDate(e.date)}</td>
+          <td style={S.td}><span style={S.payBadge}>{e.category}</span></td>
+          <td style={S.td}>{e.description}</td>
+          <td style={{...S.td,fontWeight:700,color:C.red}}>{fmt(+e.value)}</td>
+          <td style={S.td}>{e.recurring?<span style={{...S.stBadge,...S.stLow}}>Fixa</span>:<span style={{...S.stBadge,...S.stOk}}>Variável</span>}</td>
+          <td style={S.td}><div style={{display:"flex",gap:3}}>
+            <button style={S.smBtn} onClick={()=>startEdit(e)}>✏️</button>
+            <button style={{...S.smBtn,color:C.red}} onClick={()=>deleteExp(e.id)}>🗑️</button>
+            <button style={S.smBtn} onClick={()=>reprintExpense(e)} title="Imprimir comprovante">{I.printer}</button>
+          </div></td>
+        </tr>)
+      }</tbody></table></div>
+
+      {/* Comprovante */}
       {printExpense&&<ReceiptComprovante data={printExpense} onClose={()=>setPrintExpense(null)}/>}
     </div>
   );
