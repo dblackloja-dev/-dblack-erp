@@ -4115,7 +4115,7 @@ function EtiquetasModule({storeProducts,showToast}){
       @page{size:40mm 40mm;margin:0;}
       *{box-sizing:border-box;margin:0;padding:0;}
       body{font-family:'Courier New',Courier,monospace;background:#fff;color:#000;}
-      .label{width:40mm;height:40mm;padding:2mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;line-height:1.2;transform:rotate(-90deg);transform-origin:center center;}
+      .label{width:40mm;height:40mm;padding:2mm 3.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;line-height:1.2;transform:rotate(-90deg);transform-origin:center center;}
       .label:last-child{page-break-after:auto;}
       @media screen{body{padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;transform:none;}}
     </style></head><body>${labelsHtml}</body></html>`);
