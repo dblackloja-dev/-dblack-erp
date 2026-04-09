@@ -4039,16 +4039,16 @@ function EtiquetasModule({storeProducts,showToast}){
 
   const BarcodeEAN=({ean,width,height})=>{
     const data=ean13Encode(ean);
-    if(!data)return <div style={{fontSize:7,color:'#999',textAlign:'center'}}>Sem EAN</div>;
+    if(!data)return <div style={{fontSize:8,color:'#999',textAlign:'center'}}>Sem EAN</div>;
     const bw=width/95;
-    const barH=height-10;
+    const barH=height-12;
     const rects=[];
     for(let i=0;i<data.bits.length;i++){
       if(data.bits[i]==='1')rects.push(<rect key={i} x={i*bw} y={0} width={bw} height={barH} fill="#000"/>);
     }
     return <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{display:'block'}}>
       {rects}
-      <text x={width/2} y={height-1} textAnchor="middle" fill="#000" fontSize={7} fontFamily="'Courier New',monospace" fontWeight="600">{data.digits}</text>
+      <text x={width/2} y={height-1} textAnchor="middle" fill="#000" fontSize={9} fontFamily="Arial,Helvetica,sans-serif" fontWeight="700">{data.digits}</text>
     </svg>;
   };
 
@@ -4060,17 +4060,18 @@ function EtiquetasModule({storeProducts,showToast}){
     const preco=fmtPrecoEtiqueta(prod.price);
     return <div key={prod.id+"-"+idx} className="etiqueta-40x40" style={{
       width:151,height:151,padding:'6px 8px',background:'#fff',color:'#000',
-      fontFamily:"'Courier New',Courier,monospace",display:'flex',flexDirection:'column',
+      fontFamily:"'Arial','Helvetica',sans-serif",display:'flex',flexDirection:'column',
       alignItems:'center',justifyContent:'space-between',boxSizing:'border-box',
-      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2
+      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2,
+      WebkitFontSmoothing:'antialiased',textRendering:'geometricPrecision'
     }}>
       <div style={{fontSize:11,fontWeight:900,letterSpacing:1,textAlign:'center',marginTop:6}}>D'BLACK STORE</div>
-      <div style={{fontSize:8,fontWeight:600,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:20,width:'100%',wordBreak:'break-word'}}>
+      <div style={{fontSize:9,fontWeight:700,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:22,width:'100%',wordBreak:'break-word'}}>
         {prod.sku} {prod.name.toUpperCase()}
       </div>
       <div style={{textAlign:'center'}}>
         <div style={{fontSize:22,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
-        <div style={{fontSize:7,fontWeight:600,marginTop:1}}>Ate 12x sem juros</div>
+        <div style={{fontSize:8,fontWeight:700,marginTop:1}}>Ate 12x sem juros</div>
       </div>
       <BarcodeEAN ean={prod.ean||''} width={120} height={32}/>
     </div>;
@@ -4090,20 +4091,20 @@ function EtiquetasModule({storeProducts,showToast}){
     const labelsHtml=labels.map(p=>{
       const preco=fmtPrecoEtiqueta(p.price);
       const data=ean13Encode(p.ean||'');
-      let barcodeSvg='<div style="font-size:7px;color:#999">Sem EAN</div>';
+      let barcodeSvg='<div style="font-size:8px;color:#999">Sem EAN</div>';
       if(data){
-        let rects='';const bw=120/95;const barH=22;
+        let rects='';const bw=120/95;const barH=20;
         for(let i=0;i<data.bits.length;i++){
           if(data.bits[i]==='1')rects+=`<rect x="${i*bw}" y="0" width="${bw}" height="${barH}" fill="#000"/>`;
         }
-        barcodeSvg=`<svg width="120" height="32" viewBox="0 0 120 32" style="display:block">${rects}<text x="60" y="31" text-anchor="middle" fill="#000" font-size="7" font-family="'Courier New',monospace" font-weight="600">${data.digits}</text></svg>`;
+        barcodeSvg=`<svg width="120" height="32" viewBox="0 0 120 32" style="display:block">${rects}<text x="60" y="31" text-anchor="middle" fill="#000" font-size="9" font-family="Arial,Helvetica,sans-serif" font-weight="700">${data.digits}</text></svg>`;
       }
       return `<div class="label">
         <div style="font-size:11px;font-weight:900;letter-spacing:1px;text-align:center;margin-top:4px">D'BLACK STORE</div>
-        <div style="font-size:8px;font-weight:600;text-align:center;line-height:1.15;overflow:hidden;max-height:20px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
+        <div style="font-size:9px;font-weight:700;text-align:center;line-height:1.15;overflow:hidden;max-height:22px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
         <div style="text-align:center">
           <div style="font-size:22px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
-          <div style="font-size:7px;font-weight:600;margin-top:1px">Ate 12x sem juros</div>
+          <div style="font-size:8px;font-weight:700;margin-top:1px">Ate 12x sem juros</div>
         </div>
         <div style="display:flex;justify-content:center">${barcodeSvg}</div>
       </div>`;
@@ -4113,7 +4114,7 @@ function EtiquetasModule({storeProducts,showToast}){
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;900&display=swap" rel="stylesheet">
       <style>
       @page{size:40mm 40mm;margin:0 !important;}
-      html,body{width:40mm;height:40mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:'Courier New',Courier,monospace;}
+      html,body{width:40mm;height:40mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
       *{box-sizing:border-box;margin:0;padding:0;}
       .label{width:40mm;height:40mm;padding:2mm 3mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;page-break-inside:avoid;line-height:1.2;}
       .label:last-child{page-break-after:auto;}
