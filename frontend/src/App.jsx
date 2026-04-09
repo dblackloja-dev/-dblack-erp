@@ -4013,36 +4013,170 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
 // ═══════════════════════════════════
 function EtiquetasModule({storeProducts,showToast}){
   const [search,setSearch]=useState("");const [queue,setQueue]=useState([]);const [showPreview,setShowPreview]=useState(false);
-  const [cfg,setCfg]=useState({width:220,height:120,bgColor:"#ffffff",textColor:"#000000",priceColor:"#000000",borderColor:"#cccccc",borderWidth:1,borderRadius:8,showLogo:true,logoText:"D'BLACK",logoSize:13,nameSize:11,showPrice:true,priceSize:16,showBarcode:true,barcodeH:28,barcodeW:150,showSku:true,skuSize:8,showMeta:true,metaSize:9,fontFamily:"'Outfit',sans-serif",padding:10,gap:4});
-  const upCfg=(k,v)=>setCfg(p=>({...p,[k]:v}));
-  const presets={"Padrão":{width:220,height:120,borderRadius:8,logoSize:13,nameSize:11,priceSize:16,barcodeH:28,barcodeW:150,showLogo:true,showMeta:true,showPrice:true,showBarcode:true,bgColor:"#ffffff",textColor:"#000000",priceColor:"#000000"},"Compacta":{width:160,height:80,borderRadius:4,logoSize:10,nameSize:9,priceSize:12,barcodeH:20,barcodeW:110,showLogo:true,showMeta:false,showPrice:true,showBarcode:true,bgColor:"#ffffff",textColor:"#000000",priceColor:"#000000"},"Premium":{width:240,height:130,borderRadius:14,logoSize:14,nameSize:11,priceSize:17,barcodeH:28,barcodeW:150,showLogo:true,showMeta:true,showPrice:true,showBarcode:true,bgColor:"#1a1a1a",textColor:"#ffffff",priceColor:"#FFD740"}};
-  const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase()));
+  const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search));
   const addQ=(p)=>setQueue(prev=>{const ex=prev.find(q=>q.pid===p.id);if(ex)return prev.map(q=>q.pid===p.id?{...q,qty:q.qty+1}:q);return[...prev,{pid:p.id,qty:1}];});
   const totalLabels=queue.reduce((s,q)=>s+q.qty,0);
-  const makeBarcode=(t)=>{let b=[];for(let i=0;i<t.length;i++){let c=t.charCodeAt(i);b.push(((c>>5)&3)+1,1,((c>>3)&3)+1,1,((c>>1)&3)+1,1);}return b;};
-  const renderLabel=(prod,idx)=>{const bars=makeBarcode(prod.sku);const bw=cfg.barcodeW/(bars.length||1);return <div key={prod.id+"-"+idx} style={{width:cfg.width,height:cfg.height,border:cfg.borderWidth+"px solid "+cfg.borderColor,borderRadius:cfg.borderRadius,padding:cfg.padding,background:cfg.bgColor,color:cfg.textColor,fontFamily:cfg.fontFamily,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",gap:cfg.gap,flexShrink:0,overflow:"hidden",boxSizing:"border-box"}}>{cfg.showLogo&&<div style={{fontSize:cfg.logoSize,fontWeight:900,letterSpacing:4}}>{cfg.logoText}</div>}<div style={{fontSize:cfg.nameSize,fontWeight:600,textAlign:"center",lineHeight:1.2,overflow:"hidden",maxHeight:cfg.nameSize*2.4,width:"100%"}}>{prod.name}</div>{cfg.showMeta&&<div style={{fontSize:cfg.metaSize,color:"#666"}}>{prod.size} | {prod.color}</div>}{cfg.showPrice&&<div style={{fontSize:cfg.priceSize,fontWeight:900,color:cfg.priceColor}}>{fmt(prod.price)}</div>}{cfg.showBarcode&&<svg width={cfg.barcodeW} height={cfg.barcodeH} viewBox={"0 0 "+cfg.barcodeW+" "+cfg.barcodeH}>{bars.map((w,i)=>{const x=i*bw;return i%2===0?<rect key={i} x={x} y={0} width={Math.max(.5,bw*.8)} height={cfg.barcodeH-10} fill={cfg.textColor}/>:null;})}{cfg.showSku&&<text x={cfg.barcodeW/2} y={cfg.barcodeH-1} textAnchor="middle" fill="#444" fontSize={cfg.skuSize} fontFamily="monospace">{prod.sku}</text>}</svg>}</div>;};
-  const sample=storeProducts[0]||{id:"x",name:"Exemplo",sku:"SKU-001",size:"M",color:"Preto",price:149.90,img:"👕"};
+
+  // Gerador de código de barras EAN-13 real
+  const EAN_L=['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const EAN_G=['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+  const EAN_R=['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+  const EAN_P=['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+
+  const ean13Encode=(code)=>{
+    if(!code)return null;
+    let d=code.replace(/\D/g,'');
+    if(d.length===12){let s=0;for(let i=0;i<12;i++)s+=parseInt(d[i])*(i%2===0?1:3);d+=((10-(s%10))%10).toString();}
+    if(d.length!==13)return null;
+    const par=EAN_P[parseInt(d[0])];
+    let bits='101';
+    for(let i=0;i<6;i++){const v=parseInt(d[i+1]);bits+=par[i]==='L'?EAN_L[v]:EAN_G[v];}
+    bits+='01010';
+    for(let i=0;i<6;i++)bits+=EAN_R[parseInt(d[i+7])];
+    bits+='101';
+    return{bits,digits:d};
+  };
+
+  const BarcodeEAN=({ean,width,height})=>{
+    const data=ean13Encode(ean);
+    if(!data)return <div style={{fontSize:7,color:'#999',textAlign:'center'}}>Sem EAN</div>;
+    const bw=width/95;
+    const barH=height-10;
+    const rects=[];
+    for(let i=0;i<data.bits.length;i++){
+      if(data.bits[i]==='1')rects.push(<rect key={i} x={i*bw} y={0} width={bw} height={barH} fill="#000"/>);
+    }
+    return <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{display:'block'}}>
+      {rects}
+      <text x={width/2} y={height-1} textAnchor="middle" fill="#000" fontSize={7} fontFamily="'Courier New',monospace" fontWeight="600">{data.digits}</text>
+    </svg>;
+  };
+
+  // Formata preço para etiqueta (sem símbolo, separado)
+  const fmtPrecoEtiqueta=(v)=>{const n=parseFloat(v)||0;const parts=n.toFixed(2).split('.');return{inteiro:parts[0],decimal:parts[1]};};
+
+  // Renderiza uma etiqueta 40x40mm (151px ≈ 40mm a 96dpi)
+  const renderLabel=(prod,idx)=>{
+    const preco=fmtPrecoEtiqueta(prod.price);
+    return <div key={prod.id+"-"+idx} className="etiqueta-40x40" style={{
+      width:151,height:151,padding:'6px 8px',background:'#fff',color:'#000',
+      fontFamily:"'Courier New',Courier,monospace",display:'flex',flexDirection:'column',
+      alignItems:'center',justifyContent:'space-between',boxSizing:'border-box',
+      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2
+    }}>
+      <div style={{fontSize:11,fontWeight:900,letterSpacing:3,textAlign:'center',marginTop:2}}>D'BLACK STORE</div>
+      <div style={{fontSize:8,fontWeight:600,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:20,width:'100%',wordBreak:'break-word'}}>
+        {prod.sku} {prod.name.toUpperCase()}
+      </div>
+      <div style={{textAlign:'center'}}>
+        <div style={{fontSize:18,fontWeight:900,lineHeight:1}}>R$ {preco.inteiro},{preco.decimal}</div>
+        <div style={{fontSize:7,fontWeight:600,marginTop:1}}>Ate 12x sem juros</div>
+      </div>
+      <BarcodeEAN ean={prod.ean||''} width={120} height={32}/>
+    </div>;
+  };
+
+  const sample=storeProducts[0]||{id:"x",name:"Produto Exemplo",sku:"00001",ean:"7891234560011",price:49.90,img:"👕"};
+
+  // Função de imprimir que abre janela dedicada para impressora térmica
+  const handlePrint=()=>{
+    const labels=[];
+    queue.forEach(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return;for(let i=0;i<q.qty;i++)labels.push(p);});
+    if(labels.length===0)return showToast("Fila vazia!","error");
+
+    const printWin=window.open('','_blank','width=400,height=600');
+    if(!printWin){showToast("Popup bloqueado! Permita popups.","error");return;}
+
+    const labelsHtml=labels.map(p=>{
+      const preco=fmtPrecoEtiqueta(p.price);
+      const data=ean13Encode(p.ean||'');
+      let barcodeSvg='<div style="font-size:7px;color:#999">Sem EAN</div>';
+      if(data){
+        let rects='';const bw=120/95;const barH=22;
+        for(let i=0;i<data.bits.length;i++){
+          if(data.bits[i]==='1')rects+=`<rect x="${i*bw}" y="0" width="${bw}" height="${barH}" fill="#000"/>`;
+        }
+        barcodeSvg=`<svg width="120" height="32" viewBox="0 0 120 32" style="display:block">${rects}<text x="60" y="31" text-anchor="middle" fill="#000" font-size="7" font-family="'Courier New',monospace" font-weight="600">${data.digits}</text></svg>`;
+      }
+      return `<div class="label">
+        <div style="font-size:11px;font-weight:900;letter-spacing:3px;text-align:center;margin-top:2px">D'BLACK STORE</div>
+        <div style="font-size:8px;font-weight:600;text-align:center;line-height:1.15;overflow:hidden;max-height:20px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:900;line-height:1">R$ ${preco.inteiro},${preco.decimal}</div>
+          <div style="font-size:7px;font-weight:600;margin-top:1px">Ate 12x sem juros</div>
+        </div>
+        <div style="display:flex;justify-content:center">${barcodeSvg}</div>
+      </div>`;
+    }).join('');
+
+    printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title><style>
+      @page{size:40mm 40mm;margin:0;}
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{font-family:'Courier New',Courier,monospace;background:#fff;color:#000;}
+      .label{width:40mm;height:40mm;padding:2mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;line-height:1.2;}
+      .label:last-child{page-break-after:auto;}
+      @media screen{body{padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;}}
+    </style></head><body>${labelsHtml}</body></html>`);
+    printWin.document.close();
+    setTimeout(()=>printWin.print(),300);
+  };
+
   return(
     <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
       <div style={{flex:1,minWidth:280}}>
-        <div style={S.card}><h3 style={S.cardTitle}>Modelos</h3><div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{Object.keys(presets).map(n=><button key={n} onClick={()=>{const p=presets[n];Object.keys(p).forEach(k=>upCfg(k,p[k]));showToast(n+" aplicado!");}} style={{padding:"6px 12px",borderRadius:7,border:`1px solid ${C.brd}`,background:C.s2,color:C.txt,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>{n}</button>)}</div></div>
-        <div style={S.card}><h3 style={S.cardTitle}>Configurações</h3>
-          {[["Largura","width",80,400],["Altura","height",40,250],["Logo","logoSize",6,24],["Nome","nameSize",0,18],["Preço","priceSize",8,28],["Barra Larg.","barcodeW",50,250],["Barra Alt.","barcodeH",12,50]].map(([l,k,mn,mx])=><div key={k} style={{marginBottom:4}}><div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.dim}}><span>{l}</span><span style={{color:C.gold}}>{cfg[k]}</span></div><input type="range" min={mn} max={mx} value={cfg[k]} onChange={e=>upCfg(k,+e.target.value)} style={{width:"100%",accentColor:C.gold}}/></div>)}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:8}}>{[["Fundo","bgColor"],["Texto","textColor"],["Preço","priceColor"],["Borda","borderColor"]].map(([l,k])=><div key={k} style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:10,color:C.dim,flex:1}}>{l}</span><input type="color" value={cfg[k]} onChange={e=>upCfg(k,e.target.value)} style={{width:26,height:22,border:"none",borderRadius:3,cursor:"pointer"}}/></div>)}</div>
-          <div style={{marginTop:8}}>{[["Logo","showLogo"],["Info","showMeta"],["Preço","showPrice"],["Barras","showBarcode"],["SKU","showSku"]].map(([l,k])=><div key={k} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0"}}><span style={{fontSize:11}}>{l}</span><button onClick={()=>upCfg(k,!cfg[k])} style={{width:36,height:18,borderRadius:9,border:"none",background:cfg[k]?C.gold:"rgba(255,255,255,.15)",cursor:"pointer",position:"relative"}}><div style={{width:14,height:14,borderRadius:7,background:"#fff",position:"absolute",top:2,left:cfg[k]?20:2,transition:"left .2s"}}/></button></div>)}</div>
+        <div style={{...S.card,marginBottom:10,padding:12,display:"flex",alignItems:"center",gap:10,background:"rgba(255,215,64,.04)",borderColor:C.brdH}}>
+          <span style={{fontSize:28}}>🏷️</span>
+          <div><div style={{fontSize:14,fontWeight:700}}>Etiquetas 40x40mm</div><div style={{fontSize:11,color:C.dim}}>Elgin L42 Pro Full — Térmica</div></div>
         </div>
-        <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar produto..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:6,marginTop:10}}>{filtered.map(p=>{const inQ=queue.find(q=>q.pid===p.id);return <button key={p.id} onClick={()=>addQ(p)} style={{background:inQ?"rgba(255,215,64,.06)":C.s2,border:`1px solid ${inQ?C.brdH:C.brd}`,borderRadius:8,padding:8,cursor:"pointer",fontFamily:"inherit",color:C.txt,textAlign:"center",fontSize:10,position:"relative"}}>{inQ&&<div style={{position:"absolute",top:3,right:3,background:C.gold,color:C.bg,fontSize:8,fontWeight:800,width:16,height:16,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>{inQ.qty}</div>}<div style={{fontSize:22}}>{p.img}</div><div style={{fontWeight:600}}>{p.name}</div><div style={{color:C.gold,fontWeight:800}}>{fmt(p.price)}</div></button>;})}</div>
-      </div>
-      <div style={{width:340,maxWidth:"100%"}}>
-        <div style={{...S.card,marginBottom:10}}><h3 style={{fontSize:12,color:C.dim,marginBottom:8}}>Preview</h3><div style={{display:"flex",justifyContent:"center",padding:12,background:"rgba(255,255,255,.03)",borderRadius:8,border:`1px dashed ${C.brd}`,overflow:"auto"}}>{renderLabel(queue.length>0?(storeProducts.find(p=>p.id===queue[0].pid)||sample):sample,0)}</div></div>
-        <div style={S.card}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>{I.printer}<span style={{fontSize:13,fontWeight:700,color:C.gold}}>Fila ({totalLabels})</span></div>
-          {queue.length===0?<div style={{textAlign:"center",padding:20,color:C.dim,fontSize:11}}>🏷️ Vazio</div>:
-          <div>{queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return <div key={q.pid} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:4,display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:14}}>{p.img}</span><div style={{flex:1,fontSize:10,fontWeight:600}}>{p.name}</div><button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>x.pid===q.pid?(x.qty>1?{...x,qty:x.qty-1}:null):x).filter(Boolean))}>{I.minus}</button><span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:"center"}}>{q.qty}</span><button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>x.pid===q.pid?{...x,qty:x.qty+1}:x))}>{I.plus}</button></div>;})}
-          <div style={{display:"flex",gap:6,marginTop:8}}><button style={{...S.secBtn,flex:1,fontSize:10}} onClick={()=>setQueue([])}>Limpar</button><button style={{...S.primBtn,flex:2,fontSize:11}} onClick={()=>setShowPreview(true)}>{I.printer} Imprimir ({totalLabels})</button></div></div>}
+        <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU ou EAN..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:6,marginTop:10}}>
+          {filtered.map(p=>{const inQ=queue.find(q=>q.pid===p.id);return <button key={p.id} onClick={()=>addQ(p)} style={{background:inQ?"rgba(255,215,64,.06)":C.s2,border:`1px solid ${inQ?C.brdH:C.brd}`,borderRadius:8,padding:8,cursor:"pointer",fontFamily:"inherit",color:C.txt,textAlign:"center",fontSize:10,position:"relative"}}>
+            {inQ&&<div style={{position:"absolute",top:3,right:3,background:C.gold,color:C.bg,fontSize:8,fontWeight:800,width:16,height:16,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>{inQ.qty}</div>}
+            <div style={{fontSize:20}}>{p.img}</div>
+            <div style={{fontWeight:600,fontSize:11,marginTop:2}}>{p.name}</div>
+            <div style={{fontSize:9,color:C.dim}}>{p.sku}</div>
+            <div style={{color:C.gold,fontWeight:800,fontSize:12}}>{fmt(p.price)}</div>
+          </button>;})}
         </div>
       </div>
-      {showPreview&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:200,display:"flex",flexDirection:"column"}} onClick={()=>setShowPreview(false)}><div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 18px",background:C.s1,borderBottom:`1px solid ${C.brd}`}} onClick={e=>e.stopPropagation()}><h3 style={{margin:0,fontSize:14,fontWeight:700,flex:1}}>{totalLabels} etiquetas</h3><button style={S.primBtn} onClick={()=>window.print()}>{I.printer} Imprimir</button><button style={{background:"none",border:"none",color:C.dim,cursor:"pointer"}} onClick={()=>setShowPreview(false)}>{I.x}</button></div><div style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexWrap:"wrap",gap:6,alignContent:"flex-start",justifyContent:"center"}} onClick={e=>e.stopPropagation()}>{queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return Array.from({length:q.qty},(_, i)=>renderLabel(p,i));})}</div></div>}
+      <div style={{width:360,maxWidth:"100%"}}>
+        <div style={{...S.card,marginBottom:10}}>
+          <h3 style={{fontSize:12,color:C.dim,marginBottom:8}}>Preview da Etiqueta</h3>
+          <div style={{display:"flex",justifyContent:"center",padding:16,background:"#f5f5f5",borderRadius:8,border:`1px dashed ${C.brd}`}}>
+            {renderLabel(queue.length>0?(storeProducts.find(p=>p.id===queue[0].pid)||sample):sample,0)}
+          </div>
+          <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:6}}>40mm × 40mm — Tamanho real aproximado</div>
+        </div>
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+            {I.printer}<span style={{fontSize:13,fontWeight:700,color:C.gold}}>Fila de Impressão ({totalLabels})</span>
+          </div>
+          {queue.length===0?<div style={{textAlign:"center",padding:20,color:C.dim,fontSize:11}}>🏷️ Clique nos produtos para adicionar</div>:
+          <div>
+            {queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return <div key={q.pid} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:14}}>{p.img}</span>
+              <div style={{flex:1}}><div style={{fontSize:10,fontWeight:600}}>{p.name}</div><div style={{fontSize:8,color:C.dim}}>{p.ean||'Sem EAN'}</div></div>
+              <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>x.pid===q.pid?(x.qty>1?{...x,qty:x.qty-1}:null):x).filter(Boolean))}>{I.minus}</button>
+              <span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:"center"}}>{q.qty}</span>
+              <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>x.pid===q.pid?{...x,qty:x.qty+1}:x))}>{I.plus}</button>
+            </div>;})}
+            <div style={{display:"flex",gap:6,marginTop:10}}>
+              <button style={{...S.secBtn,flex:1,fontSize:10}} onClick={()=>setQueue([])}>Limpar</button>
+              <button style={{...S.primBtn,flex:2,fontSize:12}} onClick={handlePrint}>{I.printer} Imprimir {totalLabels} etiqueta{totalLabels>1?'s':''}</button>
+            </div>
+          </div>}
+        </div>
+      </div>
+      {showPreview&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:200,display:"flex",flexDirection:"column"}} onClick={()=>setShowPreview(false)}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 18px",background:C.s1,borderBottom:`1px solid ${C.brd}`}} onClick={e=>e.stopPropagation()}>
+          <h3 style={{margin:0,fontSize:14,fontWeight:700,flex:1}}>{totalLabels} etiquetas</h3>
+          <button style={S.primBtn} onClick={handlePrint}>{I.printer} Imprimir</button>
+          <button style={{background:"none",border:"none",color:C.dim,cursor:"pointer"}} onClick={()=>setShowPreview(false)}>{I.x}</button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexWrap:"wrap",gap:8,alignContent:"flex-start",justifyContent:"center"}} onClick={e=>e.stopPropagation()}>
+          {queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return Array.from({length:q.qty},(_,i)=>renderLabel(p,i));})}
+        </div>
+      </div>}
     </div>
   );
 }
@@ -4174,6 +4308,14 @@ const CSS = `
       box-sizing: border-box !important;
     }
     #receipt-print svg { max-width: 66mm !important; height: auto !important; }
+    .etiqueta-40x40 {
+      width: 40mm !important; height: 40mm !important;
+      background: #fff !important; color: #000 !important;
+      border: none !important; padding: 2mm !important;
+      page-break-after: always !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
   }
   @media (max-width: 768px) {
     body { font-size: 13px; }

@@ -1,9 +1,8 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Conecta ao PostgreSQL via DATABASE_URL (Neon, Supabase, etc.)
-// Usa apenas NEON_URL ou DB_URL — ignora DATABASE_URL que o Railway injeta automaticamente
-const connString = process.env.NEON_URL || process.env.DB_URL;
+// Conecta ao PostgreSQL via variável de ambiente (Neon, Supabase, Railway, etc.)
+const connString = process.env.NEON_URL || process.env.DB_URL || process.env.DATABASE_URL;
 const pool = new Pool({
   connectionString: connString,
   ssl: connString && !connString.includes('localhost')
