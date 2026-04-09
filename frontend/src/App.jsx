@@ -4064,12 +4064,12 @@ function EtiquetasModule({storeProducts,showToast}){
       alignItems:'center',justifyContent:'space-between',boxSizing:'border-box',
       border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2
     }}>
-      <div style={{fontSize:11,fontWeight:900,letterSpacing:3,textAlign:'center',marginTop:2}}>D'BLACK STORE</div>
+      <div style={{fontSize:11,fontWeight:900,letterSpacing:1,textAlign:'center',marginTop:6}}>D'BLACK STORE</div>
       <div style={{fontSize:8,fontWeight:600,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:20,width:'100%',wordBreak:'break-word'}}>
         {prod.sku} {prod.name.toUpperCase()}
       </div>
       <div style={{textAlign:'center'}}>
-        <div style={{fontSize:18,fontWeight:900,lineHeight:1}}>R$ {preco.inteiro},{preco.decimal}</div>
+        <div style={{fontSize:22,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
         <div style={{fontSize:7,fontWeight:600,marginTop:1}}>Ate 12x sem juros</div>
       </div>
       <BarcodeEAN ean={prod.ean||''} width={120} height={32}/>
@@ -4099,23 +4099,25 @@ function EtiquetasModule({storeProducts,showToast}){
         barcodeSvg=`<svg width="120" height="32" viewBox="0 0 120 32" style="display:block">${rects}<text x="60" y="31" text-anchor="middle" fill="#000" font-size="7" font-family="'Courier New',monospace" font-weight="600">${data.digits}</text></svg>`;
       }
       return `<div class="label">
-        <div style="font-size:11px;font-weight:900;letter-spacing:3px;text-align:center;margin-top:2px">D'BLACK STORE</div>
+        <div style="font-size:11px;font-weight:900;letter-spacing:1px;text-align:center;margin-top:4px">D'BLACK STORE</div>
         <div style="font-size:8px;font-weight:600;text-align:center;line-height:1.15;overflow:hidden;max-height:20px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
         <div style="text-align:center">
-          <div style="font-size:18px;font-weight:900;line-height:1">R$ ${preco.inteiro},${preco.decimal}</div>
+          <div style="font-size:22px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
           <div style="font-size:7px;font-weight:600;margin-top:1px">Ate 12x sem juros</div>
         </div>
         <div style="display:flex;justify-content:center">${barcodeSvg}</div>
       </div>`;
     }).join('');
 
-    printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title><style>
+    printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;900&display=swap" rel="stylesheet">
+      <style>
       @page{size:40mm 40mm;margin:0;}
       *{box-sizing:border-box;margin:0;padding:0;}
       body{font-family:'Courier New',Courier,monospace;background:#fff;color:#000;}
-      .label{width:40mm;height:40mm;padding:2mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;line-height:1.2;}
+      .label{width:40mm;height:40mm;padding:2mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;line-height:1.2;transform:rotate(-90deg);transform-origin:center center;}
       .label:last-child{page-break-after:auto;}
-      @media screen{body{padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;}}
+      @media screen{body{padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;transform:none;}}
     </style></head><body>${labelsHtml}</body></html>`);
     printWin.document.close();
     setTimeout(()=>printWin.print(),300);
