@@ -4112,15 +4112,17 @@ function EtiquetasModule({storeProducts,showToast}){
     printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;900&display=swap" rel="stylesheet">
       <style>
-      @page{size:40mm 40mm;margin:0;}
+      @page{size:40mm 40mm;margin:0 !important;}
+      html,body{width:40mm;height:40mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:'Courier New',Courier,monospace;}
       *{box-sizing:border-box;margin:0;padding:0;}
-      body{font-family:'Courier New',Courier,monospace;background:#fff;color:#000;}
-      .label{width:40mm;height:40mm;padding:2mm 3mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;line-height:1.2;}
+      .label{width:40mm;height:40mm;padding:2mm 3mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;page-break-inside:avoid;line-height:1.2;}
       .label:last-child{page-break-after:auto;}
-      @media screen{body{padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;}}
+      @media screen{html,body{width:auto;height:auto;padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;}}
     </style></head><body>${labelsHtml}</body></html>`);
     printWin.document.close();
-    setTimeout(()=>printWin.print(),300);
+    setTimeout(()=>{
+      printWin.print();
+    },500);
   };
 
   return(
