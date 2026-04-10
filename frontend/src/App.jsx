@@ -3795,6 +3795,29 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
     resetFlow();showToast(hasNew?"Troca finalizada!":"Devolução finalizada!");
   };
 
+  const cancelExchange=(ex)=>{
+    if(!confirm("Cancelar esta troca?\n\nIsso vai reverter o estoque e estornar o valor do caixa."))return;
+    // Reverte estoque: peças devolvidas saem, peças levadas voltam
+    setStock(prev=>{
+      const n={...prev};const st={...(n[activeStockId]||{})};
+      ex.items.forEach(r=>{st[r.id]=Math.max(0,(st[r.id]||0)-r.qty);});
+      (ex.newItems||[]).forEach(ni=>{st[ni.id]=(st[ni.id]||0)+ni.qty;});
+      n[activeStockId]=st;return n;
+    });
+    // Estorna o valor da diferença no caixa
+    if(ex.difference>0){
+      api.cashAction(activeStore,{action:"movement",type:"saida",value:ex.difference,description:"Estorno troca cancelada - "+(ex.cupomOriginal||ex.cupom_original||"")}).catch(console.error);
+    }
+    // Atualiza status para Cancelada
+    setExchanges(prev=>{
+      const n={...prev};
+      n[activeStore]=(n[activeStore]||[]).map(e=>e.id===ex.id?{...e,status:"Cancelada"}:e);
+      return n;
+    });
+    api.cancelExchange(ex.id).catch(console.error);
+    showToast("Troca cancelada e estoque revertido!");
+  };
+
   const filteredNew=storeProducts.filter(p=>
     !newSearch
       ? p.stock>0
@@ -3825,7 +3848,7 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
             <button style={S.primBtn} onClick={searchCupom}>{I.search} Buscar</button>
           </div>
         </div>
-        {storeExchanges.length>0&&<div style={S.card}><h3 style={S.cardTitle}>Histórico</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Cliente</th><th style={S.th}>Tipo</th><th style={S.th}>Devolveu</th><th style={S.th}>Levou</th><th style={S.th}>Dif.</th></tr></thead><tbody>{storeExchanges.map(e=><tr key={e.id} style={S.tr}><td style={S.td}>{fmtDate(e.date)}</td><td style={{...S.td,fontWeight:600}}>{e.customer}</td><td style={S.td}><span style={{...S.stBadge,...(e.type==="Troca"?S.stOk:S.stLow)}}>{e.type}</span></td><td style={S.td}>{e.items.map(i=>i.qty+"x "+i.name).join(", ")}</td><td style={S.td}>{e.newItems?.length>0?e.newItems.map(i=>i.qty+"x "+i.name).join(", "):"-"}</td><td style={{...S.td,fontWeight:700,color:e.difference>0?C.org:e.difference<0?C.grn:C.dim}}>{e.difference>0?"+"+fmt(e.difference):e.difference<0?fmt(Math.abs(e.difference)):"R$ 0"}</td></tr>)}</tbody></table></div></div>}
+        {storeExchanges.length>0&&<div style={S.card}><h3 style={S.cardTitle}>Histórico</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Cliente</th><th style={S.th}>Tipo</th><th style={S.th}>Devolveu</th><th style={S.th}>Levou</th><th style={S.th}>Dif.</th><th style={S.th}>Status</th><th style={S.th}>Ação</th></tr></thead><tbody>{storeExchanges.map(e=><tr key={e.id} style={{...S.tr,opacity:e.status==="Cancelada"?.5:1}}><td style={S.td}>{fmtDate(e.date)}</td><td style={{...S.td,fontWeight:600}}>{e.customer}</td><td style={S.td}><span style={{...S.stBadge,...(e.type==="Troca"?S.stOk:S.stLow)}}>{e.type}</span></td><td style={S.td}>{e.items.map(i=>i.qty+"x "+i.name).join(", ")}</td><td style={S.td}>{e.newItems?.length>0?e.newItems.map(i=>i.qty+"x "+i.name).join(", "):"-"}</td><td style={{...S.td,fontWeight:700,color:e.difference>0?C.org:e.difference<0?C.grn:C.dim}}>{e.difference>0?"+"+fmt(e.difference):e.difference<0?fmt(Math.abs(e.difference)):"R$ 0"}</td><td style={S.td}><span style={{...S.stBadge,...(e.status==="Cancelada"?{background:"rgba(255,82,82,.15)",color:"#ff5252"}:S.stOk)}}>{e.status||"Concluída"}</span></td><td style={S.td}>{e.status!=="Cancelada"&&<button onClick={()=>cancelExchange(e)} style={{padding:"4px 10px",borderRadius:6,border:`1px solid rgba(255,82,82,.4)`,background:"rgba(255,82,82,.1)",color:"#ff5252",fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>Cancelar</button>}</td></tr>)}</tbody></table></div></div>}
       </div>}
 
       {/* ── STEP 1: Selecionar peças a devolver (múltiplas) ── */}

@@ -752,6 +752,14 @@ app.post('/api/exchanges', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.put('/api/exchanges/:id/cancel', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await queryRun('UPDATE exchanges SET status = $1 WHERE id = $2', ['Cancelada', id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════
 // ═══  PROMOS                             ═══
 // ═══════════════════════════════════════════

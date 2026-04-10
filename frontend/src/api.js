@@ -136,6 +136,7 @@ const api = {
   // Exchanges
   getExchanges: (storeId) => request(`/exchanges${storeId ? `?store_id=${storeId}` : ''}`),
   createExchange: (data) => request('/exchanges', { method: 'POST', body: data }),
+  cancelExchange: (id) => request(`/exchanges/${id}/cancel`, { method: 'PUT' }),
 
   // Promos
   getPromos: () => request('/promos'),
