@@ -3774,6 +3774,18 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
       cupomOriginal:foundSale.cupom,status:"Concluída"
     };
     setExchanges(prev=>{const n={...prev};n[activeStore]=[ex,...(n[activeStore]||[])];return n;});
+    // Salva a troca no banco de dados via API
+    api.createExchange({ ...ex, store_id: activeStore, cupom_original: ex.cupomOriginal, new_items: ex.newItems }).catch(console.error);
+    // Registra a diferença paga no caixa
+    if(diff>0){
+      if(splitMode&&paymentsArr){
+        paymentsArr.forEach(p=>{
+          if(p.value>0) api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Diferença troca ("+p.method+") - "+foundSale.cupom}).catch(console.error);
+        });
+      } else {
+        api.cashAction(activeStore,{action:"movement",type:"entrada",value:diff,description:"Diferença troca ("+paymentField+") - "+foundSale.cupom}).catch(console.error);
+      }
+    }
     setStock(prev=>{
       const n={...prev};const st={...(n[activeStockId]||{})};
       returnItems.forEach(r=>{st[r.id]=(st[r.id]||0)+r.qty;});
