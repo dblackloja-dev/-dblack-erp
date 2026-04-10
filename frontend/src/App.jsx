@@ -1002,7 +1002,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     }
   }
   discountValue=Math.min(discountValue,cartSub); // não pode ser maior que o subtotal
-  const cartTotal=Math.max(0,cartSub-discountValue);
+  const cartTotal=Math.round(Math.max(0,cartSub-discountValue)*100)/100;
 
   // Payment calculations
   const totalPaid=payments.reduce((s,p)=>s+p.value,0);
@@ -1039,7 +1039,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     var newPay={method:currentMethod,value:val};
     if(currentMethod==="Dinheiro"&&cashReceived){
       newPay.received=+cashReceived;
-      newPay.change=Math.max(0,(+cashReceived)-val);
+      newPay.change=Math.max(0,Math.round(((+cashReceived)-val)*100)/100);
     }
     setPayments(prev=>[...prev,newPay]);
     setCurrentValue("");setCashReceived("");
@@ -1513,7 +1513,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       line();
       // Pagamento
       ctx.font="bold 11px Arial";ctx.textAlign="left";ctx.fillText("PAGAMENTO",PAD,y);y+=LH;
-      payments.forEach(p=>{row(p.method,fmt(p.value));});
+      payments.forEach(p=>{row(p.method,fmt(p.received||p.value)+(p.change>0?" troco:"+fmt(p.change):""));});
       line();
       // Footer
       y+=4;
@@ -1608,7 +1608,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       <HR/>
       <div style={{fontWeight:700,fontSize:10}}>PAGAMENTO</div>
       {sale.payments&&sale.payments.length>0
-        ?sale.payments.map(function(p,i){return <Row key={i} l={p.method} r={fmt(p.value)+(p.change>0?" troco:"+fmt(p.change):"")}/>;})
+        ?sale.payments.map(function(p,i){return <Row key={i} l={p.method} r={fmt(p.received||p.value)+(p.change>0?" troco:"+fmt(p.change):"")}/>;})
         :<Row l={sale.payment} r={fmt(sale.total)}/>}
       <HR/>
       <div style={{textAlign:"center",margin:"4px 0"}}><C39SVG text={barcode} h={32}/></div>
