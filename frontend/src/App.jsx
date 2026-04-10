@@ -3691,6 +3691,8 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
   const [pay1,setPay1]=useState({method:"PIX",value:""});
   const [pay2,setPay2]=useState({method:"Dinheiro",value:""});
   const [cashRecSplit,setCashRecSplit]=useState("");
+  // Cupom de troca
+  const [receiptExchange,setReceiptExchange]=useState(null);
 
   const todayStr=new Date().toISOString().split("T")[0];
 
@@ -3792,7 +3794,8 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
       newItems.forEach(ni=>{st[ni.id]=Math.max(0,(st[ni.id]||0)-ni.qty);});
       n[activeStockId]=st;return n;
     });
-    resetFlow();showToast(hasNew?"Troca finalizada!":"Devolução finalizada!");
+    setReceiptExchange({...ex,storeId:activeStore});
+    resetFlow();
   };
 
   const cancelExchange=(ex)=>{
@@ -4039,6 +4042,78 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
           <button style={{...S.finBtn,flex:2}} onClick={finalize}>{I.check} CONFIRMAR</button>
         </div>
       </div>}
+
+      {/* ═══ CUPOM COMPROVANTE DE TROCA ═══ */}
+      {receiptExchange&&<ExchangeReceiptModal ex={receiptExchange} onClose={()=>{setReceiptExchange(null);showToast(receiptExchange.type==="Troca"?"Troca finalizada!":"Devolução finalizada!");}} />}
+    </div>
+  );
+}
+
+function ExchangeReceiptModal({ex,onClose}){
+  const contentRef=useRef(null);
+  const storeName=STORES.find(s=>s.id===ex.storeId)?.name||"D'Black Store";
+  const returnTotal=(ex.items||[]).reduce((s,i)=>s+i.price*i.qty,0);
+  const newTotal=(ex.newItems||[]).reduce((s,i)=>s+i.price*i.qty,0);
+
+  useEffect(()=>{
+    const t=setTimeout(()=>{triggerPrint(contentRef,null);},150);
+    return()=>clearTimeout(t);
+  },[]);
+
+  useEffect(()=>{
+    const handler=(e)=>{if(e.key==="Escape")onClose();if(e.key==="Enter"){triggerPrint(contentRef,null);}};
+    window.addEventListener("keydown",handler);
+    return()=>window.removeEventListener("keydown",handler);
+  },[onClose]);
+
+  const W={fontFamily:"'Courier New',Courier,monospace",color:"#000",background:"#fff",width:"100%",boxSizing:"border-box",wordBreak:"break-word",fontWeight:700};
+  const HR=()=><div style={{borderTop:"1px dashed #000",margin:"5px 0"}}/>;
+  const HR2=()=><div style={{borderTop:"2px solid #000",margin:"5px 0"}}/>;
+  const Row=({l,r})=><div style={{display:"flex",justifyContent:"space-between",gap:4,padding:"1px 0",fontWeight:700}}><span style={{flex:1,wordBreak:"break-word"}}>{l}</span><span style={{whiteSpace:"nowrap",fontWeight:700}}>{r}</span></div>;
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)"}} onClick={onClose}>
+      <div style={{background:"#fff",borderRadius:12,maxWidth:380,width:"92%",maxHeight:"90vh",overflowY:"auto",padding:0}} onClick={e=>e.stopPropagation()}>
+        <div ref={contentRef} id="receipt-print" style={{...W,padding:"6px 4px",fontSize:11,lineHeight:1.6}}>
+          <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+          <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>COMPROVANTE DE {ex.type==="Troca"?"TROCA":"DEVOLUCAO"}</div>
+          <div style={{textAlign:"center",fontSize:10}}>{storeName}</div>
+          <HR/>
+          <Row l={"Data: "+fmtDate(ex.date)} r=""/>
+          <Row l={"Cliente: "+(ex.customer||"Avulso")} r=""/>
+          <Row l={"Cupom orig: "+(ex.cupomOriginal||"-")} r=""/>
+          {ex.reason&&ex.reason!=="-"&&<Row l={"Motivo: "+ex.reason} r=""/>}
+          <HR/>
+          <div style={{fontWeight:700,fontSize:10}}>ITENS DEVOLVIDOS</div>
+          {(ex.items||[]).map((it,i)=><div key={i} style={{padding:"1px 0"}}>
+            <div style={{fontSize:10}}>{it.qty}x {it.name}</div>
+            <Row l={"  "+it.qty+" x "+fmt(it.price)} r={fmt(it.price*it.qty)}/>
+          </div>)}
+          <Row l="Subtotal devolvido" r={fmt(returnTotal)}/>
+          {ex.newItems&&ex.newItems.length>0&&<>
+            <HR/>
+            <div style={{fontWeight:700,fontSize:10}}>NOVOS ITENS</div>
+            {ex.newItems.map((it,i)=><div key={i} style={{padding:"1px 0"}}>
+              <div style={{fontSize:10}}>{it.qty}x {it.name}</div>
+              <Row l={"  "+it.qty+" x "+fmt(it.price)} r={fmt(it.price*it.qty)}/>
+            </div>)}
+            <Row l="Subtotal novos" r={fmt(newTotal)}/>
+          </>}
+          <HR2/>
+          {ex.difference>0&&<Row l="DIFERENCA PAGA" r={fmt(ex.difference)}/>}
+          {ex.difference<0&&<Row l="TROCO/CREDITO" r={fmt(Math.abs(ex.difference))}/>}
+          {ex.difference===0&&<Row l="SEM DIFERENCA" r="R$ 0,00"/>}
+          {ex.payment&&<Row l={"Pagamento: "+ex.payment} r=""/>}
+          {ex.change>0&&<Row l="Troco" r={fmt(ex.change)}/>}
+          <HR/>
+          <div style={{textAlign:"center",fontSize:11,lineHeight:1.7}}>Obrigado pela preferencia!<br/>Volte sempre - D'Black Store<br/>@d_blackloja</div>
+          <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
+        </div>
+        <div style={{display:"flex",gap:8,padding:"12px 8px",borderTop:"1px solid #ddd"}} className="no-print">
+          <button onClick={()=>triggerPrint(contentRef,null)} style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid #ccc",background:"#f5f5f5",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>🖨️ Reimprimir</button>
+          <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:8,border:"none",background:"#222",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>✓ Fechar</button>
+        </div>
+      </div>
     </div>
   );
 }
