@@ -638,7 +638,7 @@ export default function App() {
           {tab==="comissoes" && <ComissoesModule {...{storeSellers,sellers,setSellers,storeSales,showToast}} />}
 
           {/* TROCAS */}
-          {tab==="trocas" && <TrocasModule {...{storeExchanges,exchanges,setExchanges,storeSales,storeProducts,activeStore,stock,setStock,showToast,activeStockId}} />}
+          {tab==="trocas" && <TrocasModule {...{storeExchanges,exchanges,setExchanges,storeSales,storeProducts,activeStore,stock,setStock,showToast,activeStockId,cashState,setCashState,loggedUser}} />}
 
           {/* ETIQUETAS */}
           {tab==="etiquetas" && <EtiquetasModule {...{storeProducts,showToast}} />}
@@ -3674,7 +3674,7 @@ function ComissoesModule({storeSellers,sellers,setSellers,storeSales,showToast})
 // ═══════════════════════════════════
 // ═══  TROCAS MODULE (fluxo cupom)═══
 // ═══════════════════════════════════
-function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storeProducts,activeStore,stock,setStock,showToast,activeStockId}){
+function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storeProducts,activeStore,stock,setStock,showToast,activeStockId,cashState,setCashState,loggedUser}){
   const [step,setStep]=useState(0);
   const [cupomInput,setCupomInput]=useState("");
   const [foundSale,setFoundSale]=useState(null);
@@ -3778,14 +3778,19 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
     setExchanges(prev=>{const n={...prev};n[activeStore]=[ex,...(n[activeStore]||[])];return n;});
     // Salva a troca no banco de dados via API
     api.createExchange({ ...ex, store_id: activeStore, cupom_original: ex.cupomOriginal, new_items: ex.newItems }).catch(console.error);
-    // Registra a diferença paga no caixa
+    // Registra a diferença paga no caixa (backend + local)
     if(diff>0){
+      const cashKey=activeStore+"_"+(loggedUser?.id||"main");
       if(splitMode&&paymentsArr){
         paymentsArr.forEach(p=>{
-          if(p.value>0) api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Diferença troca ("+p.method+") - "+foundSale.cupom}).catch(console.error);
+          if(p.value>0){
+            api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Diferença troca ("+p.method+") - "+foundSale.cupom}).catch(console.error);
+            setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:p.value,desc:"Troca ("+p.method+") "+foundSale.cupom,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
+          }
         });
       } else {
         api.cashAction(activeStore,{action:"movement",type:"entrada",value:diff,description:"Diferença troca ("+paymentField+") - "+foundSale.cupom}).catch(console.error);
+        setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:diff,desc:"Troca ("+paymentField+") "+foundSale.cupom,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
       }
     }
     setStock(prev=>{
@@ -3807,9 +3812,12 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
       (ex.newItems||[]).forEach(ni=>{st[ni.id]=(st[ni.id]||0)+ni.qty;});
       n[activeStockId]=st;return n;
     });
-    // Estorna o valor da diferença no caixa
+    // Estorna o valor da diferença no caixa (backend + local)
     if(ex.difference>0){
-      api.cashAction(activeStore,{action:"movement",type:"saida",value:ex.difference,description:"Estorno troca cancelada - "+(ex.cupomOriginal||ex.cupom_original||"")}).catch(console.error);
+      const cupomRef=ex.cupomOriginal||ex.cupom_original||"";
+      api.cashAction(activeStore,{action:"movement",type:"saida",value:ex.difference,description:"Estorno troca cancelada - "+cupomRef}).catch(console.error);
+      const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+      setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:ex.difference,desc:"Estorno troca "+cupomRef,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
     }
     // Atualiza status para Cancelada
     setExchanges(prev=>{
