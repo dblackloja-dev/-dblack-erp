@@ -312,13 +312,45 @@ export default function App() {
     ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,expCats]) => {
       if(prods?.length) setCatalog(prods.map(prodFromApi));
       if(stk&&Object.keys(stk).length) setStock(stk);
-      if(sls?.length) setSales(salesFromApi(sls));
+      if(sls?.length){
+        // Sincroniza vendas locais que não existem no servidor (ex: feitas offline)
+        const apiSales=salesFromApi(sls);
+        const localSales=ls('sales',{loja1:[],loja2:[],loja3:[],loja4:[]});
+        const apiIds=new Set(sls.map(s=>s.id));
+        let synced=0;
+        Object.keys(localSales).forEach(store=>{
+          (localSales[store]||[]).forEach(sale=>{
+            if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"){
+              api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',stock_id:''}).catch(console.error);
+              if(!apiSales[store])apiSales[store]=[];
+              apiSales[store].unshift(sale);
+              synced++;
+            }
+          });
+        });
+        if(synced>0) console.log('[SYNC] '+synced+' vendas locais enviadas ao servidor');
+        setSales(apiSales);
+      }
       if(custs?.length) setCustomers(custs.map(custFromApi));
       if(exps?.length) setExpenses(expFromApi(exps));
       if(emps?.length) setEmployees(emps.map(empFromApi));
       if(pays?.length) setPayrolls(pays.map(payrollFromApi));
       if(sels?.length) setSellers(sels.map(sellerFromApi));
-      if(exchs?.length) setExchanges(exchFromApi(exchs));
+      if(exchs?.length){
+        const apiExchs=exchFromApi(exchs);
+        const localExchs=ls('exchanges',{loja1:[],loja2:[],loja3:[],loja4:[]});
+        const apiExchIds=new Set(exchs.map(e=>e.id));
+        Object.keys(localExchs).forEach(store=>{
+          (localExchs[store]||[]).forEach(ex=>{
+            if(ex.id&&!apiExchIds.has(ex.id)&&ex.status!=="Cancelada"){
+              api.createExchange({...ex,store_id:store,cupom_original:ex.cupomOriginal||ex.cupom_original||'',new_items:ex.newItems||[]}).catch(console.error);
+              if(!apiExchs[store])apiExchs[store]=[];
+              apiExchs[store].unshift(ex);
+            }
+          });
+        });
+        setExchanges(apiExchs);
+      }
       if(proms?.length) setPromos(proms.map(promoFromApi));
       if(invs?.length) setInvestments(invs);
       if(usrs?.length) setUsers(usrs);
