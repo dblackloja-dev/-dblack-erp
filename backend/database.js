@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 // Conecta ao PostgreSQL via variável de ambiente (Neon, Supabase, Railway, etc.)
@@ -266,6 +267,30 @@ async function initDB() {
 
   // Migrações: adicionar colunas novas se não existirem
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_type TEXT DEFAULT 'operacional'`).catch(()=>{});
+  await pool.query(`ALTER TABLE promos ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{});
+  await pool.query(`ALTER TABLE investments ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{});
+
+  // ─── ÍNDICES para performance em multi-loja ───
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_sales_store_date ON sales(store_id, date)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_stock_movements_stock ON stock_movements(stock_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_expenses_store_date ON expenses(store_id, date)',
+    'CREATE INDEX IF NOT EXISTS idx_customers_cpf ON customers(cpf)',
+    'CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone)',
+    'CREATE INDEX IF NOT EXISTS idx_employees_store ON employees(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_payrolls_month ON payrolls(month)',
+    'CREATE INDEX IF NOT EXISTS idx_payrolls_emp ON payrolls(emp_id)',
+    'CREATE INDEX IF NOT EXISTS idx_cash_movements_store ON cash_movements(store_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_exchanges_store ON exchanges(store_id, date)',
+    'CREATE INDEX IF NOT EXISTS idx_withdrawals_store ON cash_withdrawals(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)',
+    'CREATE INDEX IF NOT EXISTS idx_users_store ON users(store_id)',
+  ];
+  for (const idx of indexes) {
+    await pool.query(idx).catch(() => {});
+  }
 
   // Seed categorias de despesas padrão
   const defExpCats = ['Aluguel','Energia','Água','Internet','Funcionários','Marketing','Manutenção','Material','Impostos','Transporte','Alimentação','Fornecedor','Outros'];
@@ -293,14 +318,22 @@ async function seedIfEmpty() {
     ('loja4', 'D''Black E-commerce', '#00E676', 'shared_matriz')
   `);
 
-  await pool.query(`INSERT INTO users (id, name, email, password, role, store_id, active, avatar) VALUES
-    ('u1', 'Denilson', 'denilson@dblack.com', 'admin123', 'admin', 'all', true, 'DN'),
-    ('u2', 'Ana Beatriz', 'ana@dblack.com', 'ana123', 'gerente', 'loja1', true, 'AB'),
-    ('u3', 'Carlos Silva', 'carlos@dblack.com', 'carlos123', 'vendedor', 'loja1', true, 'CS'),
-    ('u4', 'Diego Ramos', 'diego@dblack.com', 'diego123', 'vendedor', 'loja2', true, 'DR'),
-    ('u5', 'Fernanda Lima', 'fer@dblack.com', 'fer123', 'gerente', 'loja2', true, 'FL'),
-    ('u6', 'Gabriel Costa', 'gab@dblack.com', 'gabriel123', 'gestor', 'all', true, 'GC')
-  `);
+  // Senhas com hash bcrypt para segurança
+  const seedUsers = [
+    ['u1', 'Denilson', 'denilson@dblack.com', 'admin123', 'admin', 'all', 'DN'],
+    ['u2', 'Ana Beatriz', 'ana@dblack.com', 'ana123', 'gerente', 'loja1', 'AB'],
+    ['u3', 'Carlos Silva', 'carlos@dblack.com', 'carlos123', 'vendedor', 'loja1', 'CS'],
+    ['u4', 'Diego Ramos', 'diego@dblack.com', 'diego123', 'vendedor', 'loja2', 'DR'],
+    ['u5', 'Fernanda Lima', 'fer@dblack.com', 'fer123', 'gerente', 'loja2', 'FL'],
+    ['u6', 'Gabriel Costa', 'gab@dblack.com', 'gabriel123', 'gestor', 'all', 'GC'],
+  ];
+  for (const [id, name, email, pass, role, store, avatar] of seedUsers) {
+    const hash = await bcrypt.hash(pass, 10);
+    await pool.query(
+      'INSERT INTO users (id, name, email, password, role, store_id, active, avatar) VALUES ($1,$2,$3,$4,$5,$6,true,$7)',
+      [id, name, email, hash, role, store, avatar]
+    );
+  }
 
   const products = [
     ['p1','Camiseta Oversized Premium','CAM-001','7891234560011','REF-001','Camisetas',"D'Black",'SP Têxtil','M','Preto',149.90,45,232.0,10,'👕','["P","M","G","GG"]'],

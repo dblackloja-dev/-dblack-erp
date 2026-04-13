@@ -8,20 +8,26 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-const { queryAll, queryOne, queryRun, initDB } = require('./database');
+const { queryAll, queryOne, queryRun, initDB, pool } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const UPLOAD_DIR = path.resolve(__dirname, process.env.UPLOAD_DIR || '../uploads');
-const JWT_SECRET = process.env.JWT_SECRET || 'dblack_jwt_secret_2026';
+// JWT_SECRET DEVE ser definido no .env — sem fallback inseguro
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('❌ ERRO: JWT_SECRET não está definido no .env! O servidor não pode iniciar sem ele.');
+  process.exit(1);
+}
 
 // Garante que a pasta de uploads existe
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// CORS — libera Vercel e localhost antes de qualquer middleware
+// CORS — lista fixa de origens permitidas (definir no .env separado por vírgula)
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',').map(s => s.trim());
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
-  if (!origin || origin.includes('localhost') || origin.endsWith('.vercel.app') || origin.endsWith('.railway.app')) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -47,6 +53,15 @@ const authMiddleware = (req, res, next) => {
   }
 };
 app.use('/api', authMiddleware);
+
+// ─── RBAC MIDDLEWARE — controle de permissão por role ───
+// Roles: admin > gestor > gerente > vendedor
+const requireRole = (...allowedRoles) => (req, res, next) => {
+  if (!req.user || !allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Sem permissão para esta ação' });
+  }
+  next();
+};
 
 // Multer — upload de fotos de produtos
 const storage = multer.diskStorage({
@@ -153,12 +168,12 @@ app.get('/api/auth/me', async (req, res) => {
 
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await queryAll('SELECT * FROM users ORDER BY name');
+    const users = await queryAll('SELECT id, name, email, role, store_id, active, avatar, created_at FROM users ORDER BY name');
     res.json(users);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/users', async (req, res) => {
+app.post('/api/users', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     const { name, email, password, pin, role, store_id, avatar } = req.body;
     const id = genId();
@@ -172,7 +187,7 @@ app.post('/api/users', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.put('/api/users/:id', async (req, res) => {
+app.put('/api/users/:id', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     const { name, email, password, pin, role, store_id, active, avatar } = req.body;
     const rawPass = password || pin;
@@ -195,7 +210,7 @@ app.put('/api/users/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/users/:id', async (req, res) => {
+app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
   try {
     if (req.params.id === req.user.id) return res.status(400).json({ error: 'Você não pode excluir seu próprio usuário' });
     await queryRun('DELETE FROM users WHERE id = $1', [req.params.id]);
@@ -353,31 +368,45 @@ app.put('/api/stock/:stockId/:productId', async (req, res) => {
 });
 
 app.post('/api/stock/transfer', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { fromStockId, toStockId, productId, quantity, user_name } = req.body;
 
-    const current = await queryOne('SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2', [fromStockId, productId]);
-    if (!current || current.quantity < quantity) {
+    await client.query('BEGIN');
+
+    // Trava a linha de estoque para evitar race condition
+    const { rows } = await client.query(
+      'SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2 FOR UPDATE',
+      [fromStockId, productId]
+    );
+    if (!rows[0] || rows[0].quantity < quantity) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Estoque insuficiente' });
     }
 
-    await queryRun('UPDATE stock SET quantity = quantity - $1 WHERE stock_id = $2 AND product_id = $3', [quantity, fromStockId, productId]);
-    await queryRun(
+    await client.query('UPDATE stock SET quantity = quantity - $1 WHERE stock_id = $2 AND product_id = $3', [quantity, fromStockId, productId]);
+    await client.query(
       'INSERT INTO stock (stock_id, product_id, quantity) VALUES ($1,$2,$3) ON CONFLICT (stock_id, product_id) DO UPDATE SET quantity = stock.quantity + $3',
       [toStockId, productId, quantity]
     );
 
-    await queryRun(
+    await client.query(
       'INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, from_store, to_store, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
       [genId(), fromStockId, productId, 'transfer_out', quantity, 'Transferência', fromStockId, toStockId, user_name || '']
     );
-    await queryRun(
+    await client.query(
       'INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, from_store, to_store, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
       [genId(), toStockId, productId, 'transfer_in', quantity, 'Transferência', fromStockId, toStockId, user_name || '']
     );
 
+    await client.query('COMMIT');
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 app.get('/api/stock/movements/:stockId', async (req, res) => {
@@ -408,10 +437,34 @@ app.get('/api/sales', async (req, res) => {
 });
 
 app.post('/api/sales', async (req, res) => {
+  const client = await pool.connect();
   try {
     const s = req.body;
     const id = s.id || genId();
-    await queryRun(
+
+    await client.query('BEGIN');
+
+    // Verifica e baixa estoque dentro da transação
+    if (s.items && s.stock_id) {
+      for (const item of s.items) {
+        const { rows } = await client.query(
+          'SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2 FOR UPDATE',
+          [s.stock_id, item.id]
+        );
+        if (rows[0] && rows[0].quantity < item.qty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Estoque insuficiente para "${item.name || item.id}". Disponível: ${rows[0].quantity}, Solicitado: ${item.qty}` });
+        }
+      }
+      for (const item of s.items) {
+        await client.query(
+          'UPDATE stock SET quantity = quantity - $1 WHERE stock_id = $2 AND product_id = $3',
+          [item.qty, s.stock_id, item.id]
+        );
+      }
+    }
+
+    await client.query(
       `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
@@ -420,29 +473,65 @@ app.post('/api/sales', async (req, res) => {
        s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '']
     );
 
-    // Baixa estoque
-    if (s.items && s.stock_id) {
-      for (const item of s.items) {
-        await queryRun(
-          'UPDATE stock SET quantity = GREATEST(0, quantity - $1) WHERE stock_id = $2 AND product_id = $3',
-          [item.qty, s.stock_id, item.id]
-        );
-      }
-    }
-
+    await client.query('COMMIT');
     res.json({ id, ...s });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 app.put('/api/sales/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { status, payment, payments, canceled_by, canceled_at } = req.body;
-    await queryRun(
+
+    // Se está cancelando, devolver itens ao estoque
+    if (status === 'Cancelada') {
+      const sale = await client.query('SELECT * FROM sales WHERE id = $1', [req.params.id]);
+      if (sale.rows[0] && sale.rows[0].status !== 'Cancelada') {
+        await client.query('BEGIN');
+        const saleData = sale.rows[0];
+        const items = JSON.parse(saleData.items || '[]');
+        // Busca o stock_id da loja
+        const store = await client.query('SELECT stock_id FROM stores WHERE id = $1', [saleData.store_id]);
+        const stockId = store.rows[0]?.stock_id || saleData.store_id;
+
+        for (const item of items) {
+          await client.query(
+            'UPDATE stock SET quantity = quantity + $1 WHERE stock_id = $2 AND product_id = $3',
+            [item.qty, stockId, item.id]
+          );
+          await client.query(
+            'INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+            [genId(), stockId, item.id, 'devolucao_cancelamento', item.qty, `Cancelamento da venda ${req.params.id}`, canceled_by || '']
+          );
+        }
+
+        await client.query(
+          'UPDATE sales SET status=$1, payment=$2, payments=$3, canceled_by=$4, canceled_at=$5 WHERE id=$6',
+          [status, payment || '', JSON.stringify(payments || []), canceled_by || '', canceled_at || '', req.params.id]
+        );
+        await client.query('COMMIT');
+        client.release();
+        return res.json({ success: true });
+      }
+    }
+
+    // Atualização normal (sem cancelamento)
+    await client.query(
       'UPDATE sales SET status=$1, payment=$2, payments=$3, canceled_by=$4, canceled_at=$5 WHERE id=$6',
       [status, payment || '', JSON.stringify(payments || []), canceled_by || '', canceled_at || '', req.params.id]
     );
+    client.release();
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════
@@ -601,6 +690,13 @@ app.post('/api/withdrawals', async (req, res) => {
       'INSERT INTO cash_withdrawals (id, store_id, value, description, responsible, destination) VALUES ($1,$2,$3,$4,$5,$6)',
       [id, w.store_id, w.value, w.description || '', w.responsible || '', w.destination || '']
     );
+
+    // Registra a saída no caixa para que o saldo seja atualizado
+    await queryRun(
+      'INSERT INTO cash_movements (id, store_id, type, value, description) VALUES ($1,$2,$3,$4,$5)',
+      [genId(), w.store_id, 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim()]
+    );
+
     res.json({ id, ...w, created_at: new Date().toISOString() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -622,7 +718,7 @@ app.get('/api/employees', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/employees', async (req, res) => {
+app.post('/api/employees', requireRole('admin', 'gestor', 'gerente'), async (req, res) => {
   try {
     const e = req.body;
     const id = genId();
@@ -645,7 +741,7 @@ app.put('/api/employees/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/employees/:id', async (req, res) => {
+app.delete('/api/employees/:id', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     await queryRun('DELETE FROM employees WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -662,7 +758,7 @@ app.get('/api/payrolls', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/payrolls', async (req, res) => {
+app.post('/api/payrolls', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     const p = req.body;
     const id = genId();
@@ -674,7 +770,7 @@ app.post('/api/payrolls', async (req, res) => {
       [id, p.month, p.emp_id, p.emp_name || '', p.emp_cpf || '', p.emp_role || '', p.emp_pix || '',
        p.store_id || '', p.store_name || '', p.base_salary || 0, p.meta_bonus || 0, p.awards || 0,
        p.overtime || 0, p.store_discount || 0, p.advances || 0, p.other_deductions || 0,
-       p.total_earnings || 0, p.total_deductions || 0, p.net_pay || 0, true, p.paid_date || today(), p.notes || '']
+       p.total_earnings || 0, p.total_deductions || 0, p.net_pay || 0, p.paid || false, p.paid_date || null, p.notes || '']
     );
     res.json({ id, ...p });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -697,7 +793,7 @@ app.put('/api/payrolls/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/payrolls/:id', async (req, res) => {
+app.delete('/api/payrolls/:id', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     await queryRun('DELETE FROM payrolls WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -739,17 +835,60 @@ app.get('/api/exchanges', async (req, res) => {
 });
 
 app.post('/api/exchanges', async (req, res) => {
+  const client = await pool.connect();
   try {
     const e = req.body;
     const id = genId();
-    await queryRun(
+
+    await client.query('BEGIN');
+
+    // Busca o stock_id da loja
+    const storeResult = await client.query('SELECT stock_id FROM stores WHERE id = $1', [e.store_id]);
+    const stockId = storeResult.rows[0]?.stock_id || e.store_id;
+
+    // Devolve itens trocados ao estoque (entrada)
+    if (e.items && e.items.length > 0) {
+      for (const item of e.items) {
+        await client.query(
+          'UPDATE stock SET quantity = quantity + $1 WHERE stock_id = $2 AND product_id = $3',
+          [item.qty || 1, stockId, item.id]
+        );
+        await client.query(
+          'INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+          [genId(), stockId, item.id, 'troca_entrada', item.qty || 1, `Troca ${id} - devolução`, '']
+        );
+      }
+    }
+
+    // Baixa novos itens do estoque (saída)
+    if (e.new_items && e.new_items.length > 0) {
+      for (const item of e.new_items) {
+        await client.query(
+          'UPDATE stock SET quantity = GREATEST(0, quantity - $1) WHERE stock_id = $2 AND product_id = $3',
+          [item.qty || 1, stockId, item.id]
+        );
+        await client.query(
+          'INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+          [genId(), stockId, item.id, 'troca_saida', item.qty || 1, `Troca ${id} - novo item`, '']
+        );
+      }
+    }
+
+    await client.query(
       `INSERT INTO exchanges (id, store_id, date, customer, type, reason, items, new_items, difference, cupom_original, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [id, e.store_id, e.date || today(), e.customer || '', e.type || 'Troca', e.reason || '',
        JSON.stringify(e.items || []), JSON.stringify(e.new_items || []), e.difference || 0, e.cupom_original || '', 'Concluída']
     );
+
+    await client.query('COMMIT');
     res.json({ id, ...e });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 app.put('/api/exchanges/:id/cancel', async (req, res) => {
@@ -818,55 +957,7 @@ app.post('/api/investments', async (req, res) => {
 // ═══  START SERVER                       ═══
 // ═══════════════════════════════════════════
 // Health check (sem autenticação)
-// ── QZ Tray: assina requisições de impressão com chave privada ──
-const QZ_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCiEB7ITZpq59ec
-JyjBkfapVTsClOdBp69qid4DwoKKFK3LRI85W6CfuVQBFnFb/8LvnFxsSqKnlJ+K
-qokxCcFxVvd6wwhRQc/6uOsRC7sh8qbpI8UDK7voaVt4ztqZjp27APt2PbbiiKTT
-uuBMlgCaTUGhQNhxpHJMm1KO2qKAh+Ljys0I8d3gGLfgxAat13R51I4+qUa5WD+Y
-QzZ41Opu+pS63M9QTRD7MCUevew74DmVPPrjVw0ftlkvBfI9ReiTKnViOiUzTJxA
-qo2y+B0Gesp319ZwIynvcJAZ5wGBFBkHcFpVnTRnl5CMRojSP+ab5k306+WQMzJu
-xKtQuIt/AgMBAAECggEANhR2CTZoQKN0Hh4tKgcYziHsaqygzRZ1YXJ3PT7zy7sh
-0bJjrurGG3a/Mwu3sVEUTlwZtWNkitJ8OMw2ssAEJtu0AunBRUhWbF63xnzpKeds
-zmDK1geKkYBS72nrpZFjTiuCPk9Sz550jlkOj1ABDHyaWYKnl6ieIbU1JAmOb6Ag
-5A+fST2N/FWGim3I23eeTqAsL4R4rG7r4LRIJxKriC8PMnRkZv3DOAcluIrLElyG
-ko+tGvNHFPp6fmd5DZoBf3hxfjd87fyjJeHRxtDIPBt3V6NN+FB0tCZ7Lg8kY/qi
-qOA8LpP+EC/A5pbEDl+69AxkWwwpnbO0JZO4arjq1QKBgQDMGH1sRSFqIRjqvCZz
-AbTBGzJe6bAE0ivD5yn20DaewYlx0rFK75ocgkgMjg2y7v1gGLlqIlPOCvnWqenB
-G6dJX0/5oeTNZS9yV4opiBcjIwH81PXbe48coqk1BwFjB9r8xMPtBRz680ewnmpZ
-5jkjovXcf9Mx0I1rr6keTL0KLQKBgQDLRx7F7BQG7iZqFU5vug9UiEJ1Aiu8iLrx
-6b26gcNU38abjvWDmcTMSepOMW6ohuwfDwzR4jAzwK0idSrOnst+siFlxxN9hAJz
-EllQkgYWuiLoHRJvaL3gZqz3jnWo1O0P4aU4rneW+cofi9DzKwePQ784r1sl8Lbr
-2EJTjW2T2wKBgQDAWIQ7uZsYLkERWGjUElOLeloqYQpmQLzGT+GYnfob/EHQZ8R2
-3wDaxV2pl2cJr3pTSnnTsK5SjL2QtWl7eNhbqdvxY8YCXM4ucJnhMkS79I42/W0H
-gJcLYbEeLI/+CLU1aytLAXqidwylQ2bveq13DGmxeTZMyEO/rTkxORkfsQKBgBrE
-lMLPYZvABIL3p0qDH72r68RossWy45szgm5q5APrK8YUPzRDLW0RVq9RRxceHT3B
-x5hjxqEqACKHd0maE4XtgwRaALEIjyIECorXj8GyZSJXobPWARrpqmE2+ztuPoFW
-32DlaI4S+pDI4o0C3434B9g5DzGhzxSjd6h0+Tb9AoGBAJ/+bl08OW68cDkRL+4F
-WoMF83+abq2tFjVIjAslZFlxKPiaTazoONTOQFRvzZACZe8CPX+TfZTLwaNif8Sl
-wuixt4g1DiVjaYtsirrEaoj9Hs5/pxSOIZX+GASWwL9HGpI84ud6cfAJau6RwORt
-5QGq8K6l33zJWI2xBJhXAqel
------END PRIVATE KEY-----`;
-
-const QZ_CERTIFICATE = `-----BEGIN CERTIFICATE-----
-MIIDCzCCAfOgAwIBAgIURKOCoVnkTVwNuY4WqIeiQ00FYvQwDQYJKoZIhvcNAQEL
-BQAwFTETMBEGA1UEAwwKREJsYWNrIEVSUDAeFw0yNjA0MDYxNjU3MDBaFw0zNjA0
-MDMxNjU3MDBaMBUxEzARBgNVBAMMCkRCbGFjayBFUlAwggEiMA0GCSqGSIb3DQEB
-AQUAA4IBDwAwggEKAoIBAQCiEB7ITZpq59ecJyjBkfapVTsClOdBp69qid4DwoKK
-FK3LRI85W6CfuVQBFnFb/8LvnFxsSqKnlJ+KqokxCcFxVvd6wwhRQc/6uOsRC7sh
-8qbpI8UDK7voaVt4ztqZjp27APt2PbbiiKTTuuBMlgCaTUGhQNhxpHJMm1KO2qKA
-h+Ljys0I8d3gGLfgxAat13R51I4+qUa5WD+YQzZ41Opu+pS63M9QTRD7MCUevew7
-4DmVPPrjVw0ftlkvBfI9ReiTKnViOiUzTJxAqo2y+B0Gesp319ZwIynvcJAZ5wGB
-FBkHcFpVnTRnl5CMRojSP+ab5k306+WQMzJuxKtQuIt/AgMBAAGjUzBRMB0GA1Ud
-DgQWBBScfVt6JXhp1mG1iOdXu6ExuGSo7TAfBgNVHSMEGDAWgBScfVt6JXhp1mG1
-iOdXu6ExuGSo7TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAH
-NmkJCztq/9/GBBFNiLOZPuOn3nDtWOpuFSeB3OhyY7rOe+GKjPvSTzmY3Il1FnxR
-+1HeO+RaWeVhmRpkckglwXFaD3kNDEO+djLZrGEuQ8JqT8tO0hrHMh4tm0E96/pe
-hYGYd20IW2Z4PcOL9UdFDpRQ1HF2Ht5T9ZZ4dPBll6jjS29Xf6hKO/RcR1tt7TLu
-LSEttkHgQEuEK604NwJ9/uDpnGA2a5vzj6wXKfbC2gqFBkEyWxHAEShVI27ku2UY
-g1+BFOIlRWTVWrmby0c7Qrv7rq9LZWgRtgobVn/X7s7sYvELudHu/TOSjsvNk1ep
-cR8LceoswU8spRqTq2ev
------END CERTIFICATE-----`;
+// ── QZ Tray: chave privada e certificado lidos dos arquivos .pem ──
 
 app.post('/api/qz-sign', (req, res) => {
   try {
@@ -881,16 +972,18 @@ app.post('/api/qz-sign', (req, res) => {
 });
 
 app.get('/api/qz-cert', (req, res) => {
-  res.type('text/plain').send(QZ_CERTIFICATE);
+  try {
+    const cert = fs.readFileSync(path.join(__dirname, 'qz-certificate.pem'), 'utf8');
+    res.type('text/plain').send(cert);
+  } catch(e) { res.status(500).json({ error: 'Certificado não encontrado' }); }
 });
 
 app.get('/health', async (req, res) => {
   try {
-    const { pool } = require('./database');
     await pool.query('SELECT 1');
     res.json({ status: 'ok', db: 'connected', time: new Date().toISOString() });
   } catch(e) {
-    res.json({ status: 'ok', db: 'error: ' + e.message, time: new Date().toISOString() });
+    res.status(503).json({ status: 'error', db: 'disconnected', error: e.message, time: new Date().toISOString() });
   }
 });
 

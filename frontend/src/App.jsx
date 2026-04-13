@@ -514,7 +514,7 @@ export default function App() {
             </button>
 
             <div style={{marginTop:20,fontSize:11,color:C.dim,lineHeight:1.8}}>
-              Acesso demo — usuário: <strong style={{color:C.gold}}>Denilson</strong> / senha: <strong style={{color:C.gold}}>admin123</strong>
+              D'Black Store ERP — v1.0
             </div>
           </div>
         </div>
@@ -2835,6 +2835,16 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     const newW={id:genId(),storeId:activeStore,store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp||loggedUser?.name||"",destination:wdDest,createdAt:new Date().toISOString(),created_at:new Date().toISOString()};
     setWithdrawals(prev=>[newW,...prev]);
     api.createWithdrawal({store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp,destination:wdDest}).catch(console.error);
+    // Registra saída no caixa para subtrair do saldo
+    const cashKey="cash_"+activeStore;
+    setCashState(prev=>{
+      const n={...prev};
+      const cs=n[cashKey]||{open:false,initial:0,history:[]};
+      if(cs.open){
+        n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:+wdVal,desc:"Retirada: "+(wdDesc||"Sem descrição"),time:new Date().toLocaleTimeString("pt-BR")}]};
+      }
+      return n;
+    });
     setWdVal("");setWdDesc("");setWdDest("");
     showToast("Retirada de "+fmt(+wdVal)+" registrada!");
   };
