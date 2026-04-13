@@ -332,7 +332,7 @@ export default function App() {
         setSales(apiSales);
       }
       if(custs?.length) setCustomers(custs.map(custFromApi));
-      if(exps?.length) setExpenses(expFromApi(exps));
+      setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
       if(emps?.length) setEmployees(emps.map(empFromApi));
       if(pays?.length) setPayrolls(pays.map(payrollFromApi));
       if(sels?.length) setSellers(sels.map(sellerFromApi));
@@ -354,7 +354,7 @@ export default function App() {
       if(proms?.length) setPromos(proms.map(promoFromApi));
       if(invs?.length) setInvestments(invs);
       if(usrs?.length) setUsers(usrs);
-      if(wdrs?.length) setWithdrawals(wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})));
+      setWithdrawals(wdrs?.length ? wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})) : []);
       if(expCats?.length) setExpenseCategories(expCats.map(c=>c.name));
     }).catch(e => console.error('Erro ao carregar do servidor:', e))
       .finally(() => { if(!silent) setApiLoaded(true); });
@@ -2225,9 +2225,13 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const otherStores=STORES.filter(s=>s.stockId!==activeStockId); // only stores with different stock
 
   // Adjust stock helper — uses stockId, not storeId
-  const adjustStock=(pid,delta,targetStockId)=>{
+  const adjustStock=(pid,delta,targetStockId,opts={})=>{
     targetStockId=targetStockId||activeStockId;
     setStock(prev=>{const n={...prev};const st={...(n[targetStockId]||{})};st[pid]=Math.max(0,(st[pid]||0)+delta);n[targetStockId]=st;return n;});
+    // Persiste no backend (opts.skipApi permite pular quando já chamado de outro lugar)
+    if(!opts.skipApi){
+      api.adjustStock(targetStockId,pid,{delta,type:opts.type||"",reason:opts.reason||""}).catch(console.error);
+    }
   };
 
   // Entry/Exit
@@ -2239,7 +2243,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       const current=(stock[activeStockId]||{})[movProduct]||0;
       // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
     }
-    adjustStock(movProduct, movType==="entrada"?qty:-qty);
+    adjustStock(movProduct, movType==="entrada"?qty:-qty, activeStockId, {type:movType,reason:movReason||"-"});
     const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:movType,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
     setMovHistory(prev=>[mov,...prev]);
     showToast((movType==="entrada"?"Entrada":"Saída")+" de "+qty+" un. registrada!");
@@ -2254,8 +2258,9 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
     const prod=catalog.find(p=>p.id===transProduct);
     const destStore=STORES.find(s=>s.id===transTo);
-    adjustStock(transProduct,-qty,activeStockId);
-    adjustStock(transProduct,qty,getStockId(transTo));
+    adjustStock(transProduct,-qty,activeStockId,{skipApi:true});
+    adjustStock(transProduct,qty,getStockId(transTo),{skipApi:true});
+    api.transferStock({fromStockId:activeStockId,toStockId:getStockId(transTo),productId:transProduct,quantity:qty}).catch(console.error);
     const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"transferencia",productId:transProduct,productName:prod?.name||"",qty,reason:"Transferência para "+destStore?.name,store:currentStore.name,from:currentStore.name,to:destStore?.name};
     setMovHistory(prev=>[mov,...prev]);
     showToast(qty+" un. de "+prod?.name+" transferidos para "+destStore?.name+"!");
@@ -2275,7 +2280,10 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     const today=new Date().toISOString().split("T")[0];
     diffs.forEach(d=>{
       const diff=d.countedQty-d.systemQty;
-      setMovHistory(prev=>[{id:genId(),date:today,time:new Date().toLocaleTimeString("pt-BR"),type:diff>0?"ajuste_entrada":"ajuste_saida",productId:d.productId,productName:d.productName,qty:Math.abs(diff),reason:"Contagem de estoque (sistema: "+d.systemQty+", contado: "+d.countedQty+")",store:currentStore.name},...prev]);
+      const adjustType=diff>0?"ajuste_entrada":"ajuste_saida";
+      const reason="Contagem de estoque (sistema: "+d.systemQty+", contado: "+d.countedQty+")";
+      api.adjustStock(activeStockId,d.productId,{quantity:d.countedQty,type:adjustType,reason}).catch(console.error);
+      setMovHistory(prev=>[{id:genId(),date:today,time:new Date().toLocaleTimeString("pt-BR"),type:adjustType,productId:d.productId,productName:d.productName,qty:Math.abs(diff),reason,store:currentStore.name},...prev]);
     });
     showToast(diffs.length+" produto(s) ajustados pela contagem!");
     setCountData(null);setCountDone(true);
@@ -2325,7 +2333,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           <td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>
           <td style={S.td}><span style={{...S.stBadge,...(p.stock<=p.minStock?S.stLow:S.stOk)}}>{p.stock}</span></td>
           <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(p.cost*p.stock)}</td>
-          <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1);setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1);setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
+          <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1,activeStockId,{type:"saida",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1,activeStockId,{type:"entrada",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
         </tr>)}</tbody></table></div>
       </div>}
 
@@ -2836,12 +2844,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     setWithdrawals(prev=>[newW,...prev]);
     api.createWithdrawal({store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp,destination:wdDest}).catch(console.error);
     // Registra saída no caixa para subtrair do saldo
-    const cashKey="cash_"+activeStore;
+    const wdCashKey=activeStore+"_"+(loggedUser?.id||"main");
     setCashState(prev=>{
       const n={...prev};
-      const cs=n[cashKey]||{open:false,initial:0,history:[]};
+      const cs=n[wdCashKey]||{open:false,initial:0,history:[]};
       if(cs.open){
-        n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:+wdVal,desc:"Retirada: "+(wdDesc||"Sem descrição"),time:new Date().toLocaleTimeString("pt-BR")}]};
+        n[wdCashKey]={...cs,history:[...cs.history,{type:"saida",value:+wdVal,desc:"Retirada: "+(wdDesc||"Sem descrição"),time:new Date().toLocaleTimeString("pt-BR")}]};
       }
       return n;
     });
