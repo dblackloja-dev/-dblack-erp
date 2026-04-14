@@ -263,6 +263,32 @@ async function initDB() {
       destination TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     );
+
+    -- Conversas do agente de suporte Black IA
+    CREATE TABLE IF NOT EXISTS agent_conversations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      user_name TEXT,
+      store_id TEXT,
+      started_at TIMESTAMP DEFAULT NOW(),
+      last_message_at TIMESTAMP DEFAULT NOW(),
+      status TEXT DEFAULT 'active'
+    );
+
+    -- Log de todas as mensagens e ações do agente (auditoria)
+    CREATE TABLE IF NOT EXISTS agent_logs (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_name TEXT,
+      store_id TEXT,
+      role TEXT NOT NULL,
+      content TEXT,
+      tool_name TEXT,
+      tool_input TEXT,
+      tool_output TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
   `);
 
   // Migrações: adicionar colunas novas se não existirem
@@ -287,6 +313,9 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_withdrawals_store ON cash_withdrawals(store_id)',
     'CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)',
     'CREATE INDEX IF NOT EXISTS idx_users_store ON users(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_agent_logs_conv ON agent_logs(conversation_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_agent_logs_user ON agent_logs(user_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_agent_conv_user ON agent_conversations(user_id, status)',
   ];
   for (const idx of indexes) {
     await pool.query(idx).catch(() => {});

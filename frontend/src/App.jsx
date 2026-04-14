@@ -757,8 +757,126 @@ export default function App() {
       </main>
 
       {toast && <div style={{...S.toast,...(toast.type==="error"?S.toastErr:{})}}>{toast.type==="error"?I.alert:I.check}<span>{toast.msg}</span></div>}
+
+      {/* BLACK IA — Chat de Suporte */}
+      {loggedUser && <ChatWidget loggedUser={loggedUser} activeStore={activeStore} showToast={showToast} />}
     </div>
   );
+}
+
+// ═══════════════════════════════════
+// ═══  BLACK IA — CHAT WIDGET     ═══
+// ═══════════════════════════════════
+function ChatWidget({loggedUser,activeStore,showToast}){
+  const [open,setOpen]=useState(false);
+  const [messages,setMessages]=useState([]); // {role:'user'|'assistant', content:string}
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [convId,setConvId]=useState(null);
+  const endRef=useRef(null);
+
+  // Auto-scroll para a última mensagem
+  useEffect(()=>{
+    if(endRef.current) endRef.current.scrollIntoView({behavior:"smooth"});
+  },[messages,loading]);
+
+  const enviar=async(texto)=>{
+    const msg=texto||input.trim();
+    if(!msg||loading) return;
+    setInput("");
+    setMessages(prev=>[...prev,{role:"user",content:msg}]);
+    setLoading(true);
+    try{
+      const res=await api.agentChat({message:msg,conversationId:convId});
+      if(res.conversationId) setConvId(res.conversationId);
+      setMessages(prev=>[...prev,{role:"assistant",content:res.message||"Desculpe, não consegui processar sua mensagem."}]);
+    }catch(e){
+      setMessages(prev=>[...prev,{role:"assistant",content:"Erro de conexão. Tente novamente."}]);
+    }finally{
+      setLoading(false);
+    }
+  };
+
+  const novaConversa=()=>{setMessages([]);setConvId(null);};
+
+  const sugestoes=["Como abrir o caixa?","Verificar estoque de um produto","Consultar vendas de hoje","Preciso cancelar uma venda"];
+
+  // Estilos do chat
+  const chatBtn={position:"fixed",bottom:24,right:24,width:56,height:56,borderRadius:"50%",background:`linear-gradient(135deg,${C.gold},${C.goldD})`,border:"none",cursor:"pointer",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 20px rgba(255,215,64,.3)`,transition:"transform .15s"};
+  const panel={position:"fixed",top:0,right:0,bottom:0,width:380,maxWidth:"100vw",background:C.s1,borderLeft:`1px solid ${C.brd}`,zIndex:998,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform .25s ease",boxShadow:open?"-8px 0 30px rgba(0,0,0,.4)":"none"};
+  const header={padding:"14px 18px",background:C.s2,borderBottom:`1px solid ${C.brd}`,display:"flex",alignItems:"center",gap:12};
+  const msgArea={flex:1,overflowY:"auto",padding:"16px 14px",display:"flex",flexDirection:"column",gap:10};
+  const userBubble={alignSelf:"flex-end",background:`rgba(255,215,64,.15)`,border:`1px solid rgba(255,215,64,.2)`,color:C.txt,borderRadius:"14px 14px 4px 14px",padding:"10px 14px",maxWidth:"85%",fontSize:13,lineHeight:1.5,wordBreak:"break-word"};
+  const aiBubble={alignSelf:"flex-start",background:C.s2,border:`1px solid ${C.brd}`,color:C.txt,borderRadius:"14px 14px 14px 4px",padding:"10px 14px",maxWidth:"85%",fontSize:13,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"};
+  const inputArea={padding:"12px 14px",borderTop:`1px solid ${C.brd}`,background:C.s2,display:"flex",gap:8};
+
+  return <>
+    {/* Botão flutuante */}
+    {!open&&<button style={chatBtn} onClick={()=>setOpen(true)} title="Black IA — Suporte"
+      onMouseDown={e=>e.currentTarget.style.transform="scale(.92)"}
+      onMouseUp={e=>e.currentTarget.style.transform="scale(1)"}
+      onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    </button>}
+
+    {/* Painel do chat */}
+    <div style={panel}>
+      {/* Header */}
+      <div style={header}>
+        <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,${C.gold},${C.goldD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.gold}}>Black IA</div>
+          <div style={{fontSize:11,color:C.dim}}>Suporte inteligente</div>
+        </div>
+        <button onClick={novaConversa} style={{background:"none",border:`1px solid ${C.brd}`,color:C.dim,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:10,fontFamily:"inherit"}} title="Nova conversa">Nova</button>
+        <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:18,padding:"4px"}}>✕</button>
+      </div>
+
+      {/* Mensagens */}
+      <div style={msgArea}>
+        {messages.length===0&&!loading&&<>
+          <div style={{textAlign:"center",padding:"30px 10px",color:C.dim}}>
+            <div style={{fontSize:40,marginBottom:10}}>🤖</div>
+            <div style={{fontSize:15,fontWeight:600,color:C.gold,marginBottom:6}}>Olá, {loggedUser.name.split(" ")[0]}!</div>
+            <div style={{fontSize:12,marginBottom:20}}>Sou a Black IA, sua assistente de suporte. Como posso te ajudar?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {sugestoes.map(s=><button key={s} onClick={()=>enviar(s)} style={{background:C.s2,border:`1px solid ${C.brd}`,borderRadius:10,color:C.txt,padding:"10px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"border-color .15s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=C.gold}
+                onMouseLeave={e=>e.currentTarget.style.borderColor=C.brd}>
+                {s}
+              </button>)}
+            </div>
+          </div>
+        </>}
+
+        {messages.map((m,i)=><div key={i} style={m.role==="user"?userBubble:aiBubble}>{m.content}</div>)}
+
+        {loading&&<div style={{...aiBubble,color:C.dim}}>
+          <span style={{animation:"pulse 1.2s infinite"}}>Analisando...</span>
+        </div>}
+
+        <div ref={endRef}/>
+      </div>
+
+      {/* Input */}
+      <div style={inputArea}>
+        <input value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();enviar();}}}
+          placeholder="Digite sua dúvida..."
+          style={{...S.inp,flex:1,fontSize:13,borderRadius:10}}
+          disabled={loading}/>
+        <button onClick={()=>enviar()} disabled={loading||!input.trim()}
+          style={{background:input.trim()&&!loading?C.gold:"rgba(255,215,64,.2)",border:"none",borderRadius:10,width:42,cursor:input.trim()&&!loading?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",transition:"background .15s"}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={input.trim()&&!loading?"#000":C.dim} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    {/* Overlay quando chat aberto em mobile */}
+    {open&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:997}} onClick={()=>setOpen(false)}/>}
+  </>;
 }
 
 // ─── KPI CARD ───

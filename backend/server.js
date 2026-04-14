@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const Anthropic = require('@anthropic-ai/sdk');
 
 const { queryAll, queryOne, queryRun, initDB, pool } = require('./database');
 const app = express();
@@ -997,6 +998,397 @@ app.get('/api/qz-cert', (req, res) => {
     const cert = fs.readFileSync(path.join(__dirname, 'qz-certificate.pem'), 'utf8');
     res.type('text/plain').send(cert);
   } catch(e) { res.status(500).json({ error: 'Certificado não encontrado' }); }
+});
+
+// ═══════════════════════════════════════════
+// ═══  BLACK IA — AGENTE DE SUPORTE       ═══
+// ═══════════════════════════════════════════
+
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+// Rate limiter simples (em memória)
+const agentLimits = {};
+function checkAgentLimit(userId) {
+  const now = Date.now();
+  if (!agentLimits[userId] || agentLimits[userId].resetAt < now) {
+    agentLimits[userId] = { count: 0, resetAt: now + 60000 };
+  }
+  agentLimits[userId].count++;
+  return agentLimits[userId].count <= 20; // máx 20 msgs/min
+}
+
+// ─── Definição das ferramentas do agente ───
+const AGENT_TOOLS = [
+  {
+    name: 'consultar_caixa',
+    description: 'Consulta o estado do caixa (aberto/fechado, saldo, movimentações) de uma loja',
+    input_schema: {
+      type: 'object',
+      properties: { store_id: { type: 'string', description: 'ID da loja (loja1, loja2, loja3, loja4)' } },
+      required: ['store_id']
+    }
+  },
+  {
+    name: 'abrir_caixa',
+    description: 'Abre o caixa de uma loja com um valor inicial. SEMPRE peça confirmação antes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        store_id: { type: 'string', description: 'ID da loja' },
+        valor_inicial: { type: 'number', description: 'Valor inicial do caixa em reais' }
+      },
+      required: ['store_id', 'valor_inicial']
+    }
+  },
+  {
+    name: 'fechar_caixa',
+    description: 'Fecha o caixa de uma loja. SEMPRE peça confirmação antes.',
+    input_schema: {
+      type: 'object',
+      properties: { store_id: { type: 'string', description: 'ID da loja' } },
+      required: ['store_id']
+    }
+  },
+  {
+    name: 'registrar_movimento_caixa',
+    description: 'Registra uma entrada (suprimento) ou saída (sangria) no caixa. SEMPRE peça confirmação antes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        store_id: { type: 'string', description: 'ID da loja' },
+        tipo: { type: 'string', enum: ['entrada', 'saida'], description: 'Tipo: entrada (suprimento) ou saida (sangria)' },
+        valor: { type: 'number', description: 'Valor em reais' },
+        descricao: { type: 'string', description: 'Motivo do movimento' }
+      },
+      required: ['store_id', 'tipo', 'valor']
+    }
+  },
+  {
+    name: 'consultar_vendas',
+    description: 'Lista as vendas de uma loja, opcionalmente filtrando por data',
+    input_schema: {
+      type: 'object',
+      properties: {
+        store_id: { type: 'string', description: 'ID da loja' },
+        data: { type: 'string', description: 'Data no formato YYYY-MM-DD (opcional, padrão=hoje)' },
+        limite: { type: 'number', description: 'Quantidade máxima de vendas (padrão=20)' }
+      },
+      required: ['store_id']
+    }
+  },
+  {
+    name: 'consultar_venda_por_id',
+    description: 'Busca os detalhes completos de uma venda específica pelo ID ou cupom',
+    input_schema: {
+      type: 'object',
+      properties: { busca: { type: 'string', description: 'ID da venda ou número do cupom' } },
+      required: ['busca']
+    }
+  },
+  {
+    name: 'cancelar_venda',
+    description: 'Cancela uma venda e devolve os itens ao estoque. Ação CRÍTICA — exige confirmação do usuário.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        venda_id: { type: 'string', description: 'ID da venda a cancelar' },
+        motivo: { type: 'string', description: 'Motivo do cancelamento' }
+      },
+      required: ['venda_id']
+    }
+  },
+  {
+    name: 'consultar_estoque',
+    description: 'Consulta o estoque de um produto em uma ou todas as lojas',
+    input_schema: {
+      type: 'object',
+      properties: {
+        busca: { type: 'string', description: 'Nome ou SKU do produto' },
+        stock_id: { type: 'string', description: 'ID do estoque (loja1, loja2, shared_matriz). Se vazio, mostra todos.' }
+      },
+      required: ['busca']
+    }
+  },
+  {
+    name: 'buscar_cliente',
+    description: 'Busca um cliente pelo nome, telefone ou CPF',
+    input_schema: {
+      type: 'object',
+      properties: { busca: { type: 'string', description: 'Nome, telefone ou CPF do cliente' } },
+      required: ['busca']
+    }
+  },
+  {
+    name: 'notificar_denilson',
+    description: 'Escala um problema para o Denilson (dono). Use quando não conseguir resolver o problema.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        resumo: { type: 'string', description: 'Resumo do problema' },
+        urgencia: { type: 'string', enum: ['baixa', 'media', 'alta'], description: 'Nível de urgência' }
+      },
+      required: ['resumo', 'urgencia']
+    }
+  }
+];
+
+// ─── Executor das ferramentas ───
+async function executeTool(toolName, input, user) {
+  switch (toolName) {
+    case 'consultar_caixa': {
+      const state = await queryOne('SELECT * FROM cash_state WHERE store_id=$1', [input.store_id]);
+      const movements = await queryAll('SELECT * FROM cash_movements WHERE store_id=$1 ORDER BY created_at DESC LIMIT 20', [input.store_id]);
+      const totalEntradas = movements.filter(m => m.type === 'entrada').reduce((s, m) => s + parseFloat(m.value || 0), 0);
+      const totalSaidas = movements.filter(m => m.type === 'saida').reduce((s, m) => s + parseFloat(m.value || 0), 0);
+      const saldo = parseFloat(state?.initial_value || 0) + totalEntradas - totalSaidas;
+      return { estado: state?.is_open ? 'aberto' : 'fechado', valor_inicial: state?.initial_value, saldo_estimado: saldo, aberto_em: state?.opened_at, movimentacoes_recentes: movements.slice(0, 10) };
+    }
+    case 'abrir_caixa': {
+      const current = await queryOne('SELECT * FROM cash_state WHERE store_id=$1', [input.store_id]);
+      if (current?.is_open) return { erro: 'Caixa já está aberto!' };
+      await queryRun('UPDATE cash_state SET is_open=true, initial_value=$1, opened_at=NOW() WHERE store_id=$2', [input.valor_inicial, input.store_id]);
+      return { sucesso: true, mensagem: `Caixa aberto com R$${input.valor_inicial}` };
+    }
+    case 'fechar_caixa': {
+      const current = await queryOne('SELECT * FROM cash_state WHERE store_id=$1', [input.store_id]);
+      if (!current?.is_open) return { erro: 'Caixa já está fechado!' };
+      await queryRun('UPDATE cash_state SET is_open=false, closed_at=NOW() WHERE store_id=$1', [input.store_id]);
+      return { sucesso: true, mensagem: 'Caixa fechado com sucesso' };
+    }
+    case 'registrar_movimento_caixa': {
+      const id = uuidv4().split('-')[0] + Date.now().toString(36).slice(-4);
+      await queryRun('INSERT INTO cash_movements (id, store_id, type, value, description, created_at) VALUES ($1,$2,$3,$4,$5,NOW())', [id, input.store_id, input.tipo, input.valor, input.descricao || '']);
+      return { sucesso: true, mensagem: `${input.tipo === 'entrada' ? 'Suprimento' : 'Sangria'} de R$${input.valor} registrado` };
+    }
+    case 'consultar_vendas': {
+      const data = input.data || new Date().toISOString().split('T')[0];
+      const limit = input.limite || 20;
+      const vendas = await queryAll('SELECT id, date, customer, seller, total, discount, status, payment, cupom, created_at FROM sales WHERE store_id=$1 AND date=$2 ORDER BY created_at DESC LIMIT $3', [input.store_id, data, limit]);
+      return { data, total_vendas: vendas.length, valor_total: vendas.filter(v => v.status !== 'Cancelada').reduce((s, v) => s + parseFloat(v.total || 0), 0), vendas };
+    }
+    case 'consultar_venda_por_id': {
+      let venda = await queryOne('SELECT * FROM sales WHERE id=$1', [input.busca]);
+      if (!venda) venda = await queryOne('SELECT * FROM sales WHERE cupom=$1', [input.busca]);
+      if (!venda) return { erro: 'Venda não encontrada' };
+      try { venda.items = JSON.parse(venda.items); } catch { venda.items = []; }
+      try { venda.payments = JSON.parse(venda.payments || '[]'); } catch { venda.payments = []; }
+      return venda;
+    }
+    case 'cancelar_venda': {
+      // Verifica permissão do usuário
+      if (!['admin', 'gestor', 'gerente'].includes(user.role)) {
+        return { erro: 'Sem permissão. Peça a um gerente ou admin para autorizar.' };
+      }
+      const venda = await queryOne('SELECT * FROM sales WHERE id=$1', [input.venda_id]);
+      if (!venda) return { erro: 'Venda não encontrada' };
+      if (venda.status === 'Cancelada') return { erro: 'Esta venda já foi cancelada' };
+      // Cancela e devolve estoque
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('UPDATE sales SET status=$1, canceled_by=$2, canceled_at=$3 WHERE id=$4', ['Cancelada', user.name, new Date().toISOString(), input.venda_id]);
+        const items = JSON.parse(venda.items || '[]');
+        const store = await queryOne('SELECT stock_id FROM stores WHERE id=$1', [venda.store_id]);
+        const stockId = store?.stock_id || venda.store_id;
+        for (const item of items) {
+          await client.query('UPDATE stock SET quantity = quantity + $1 WHERE stock_id=$2 AND product_id=$3', [item.qty, stockId, item.id]);
+          await client.query('INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())', [uuidv4().split('-')[0], stockId, item.id, 'devolucao_cancelamento', item.qty, input.motivo || 'Cancelamento via Black IA', user.name]);
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+      return { sucesso: true, mensagem: `Venda ${input.venda_id} cancelada. ${JSON.parse(venda.items || '[]').length} item(ns) devolvidos ao estoque.` };
+    }
+    case 'consultar_estoque': {
+      const produtos = await queryAll("SELECT id, name, sku, price FROM products WHERE active=true AND (LOWER(name) LIKE $1 OR LOWER(sku) LIKE $1) LIMIT 5", ['%' + input.busca.toLowerCase() + '%']);
+      if (produtos.length === 0) return { erro: 'Nenhum produto encontrado' };
+      const resultado = [];
+      for (const p of produtos) {
+        const estoques = input.stock_id
+          ? await queryAll('SELECT stock_id, quantity FROM stock WHERE product_id=$1 AND stock_id=$2', [p.id, input.stock_id])
+          : await queryAll('SELECT stock_id, quantity FROM stock WHERE product_id=$1', [p.id]);
+        resultado.push({ produto: p.name, sku: p.sku, preco: p.price, estoques: estoques.map(e => ({ loja: e.stock_id, quantidade: e.quantity })) });
+      }
+      return resultado;
+    }
+    case 'buscar_cliente': {
+      const clientes = await queryAll("SELECT id, name, phone, email, cpf, whatsapp, points, total_spent, visits FROM customers WHERE LOWER(name) LIKE $1 OR phone LIKE $1 OR cpf LIKE $1 LIMIT 5", ['%' + input.busca.toLowerCase() + '%']);
+      return clientes.length > 0 ? clientes : { erro: 'Nenhum cliente encontrado' };
+    }
+    case 'notificar_denilson': {
+      // Salva alerta especial no log
+      await queryRun('INSERT INTO agent_logs (id, conversation_id, user_id, user_name, store_id, role, content, tool_name, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())', [uuidv4().split('-')[0], 'alerts', user.id, user.name, user.store_id, 'alert', JSON.stringify({ resumo: input.resumo, urgencia: input.urgencia, solicitante: user.name }), 'notificar_denilson']);
+      return { sucesso: true, mensagem: `Alerta enviado para o Denilson (urgência: ${input.urgencia}). Ele será notificado assim que possível.` };
+    }
+    default:
+      return { erro: 'Ferramenta desconhecida' };
+  }
+}
+
+// ─── System prompt do agente ───
+function buildSystemPrompt(user) {
+  return `Você é a Black IA, assistente de suporte inteligente da D'Black Store.
+Você ajuda os funcionários a resolver problemas com caixa, vendas e estoque.
+
+SOBRE VOCÊ:
+- Seu nome é Black IA
+- Você é amigável, direto e eficiente
+- Sempre fale em português brasileiro
+- Use as ferramentas disponíveis para consultar dados reais — NUNCA invente
+
+USUÁRIO ATUAL:
+- Nome: ${user.name}
+- Cargo: ${user.role}
+- Loja: ${user.store_id}
+- Data/hora: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+
+LOJAS:
+- loja1 = D'Black Divino-MG
+- loja2 = D'Black São João-MG
+- loja3 = D'Black Matriz
+- loja4 = D'Black E-commerce
+- Loja3 e loja4 compartilham estoque "shared_matriz"
+
+REGRAS IMPORTANTES:
+1. Para QUALQUER ação que modifica dados (abrir/fechar caixa, sangria, cancelar venda), SEMPRE explique o que vai fazer e peça confirmação ANTES de usar a ferramenta
+2. Se o usuário confirmar (sim, confirma, pode fazer, etc.), aí sim execute a ação
+3. Se o usuário for "vendedor", ele NÃO pode cancelar vendas — oriente a chamar um gerente
+4. Se não conseguir resolver um problema, use a ferramenta notificar_denilson
+5. Seja breve nas respostas — os funcionários estão atendendo clientes
+6. Quando mostrar valores, use formato brasileiro (R$ 1.234,56)
+
+PROBLEMAS COMUNS QUE VOCÊ RESOLVE:
+- Caixa não abre / não fecha → consulte o estado e oriente
+- Diferença no caixa → consulte movimentações e identifique o problema
+- Precisa cancelar venda → verifique a venda e cancele (se tiver permissão)
+- Dúvida sobre estoque → consulte o estoque do produto
+- Cliente quer trocar produto → oriente o passo a passo no sistema`;
+}
+
+// ─── Endpoint principal do chat ───
+app.post('/api/agent/chat', async (req, res) => {
+  if (!anthropic) return res.status(503).json({ error: 'Agente não configurado (ANTHROPIC_API_KEY ausente)' });
+  if (!checkAgentLimit(req.user.id)) return res.status(429).json({ error: 'Muitas mensagens. Aguarde 1 minuto.' });
+
+  try {
+    const { message, conversationId } = req.body;
+    if (!message) return res.status(400).json({ error: 'Mensagem obrigatória' });
+
+    // Pega ou cria conversa
+    let convId = conversationId;
+    if (!convId) {
+      convId = uuidv4().split('-')[0] + Date.now().toString(36).slice(-4);
+      await queryRun('INSERT INTO agent_conversations (id, user_id, user_name, store_id) VALUES ($1,$2,$3,$4)', [convId, req.user.id, req.user.name, req.user.store_id]);
+    } else {
+      await queryRun('UPDATE agent_conversations SET last_message_at=NOW() WHERE id=$1', [convId]);
+    }
+
+    // Loga mensagem do usuário
+    await queryRun('INSERT INTO agent_logs (id, conversation_id, user_id, user_name, store_id, role, content) VALUES ($1,$2,$3,$4,$5,$6,$7)', [uuidv4().split('-')[0] + Date.now().toString(36).slice(-4), convId, req.user.id, req.user.name, req.user.store_id, 'user', message]);
+
+    // Carrega histórico da conversa (últimas 20 mensagens)
+    const history = await queryAll("SELECT role, content, tool_name, tool_input, tool_output FROM agent_logs WHERE conversation_id=$1 AND role IN ('user','assistant','tool_call','tool_result') ORDER BY created_at ASC", [convId]);
+
+    // Monta mensagens para a API Claude
+    const messages = [];
+    for (const h of history) {
+      if (h.role === 'user') {
+        messages.push({ role: 'user', content: h.content });
+      } else if (h.role === 'assistant') {
+        messages.push({ role: 'assistant', content: h.content });
+      }
+    }
+    // Garante que a última mensagem do usuário está incluída
+    if (messages.length === 0 || messages[messages.length - 1].content !== message) {
+      messages.push({ role: 'user', content: message });
+    }
+
+    // Chama Claude com loop de ferramentas (máx 5 iterações)
+    let finalResponse = '';
+    let currentMessages = [...messages];
+    for (let i = 0; i < 5; i++) {
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        system: buildSystemPrompt(req.user),
+        tools: AGENT_TOOLS,
+        messages: currentMessages,
+      });
+
+      // Verifica se tem tool_use
+      const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+      const textBlocks = response.content.filter(b => b.type === 'text');
+
+      if (toolUseBlocks.length === 0) {
+        // Sem ferramentas — resposta final
+        finalResponse = textBlocks.map(b => b.text).join('\n');
+        break;
+      }
+
+      // Executa cada ferramenta
+      const toolResults = [];
+      for (const toolBlock of toolUseBlocks) {
+        // Loga a chamada da ferramenta
+        await queryRun('INSERT INTO agent_logs (id, conversation_id, user_id, user_name, store_id, role, tool_name, tool_input) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [uuidv4().split('-')[0] + Date.now().toString(36).slice(-4), convId, req.user.id, req.user.name, req.user.store_id, 'tool_call', toolBlock.name, JSON.stringify(toolBlock.input)]);
+
+        // Executa
+        let result;
+        try {
+          result = await executeTool(toolBlock.name, toolBlock.input, req.user);
+        } catch (err) {
+          result = { erro: err.message };
+        }
+
+        // Loga o resultado
+        await queryRun('INSERT INTO agent_logs (id, conversation_id, user_id, user_name, store_id, role, tool_name, tool_output) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [uuidv4().split('-')[0] + Date.now().toString(36).slice(-4), convId, req.user.id, req.user.name, req.user.store_id, 'tool_result', toolBlock.name, JSON.stringify(result)]);
+
+        toolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: JSON.stringify(result) });
+      }
+
+      // Adiciona a resposta do assistente e os resultados das ferramentas
+      currentMessages.push({ role: 'assistant', content: response.content });
+      currentMessages.push({ role: 'user', content: toolResults });
+    }
+
+    // Loga resposta final do assistente
+    if (finalResponse) {
+      await queryRun('INSERT INTO agent_logs (id, conversation_id, user_id, user_name, store_id, role, content) VALUES ($1,$2,$3,$4,$5,$6,$7)', [uuidv4().split('-')[0] + Date.now().toString(36).slice(-4), convId, req.user.id, req.user.name, req.user.store_id, 'assistant', finalResponse]);
+    }
+
+    res.json({ conversationId: convId, message: finalResponse });
+  } catch (e) {
+    console.error('[Black IA] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao processar mensagem: ' + e.message });
+  }
+});
+
+// ─── Histórico de conversas (admin) ───
+app.get('/api/agent/conversations', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const convs = await queryAll('SELECT * FROM agent_conversations ORDER BY last_message_at DESC LIMIT 50');
+    res.json(convs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/agent/conversations/:id/logs', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const logs = await queryAll('SELECT * FROM agent_logs WHERE conversation_id=$1 ORDER BY created_at ASC', [req.params.id]);
+    res.json(logs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Alertas pendentes (admin) ───
+app.get('/api/agent/alerts', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const alerts = await queryAll("SELECT * FROM agent_logs WHERE tool_name='notificar_denilson' ORDER BY created_at DESC LIMIT 20");
+    res.json(alerts);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/health', async (req, res) => {

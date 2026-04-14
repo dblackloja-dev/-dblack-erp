@@ -300,6 +300,12 @@ const api = {
   getInvestments: () => request('/investments'),
   createInvestment: (data) => request('/investments', { method: 'POST', body: data }),
 
+  // ─── BLACK IA — Agente de Suporte ───
+  agentChat: (data) => request('/agent/chat', { method: 'POST', body: data }),
+  agentConversations: () => request('/agent/conversations'),
+  agentLogs: (convId) => request(`/agent/conversations/${convId}/logs`),
+  agentAlerts: () => request('/agent/alerts'),
+
   // ─── UTILITÁRIOS OFFLINE ───
   getQueueCount: () => getQueue().length,
   getQueue: () => getQueue(),
