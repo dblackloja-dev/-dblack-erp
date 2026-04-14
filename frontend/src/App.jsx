@@ -58,7 +58,8 @@ function triggerPrint(contentRef, callback) {
   setTimeout(() => { _printing = false; }, 2000); // Libera após 2s
 
   const el = contentRef?.current;
-  if (window.qz && el) {
+  // Só tenta QZ Tray se estiver conectado (evita erro em PCs sem QZ)
+  if (window.qz && window.qz.websocket.isActive() && el) {
     _qzSilentPrint(el)
       .then(() => { callback && callback(); })
       .catch(err => {
@@ -68,6 +69,7 @@ function triggerPrint(contentRef, callback) {
         callback && callback();
       });
   } else {
+    // Sem QZ Tray: imprime pela caixa do Windows (sem mensagem de erro)
     window.print();
     callback && callback();
   }
