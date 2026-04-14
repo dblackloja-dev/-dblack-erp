@@ -51,11 +51,16 @@ async function _qzSilentPrint(el) {
   if (_globalToast) _globalToast('✅ Impresso em: ' + printer);
 }
 
+let _printing = false; // Evita impressão dupla
 function triggerPrint(contentRef, callback) {
+  if (_printing) return;
+  _printing = true;
+  setTimeout(() => { _printing = false; }, 2000); // Libera após 2s
+
   const el = contentRef?.current;
   if (window.qz && el) {
     _qzSilentPrint(el)
-      .then(() => callback && callback())
+      .then(() => { callback && callback(); })
       .catch(err => {
         console.warn('QZ Tray falhou:', err.message||err);
         if (_globalToast) _globalToast('⚠️ QZ Tray: ' + (err.message||'erro') + ' — usando impressão normal', 'error');
