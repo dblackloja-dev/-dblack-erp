@@ -2234,19 +2234,16 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     }
   };
 
-  // Entry/Exit
+  // Entry/Exit — usa activeTab diretamente para evitar race condition com setState
   const doMovement=()=>{
     if(!movProduct||!movQty||+movQty<=0)return showToast("Selecione produto e quantidade!","error");
     const qty=+movQty;
+    const type=activeTab==="saida"?"saida":"entrada";
     const prod=catalog.find(p=>p.id===movProduct);
-    if(movType==="saida"){
-      const current=(stock[activeStockId]||{})[movProduct]||0;
-      // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
-    }
-    adjustStock(movProduct, movType==="entrada"?qty:-qty, activeStockId, {type:movType,reason:movReason||"-"});
-    const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:movType,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
+    adjustStock(movProduct, type==="entrada"?qty:-qty, activeStockId, {type,reason:movReason||"-"});
+    const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
     setMovHistory(prev=>[mov,...prev]);
-    showToast((movType==="entrada"?"Entrada":"Saída")+" de "+qty+" un. registrada!");
+    showToast((type==="entrada"?"Entrada":"Saída")+" de "+qty+" un. registrada!");
     setMovProduct("");setMovQty("");setMovReason("");
   };
 
@@ -2357,7 +2354,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
             {movQty&&<div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>{activeTab==="entrada"?"Após entrada:":"Após saída:"}</div><div style={{fontSize:18,fontWeight:800,color:activeTab==="entrada"?C.grn:C.red}}>{activeTab==="entrada"?((stock[activeStockId]||{})[movProduct]||0)+(+movQty):Math.max(0,((stock[activeStockId]||{})[movProduct]||0)-(+movQty))} un.</div></div>}
           </div>}
           <div style={{marginTop:14,display:"flex",justifyContent:"flex-end"}}>
-            <button style={{...S.primBtn,padding:"10px 24px",background:activeTab==="entrada"?`linear-gradient(135deg,${C.grn},#00C853)`:`linear-gradient(135deg,${C.red},#B71C1C)`}} onClick={()=>{setMovType(activeTab);doMovement();}}>
+            <button style={{...S.primBtn,padding:"10px 24px",background:activeTab==="entrada"?`linear-gradient(135deg,${C.grn},#00C853)`:`linear-gradient(135deg,${C.red},#B71C1C)`}} onClick={doMovement}>
               {I.check} {activeTab==="entrada"?"REGISTRAR ENTRADA":"REGISTRAR SAÍDA"}
             </button>
           </div>
@@ -2843,14 +2840,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     const newW={id:genId(),storeId:activeStore,store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp||loggedUser?.name||"",destination:wdDest,createdAt:new Date().toISOString(),created_at:new Date().toISOString()};
     setWithdrawals(prev=>[newW,...prev]);
     api.createWithdrawal({store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp,destination:wdDest}).catch(console.error);
-    // Registra saída no caixa para subtrair do saldo
-    const wdCashKey=activeStore+"_"+(loggedUser?.id||"main");
+    // Registra saída no caixa para subtrair do saldo (usa cashKey do componente)
     setCashState(prev=>{
       const n={...prev};
-      const cs=n[wdCashKey]||{open:false,initial:0,history:[]};
-      if(cs.open){
-        n[wdCashKey]={...cs,history:[...cs.history,{type:"saida",value:+wdVal,desc:"Retirada: "+(wdDesc||"Sem descrição"),time:new Date().toLocaleTimeString("pt-BR")}]};
-      }
+      const cs=n[cashKey]||{open:false,initial:0,history:[]};
+      const newMov={type:"saida",value:+wdVal,desc:"Retirada: "+(wdDesc||"Sem descrição"),time:new Date().toLocaleTimeString("pt-BR")};
+      n[cashKey]={...cs,history:[...(cs.history||[]),newMov]};
       return n;
     });
     setWdVal("");setWdDesc("");setWdDest("");
