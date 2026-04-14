@@ -1,36 +1,154 @@
-// ─── API Client ───
-// Em dev: Vite proxy → localhost:3001
-// Em produção: Vercel rewrite proxy → Railway (sem CORS)
+// ═══════════════════════════════════════════════════
+// ═══  D'Black ERP — API Client com Fila Offline  ═══
+// ═══════════════════════════════════════════════════
 const BASE = '/api';
 
-// Gerenciamento do token JWT
+// ─── Token JWT ───
 const getToken = () => localStorage.getItem('dblack_token');
 const setToken = (t) => localStorage.setItem('dblack_token', t);
 const clearToken = () => localStorage.removeItem('dblack_token');
 
-async function request(path, options = {}) {
-  const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-    ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  if (res.status === 401) {
-    clearToken();
-    window.location.reload();
-    return;
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Erro de rede' }));
-    throw new Error(err.error || 'Erro na requisição');
-  }
-  return res.json();
+// ═══════════════════════════════════════════════════
+// ═══  FILA OFFLINE — guarda ações para sincronizar
+// ═══════════════════════════════════════════════════
+const QUEUE_KEY = 'dblack_offline_queue';
+
+function getQueue() {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
+  catch { return []; }
 }
 
+function saveQueue(queue) {
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  // Dispara evento para o App.jsx atualizar o contador
+  window.dispatchEvent(new CustomEvent('offlineQueueChange', { detail: { count: queue.length } }));
+}
+
+function addToQueue(path, options) {
+  const queue = getQueue();
+  queue.push({
+    id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    path,
+    method: options.method || 'GET',
+    body: options.body || null,
+    createdAt: new Date().toISOString(),
+  });
+  saveQueue(queue);
+  console.log('[OFFLINE] Ação enfileirada:', options.method, path, '| Fila:', queue.length);
+}
+
+function removeFromQueue(id) {
+  const queue = getQueue().filter(q => q.id !== id);
+  saveQueue(queue);
+}
+
+// Sincroniza a fila quando volta a internet
+let syncing = false;
+async function syncQueue() {
+  if (syncing) return;
+  const queue = getQueue();
+  if (queue.length === 0) return;
+
+  syncing = true;
+  console.log('[SYNC] Iniciando sincronização de', queue.length, 'ações offline...');
+
+  let successCount = 0;
+  for (const item of queue) {
+    try {
+      const token = getToken();
+      const res = await fetch(`${BASE}${item.path}`, {
+        method: item.method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: item.body ? JSON.stringify(item.body) : undefined,
+      });
+
+      if (res.ok || res.status === 409) {
+        // 409 = conflito (já existe), considera como sucesso
+        removeFromQueue(item.id);
+        successCount++;
+      } else if (res.status === 401) {
+        // Token expirado — para de sincronizar
+        console.warn('[SYNC] Token expirado, parando sync');
+        break;
+      } else {
+        // Erro do servidor — mantém na fila para tentar depois
+        console.warn('[SYNC] Erro', res.status, 'em', item.path, '— mantendo na fila');
+      }
+    } catch (e) {
+      // Ainda sem internet — para de tentar
+      console.log('[SYNC] Ainda sem internet, tentando depois');
+      break;
+    }
+  }
+
+  syncing = false;
+  const remaining = getQueue().length;
+  console.log(`[SYNC] Concluído: ${successCount} enviados, ${remaining} pendentes`);
+
+  // Dispara evento de sync completo
+  window.dispatchEvent(new CustomEvent('offlineSyncDone', { detail: { sent: successCount, remaining } }));
+}
+
+// Tenta sincronizar quando volta a internet
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[ONLINE] Internet voltou! Sincronizando...');
+    setTimeout(syncQueue, 1000); // Espera 1s para estabilizar a conexão
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// ═══  REQUEST — com fallback offline automático   ═══
+// ═══════════════════════════════════════════════════
+async function request(path, options = {}) {
+  const token = getToken();
+  const isWrite = options.method && options.method !== 'GET';
+
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+      ...options,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+
+    if (res.status === 401) {
+      clearToken();
+      window.location.reload();
+      return;
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Erro de rede' }));
+      throw new Error(err.error || 'Erro na requisição');
+    }
+    return res.json();
+  } catch (e) {
+    // Se é uma escrita (POST/PUT/DELETE) e falhou por rede, enfileira
+    if (isWrite && (e.name === 'TypeError' || e.message === 'Failed to fetch' || !navigator.onLine)) {
+      addToQueue(path, options);
+      // Retorna resposta fake para o app continuar funcionando
+      return { _offline: true, _queued: true };
+    }
+
+    // Para leituras (GET) offline, retorna null silenciosamente
+    if (!isWrite && !navigator.onLine) {
+      console.log('[OFFLINE] Leitura ignorada (sem internet):', path);
+      return null;
+    }
+
+    throw e;
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// ═══  API METHODS                                ═══
+// ═══════════════════════════════════════════════════
 const api = {
   // Stores
   getStores: () => request('/stores'),
@@ -38,19 +156,50 @@ const api = {
   // Auth
   login: async (login, password) => {
     const data = await request('/auth/login', { method: 'POST', body: { login, password } });
-    if (data?.token) setToken(data.token);
+    if (data?.token) {
+      setToken(data.token);
+      // Salva dados do usuário para login offline
+      localStorage.setItem('dblack_user', JSON.stringify(data.user || data));
+    }
     return data;
   },
   me: async () => {
     const token = getToken();
     if (!token) return null;
-    const res = await fetch(`${BASE}/auth/me`, {
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) { clearToken(); return null; }
-    return res.json();
+    try {
+      const res = await fetch(`${BASE}/auth/me`, {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        // Se offline, retorna dados salvos do último login
+        if (!navigator.onLine) {
+          const saved = localStorage.getItem('dblack_user');
+          if (saved) {
+            console.log('[OFFLINE] Usando sessão salva');
+            return JSON.parse(saved);
+          }
+        }
+        clearToken();
+        return null;
+      }
+      const user = await res.json();
+      // Atualiza dados salvos
+      localStorage.setItem('dblack_user', JSON.stringify(user));
+      return user;
+    } catch (e) {
+      // Sem internet: retorna sessão salva
+      if (!navigator.onLine || e.name === 'TypeError') {
+        const saved = localStorage.getItem('dblack_user');
+        if (saved) {
+          console.log('[OFFLINE] Usando sessão salva');
+          return JSON.parse(saved);
+        }
+      }
+      clearToken();
+      return null;
+    }
   },
-  logout: () => clearToken(),
+  logout: () => { clearToken(); localStorage.removeItem('dblack_user'); },
 
   // Users
   getUsers: () => request('/users'),
@@ -64,6 +213,10 @@ const api = {
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PUT', body: data }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   uploadPhoto: async (id, file) => {
+    if (!navigator.onLine) {
+      console.warn('[OFFLINE] Upload de foto não disponível offline');
+      return { error: 'Upload não disponível offline' };
+    }
     const form = new FormData();
     form.append('photo', file);
     const token = getToken();
@@ -146,6 +299,13 @@ const api = {
   // Investments
   getInvestments: () => request('/investments'),
   createInvestment: (data) => request('/investments', { method: 'POST', body: data }),
+
+  // ─── UTILITÁRIOS OFFLINE ───
+  getQueueCount: () => getQueue().length,
+  getQueue: () => getQueue(),
+  syncNow: () => syncQueue(),
+  clearQueue: () => saveQueue([]),
+  isOnline: () => navigator.onLine,
 };
 
 export default api;

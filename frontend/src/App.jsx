@@ -293,6 +293,8 @@ export default function App() {
 
   // ─── CARREGA DADOS DA API APÓS LOGIN + AUTO-REFRESH 30s ───
   const loadAllData = useCallback((silent=false) => {
+    // Não tenta carregar do servidor se estiver offline
+    if (!navigator.onLine) { if(!silent) setApiLoaded(true); return Promise.resolve(); }
     if(!silent) setApiLoaded(false);
     return Promise.all([
       api.getProducts(),
@@ -369,6 +371,31 @@ export default function App() {
   }, [loggedUser?.id]);
 
   const showToast = useCallback((msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); },[]);
+
+  // ─── MODO OFFLINE ───
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [offlineQueue, setOfflineQueue] = useState(api.getQueueCount());
+
+  useEffect(() => {
+    const goOnline = () => { setIsOnline(true); showToast("Internet voltou! Sincronizando..."); };
+    const goOffline = () => { setIsOnline(false); showToast("Sem internet — modo offline ativado","error"); };
+    const queueChange = (e) => setOfflineQueue(e.detail.count);
+    const syncDone = (e) => {
+      if (e.detail.sent > 0) showToast(e.detail.sent + " ações sincronizadas com o servidor!");
+      setOfflineQueue(e.detail.remaining);
+      if (e.detail.remaining === 0 && loggedUser) loadAllData(true);
+    };
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('offlineQueueChange', queueChange);
+    window.addEventListener('offlineSyncDone', syncDone);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('offlineQueueChange', queueChange);
+      window.removeEventListener('offlineSyncDone', syncDone);
+    };
+  }, [loggedUser]);
 
   // ─── INICIALIZA QZ TRAY (depois de showToast estar definido) ───
   useEffect(() => {
@@ -573,6 +600,13 @@ export default function App() {
   return (
     <div style={S.app}>
       <style>{CSS}</style>
+
+      {/* BANNER OFFLINE */}
+      {(!isOnline || offlineQueue > 0) && <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,padding:"6px 16px",background:isOnline?"linear-gradient(90deg,#1565C0,#0D47A1)":"linear-gradient(90deg,#B71C1C,#880E4F)",color:"#fff",fontSize:12,fontWeight:700,fontFamily:"Outfit,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        {!isOnline && <><span style={{fontSize:16}}>📡</span> MODO OFFLINE — suas ações estão sendo salvas localmente</>}
+        {isOnline && offlineQueue > 0 && <><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>🔄</span> Sincronizando {offlineQueue} ação(ões) pendente(s)...</>}
+        {offlineQueue > 0 && <span style={{background:"rgba(255,255,255,.2)",borderRadius:10,padding:"2px 8px",fontSize:11}}>{offlineQueue} na fila</span>}
+      </div>}
 
       {/* SIDEBAR */}
       <aside style={{...S.side,...(sideOpen?S.sideOn:{})}}>
