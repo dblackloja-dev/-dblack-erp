@@ -10,38 +10,59 @@ document.getElementById('btn').onclick = async function() {
   var log = document.getElementById('log');
   var btn = document.getElementById('btn');
   btn.disabled = true;
-  btn.textContent = 'Sincronizando...';
   log.innerHTML = '';
 
   var token = localStorage.getItem('dblack_token');
-  if (!token) { log.innerHTML = '<p style="color:red">ERRO: Faça login no ERP primeiro.</p>'; btn.disabled = false; btn.textContent = 'SINCRONIZAR ESTOQUE'; return; }
+  if (!token) { log.innerHTML = '<p style="color:red">ERRO: Faça login no ERP primeiro.</p>'; btn.disabled = false; return; }
 
   var stock = JSON.parse(localStorage.getItem('dblack_stock') || '{}');
-  var total = 0;
-  for (var sid in stock) for (var pid in stock[sid]) total++;
 
-  if (total === 0) { log.innerHTML = '<p style="color:orange">Nenhum estoque encontrado no navegador.</p>'; btn.disabled = false; btn.textContent = 'SINCRONIZAR ESTOQUE'; return; }
+  // Monta lista de todos os itens
+  var items = [];
+  for (var sid in stock) for (var pid in stock[sid]) items.push({sid:sid, pid:pid, qty:stock[sid][pid]});
 
-  log.innerHTML = '<p>Enviando ' + total + ' produtos de uma vez...</p>';
+  if (items.length === 0) { log.innerHTML = '<p style="color:orange">Nenhum estoque encontrado.</p>'; btn.disabled = false; return; }
 
-  try {
-    var res = await fetch('/api/stock/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ stock: stock })
-    });
-    var data = await res.json();
-    if (res.ok) {
-      log.innerHTML += '<p style="color:#00E676;font-size:20px;font-weight:bold">PRONTO! ' + data.count + ' produtos sincronizados!</p>';
-      btn.textContent = 'CONCLUIDO!';
-    } else {
-      log.innerHTML += '<p style="color:red">Erro: ' + (data.error || 'desconhecido') + '</p>';
-      btn.disabled = false; btn.textContent = 'TENTAR DE NOVO';
+  log.innerHTML = '<p>Total: ' + items.length + ' produtos. Enviando em lotes...</p>';
+
+  var BATCH = 300;
+  var totalOk = 0;
+  var totalErr = 0;
+  var batches = Math.ceil(items.length / BATCH);
+
+  for (var i = 0; i < batches; i++) {
+    var chunk = items.slice(i * BATCH, (i + 1) * BATCH);
+    var stockBatch = {};
+    for (var j = 0; j < chunk.length; j++) {
+      if (!stockBatch[chunk[j].sid]) stockBatch[chunk[j].sid] = {};
+      stockBatch[chunk[j].sid][chunk[j].pid] = chunk[j].qty;
     }
-  } catch(e) {
-    log.innerHTML += '<p style="color:red">Erro de rede: ' + e.message + '</p>';
-    btn.disabled = false; btn.textContent = 'TENTAR DE NOVO';
+
+    btn.textContent = 'Lote ' + (i+1) + '/' + batches + '...';
+    log.innerHTML += '<p>Enviando lote ' + (i+1) + '/' + batches + ' (' + chunk.length + ' produtos)...</p>';
+
+    try {
+      var res = await fetch('/api/stock/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ stock: stockBatch })
+      });
+      var data = await res.json();
+      if (res.ok) {
+        totalOk += data.count;
+        log.innerHTML += '<p style="color:#00E676">✅ Lote ' + (i+1) + ': ' + data.count + ' ok</p>';
+      } else {
+        totalErr += chunk.length;
+        log.innerHTML += '<p style="color:red">❌ Lote ' + (i+1) + ': ' + (data.error||'erro') + '</p>';
+      }
+    } catch(e) {
+      totalErr += chunk.length;
+      log.innerHTML += '<p style="color:red">❌ Lote ' + (i+1) + ': ' + e.message + '</p>';
+    }
   }
+
+  log.innerHTML += '<p style="color:#00E676;font-size:22px;font-weight:bold;margin-top:16px">PRONTO! ' + totalOk + ' sincronizados, ' + totalErr + ' erros.</p>';
+  btn.textContent = 'CONCLUÍDO!';
 };
 </script>
 </body></html>
