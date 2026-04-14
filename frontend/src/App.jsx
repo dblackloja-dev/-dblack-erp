@@ -63,10 +63,10 @@ async function triggerPrint(contentRef, callback) {
   // Se QZ Tray JS carregou, tenta conectar e imprimir
   if (qz && el) {
     try {
-      // Conecta ao QZ Tray se não estiver conectado
+      // Conecta ao QZ Tray se não estiver conectado (ws:// primeiro)
       if (!qz.websocket.isActive()) {
-        try { await qz.websocket.connect({ retries: 2, delay: 500, keepAlive: 30 }); }
-        catch { await qz.websocket.connect({ usingSecure: false, retries: 2, delay: 500, keepAlive: 30 }); }
+        try { await qz.websocket.connect({ usingSecure: false, host: 'localhost', retries: 2, delay: 500, keepAlive: 60 }); }
+        catch { await qz.websocket.connect({ retries: 2, delay: 500, keepAlive: 60 }); }
       }
       // Conectou! Imprime pela térmica
       await _qzSilentPrint(el);
@@ -449,17 +449,21 @@ export default function App() {
         window.qz.security.setCertificatePromise(resolve => resolve(QZ_CERT));
         window.qz.security.setSignaturePromise(toSign => resolve => qzSign(toSign).then(resolve));
         if (!window.qz.websocket.isActive()) {
+          // Tenta ws:// PRIMEIRO (Chrome permite ws://localhost de HTTPS)
+          // Evita o problema do wss:// que trava o QZ internamente
           try {
-            await window.qz.websocket.connect({ retries: 3, delay: 1000, keepAlive: 60 });
-            if (_globalToast) _globalToast('✅ QZ Tray conectado (impressora térmica)');
+            await window.qz.websocket.connect({ usingSecure: false, host: 'localhost', retries: 3, delay: 1000, keepAlive: 60 });
+            if (_globalToast) _globalToast('✅ QZ Tray conectado!');
+            console.log('[QZ] Conectado via ws://localhost');
           } catch(e1) {
-            console.warn('[QZ] wss:// falhou:', e1.message||e1);
+            console.warn('[QZ] ws:// falhou:', e1.message||e1);
+            // Fallback: tenta wss:// (para PCs com certificado instalado)
             try {
-              await window.qz.websocket.connect({ usingSecure: false, retries: 3, delay: 1000, keepAlive: 60 });
-              if (_globalToast) _globalToast('✅ QZ Tray conectado (ws://)');
+              await window.qz.websocket.connect({ retries: 2, delay: 1000, keepAlive: 60 });
+              if (_globalToast) _globalToast('✅ QZ Tray conectado (wss)!');
+              console.log('[QZ] Conectado via wss://');
             } catch(e2) {
-              console.warn('[QZ] ws:// falhou:', e2.message||e2);
-              if (_globalToast) _globalToast('QZ Tray: não conectou — ' + (e2.message||e2).toString().slice(0,80), 'error');
+              console.warn('[QZ] wss:// também falhou:', e2.message||e2);
             }
           }
         } else {
