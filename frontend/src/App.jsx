@@ -52,27 +52,35 @@ async function _qzSilentPrint(el) {
 }
 
 let _printing = false; // Evita impressão dupla
-function triggerPrint(contentRef, callback) {
+async function triggerPrint(contentRef, callback) {
   if (_printing) return;
   _printing = true;
-  setTimeout(() => { _printing = false; }, 2000); // Libera após 2s
+  setTimeout(() => { _printing = false; }, 3000);
 
   const el = contentRef?.current;
-  // Só tenta QZ Tray se estiver conectado (evita erro em PCs sem QZ)
-  if (window.qz && window.qz.websocket.isActive() && el) {
-    _qzSilentPrint(el)
-      .then(() => { callback && callback(); })
-      .catch(err => {
-        console.warn('QZ Tray falhou:', err.message||err);
-        if (_globalToast) _globalToast('⚠️ QZ Tray: ' + (err.message||'erro') + ' — usando impressão normal', 'error');
-        window.print();
-        callback && callback();
-      });
-  } else {
-    // Sem QZ Tray: imprime pela caixa do Windows (sem mensagem de erro)
-    window.print();
-    callback && callback();
+  const qz = window.qz;
+
+  // Se QZ Tray JS carregou, tenta conectar e imprimir
+  if (qz && el) {
+    try {
+      // Conecta ao QZ Tray se não estiver conectado
+      if (!qz.websocket.isActive()) {
+        try { await qz.websocket.connect({ retries: 2, delay: 500, keepAlive: 30 }); }
+        catch { await qz.websocket.connect({ usingSecure: false, retries: 2, delay: 500, keepAlive: 30 }); }
+      }
+      // Conectou! Imprime pela térmica
+      await _qzSilentPrint(el);
+      callback && callback();
+      return;
+    } catch (err) {
+      console.warn('[QZ] Falhou:', err.message || err);
+      // Não mostra erro — cai silenciosamente pro Windows
+    }
   }
+
+  // Fallback: impressão pelo Windows (sem mensagem de erro)
+  window.print();
+  callback && callback();
 }
 
 // ─── LOCALSTORAGE HELPERS ───
