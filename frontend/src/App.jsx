@@ -1075,7 +1075,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   // Discount calculation
   var discountValue=0;
   var discountLabel="";
-  if(cartDiscount>0&&cart.length>0){
+  var hasItemDiscounts=Object.values(itemDiscounts).some(function(v){return +v>0;});
+  if((cartDiscount>0||hasItemDiscounts)&&cart.length>0){
     if(discountScope==="sale"){
       if(discountType==="percent"){
         discountValue=cartSub*cartDiscount/100;
