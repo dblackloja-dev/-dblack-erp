@@ -4,7 +4,7 @@
 <h1>D'Black ERP — Sincronizar Estoque</h1>
 <p>Clique no botão para enviar o estoque deste navegador para o servidor.</p>
 <button id="btn" style="padding:20px 40px;font-size:20px;background:#FFD740;color:#000;border:none;border-radius:12px;cursor:pointer;font-weight:bold">SINCRONIZAR ESTOQUE</button>
-<div id="log" style="margin-top:20px;text-align:left;background:#222;padding:20px;border-radius:10px;max-height:400px;overflow:auto"></div>
+<div id="log" style="margin-top:20px;text-align:left;background:#222;padding:20px;border-radius:10px"></div>
 <script>
 document.getElementById('btn').onclick = async function() {
   var log = document.getElementById('log');
@@ -14,41 +14,34 @@ document.getElementById('btn').onclick = async function() {
   log.innerHTML = '';
 
   var token = localStorage.getItem('dblack_token');
-  if (!token) { log.innerHTML = '<p style="color:red">ERRO: Não está logado. Abra o ERP primeiro e faça login.</p>'; btn.disabled = false; btn.textContent = 'SINCRONIZAR ESTOQUE'; return; }
+  if (!token) { log.innerHTML = '<p style="color:red">ERRO: Faça login no ERP primeiro.</p>'; btn.disabled = false; btn.textContent = 'SINCRONIZAR ESTOQUE'; return; }
 
   var stock = JSON.parse(localStorage.getItem('dblack_stock') || '{}');
   var total = 0;
-  var ok = 0;
-  var erros = 0;
+  for (var sid in stock) for (var pid in stock[sid]) total++;
 
-  for (var stockId in stock) {
-    for (var productId in stock[stockId]) {
-      total++;
+  if (total === 0) { log.innerHTML = '<p style="color:orange">Nenhum estoque encontrado no navegador.</p>'; btn.disabled = false; btn.textContent = 'SINCRONIZAR ESTOQUE'; return; }
+
+  log.innerHTML = '<p>Enviando ' + total + ' produtos de uma vez...</p>';
+
+  try {
+    var res = await fetch('/api/stock/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ stock: stock })
+    });
+    var data = await res.json();
+    if (res.ok) {
+      log.innerHTML += '<p style="color:#00E676;font-size:20px;font-weight:bold">PRONTO! ' + data.count + ' produtos sincronizados!</p>';
+      btn.textContent = 'CONCLUIDO!';
+    } else {
+      log.innerHTML += '<p style="color:red">Erro: ' + (data.error || 'desconhecido') + '</p>';
+      btn.disabled = false; btn.textContent = 'TENTAR DE NOVO';
     }
+  } catch(e) {
+    log.innerHTML += '<p style="color:red">Erro de rede: ' + e.message + '</p>';
+    btn.disabled = false; btn.textContent = 'TENTAR DE NOVO';
   }
-
-  log.innerHTML += '<p>Encontrados ' + total + ' produtos no estoque local.</p>';
-
-  for (var stockId in stock) {
-    for (var productId in stock[stockId]) {
-      var qty = stock[stockId][productId];
-      try {
-        var res = await fetch('/api/stock/' + stockId + '/' + productId, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-          body: JSON.stringify({ quantity: qty })
-        });
-        if (res.ok) { ok++; }
-        else { erros++; log.innerHTML += '<p style="color:orange">Erro em ' + productId + ': HTTP ' + res.status + '</p>'; }
-      } catch(e) {
-        erros++;
-        log.innerHTML += '<p style="color:red">Erro em ' + productId + ': ' + e.message + '</p>';
-      }
-    }
-  }
-
-  log.innerHTML += '<p style="color:#00E676;font-size:18px;font-weight:bold">PRONTO! ' + ok + ' produtos sincronizados, ' + erros + ' erros.</p>';
-  btn.textContent = 'CONCLUÍDO!';
 };
 </script>
 </body></html>

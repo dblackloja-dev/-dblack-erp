@@ -338,6 +338,24 @@ app.get('/api/stock/:stockId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Sync em massa — recebe todo o estoque de uma vez
+app.post('/api/stock/bulk', async (req, res) => {
+  try {
+    const { stock } = req.body; // { stockId: { productId: qty, ... }, ... }
+    let count = 0;
+    for (const [stockId, products] of Object.entries(stock)) {
+      for (const [productId, quantity] of Object.entries(products)) {
+        await queryRun(
+          'INSERT INTO stock (stock_id, product_id, quantity) VALUES ($1,$2,$3) ON CONFLICT (stock_id, product_id) DO UPDATE SET quantity = $3',
+          [stockId, productId, quantity]
+        );
+        count++;
+      }
+    }
+    res.json({ success: true, count });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.put('/api/stock/:stockId/:productId', async (req, res) => {
   try {
     const { quantity, delta, type, reason, user_name } = req.body;
