@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════
 // ═══  D'Black ERP — Service Worker (Offline)     ═══
 // ═══════════════════════════════════════════════════
-const CACHE_NAME = 'dblack-erp-v1';
+const CACHE_NAME = 'dblack-erp-v2'; // v2: fix QZ Tray
 
 // Arquivos essenciais para o app funcionar offline
 const PRECACHE_URLS = [
