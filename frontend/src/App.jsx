@@ -444,25 +444,28 @@ export default function App() {
     }
 
     async function initQz() {
-      if (!window.qz) return;
+      if (!window.qz) { console.log('[QZ] qz-tray.js não carregou'); return; }
       try {
         window.qz.security.setCertificatePromise(resolve => resolve(QZ_CERT));
         window.qz.security.setSignaturePromise(toSign => resolve => qzSign(toSign).then(resolve));
         if (!window.qz.websocket.isActive()) {
           try {
-            // Tenta conexão segura (wss://) primeiro
-            await window.qz.websocket.connect({ retries: 2, delay: 500, keepAlive: 30 });
+            await window.qz.websocket.connect({ retries: 3, delay: 1000, keepAlive: 60 });
+            if (_globalToast) _globalToast('✅ QZ Tray conectado (impressora térmica)');
           } catch(e1) {
-            // Fallback: conexão não-segura (ws://localhost) — Chrome permite de HTTPS
+            console.warn('[QZ] wss:// falhou:', e1.message||e1);
             try {
-              await window.qz.websocket.connect({ usingSecure: false, retries: 3, delay: 1000, keepAlive: 30 });
-              console.log('[QZ] Conectado via ws:// (insecure fallback)');
+              await window.qz.websocket.connect({ usingSecure: false, retries: 3, delay: 1000, keepAlive: 60 });
+              if (_globalToast) _globalToast('✅ QZ Tray conectado (ws://)');
             } catch(e2) {
-              console.warn('[QZ] Não foi possível conectar:', e2.message||e2);
+              console.warn('[QZ] ws:// falhou:', e2.message||e2);
+              if (_globalToast) _globalToast('QZ Tray: não conectou — ' + (e2.message||e2).toString().slice(0,80), 'error');
             }
           }
+        } else {
+          console.log('[QZ] Já conectado');
         }
-      } catch(e) {}
+      } catch(e) { console.warn('[QZ] Erro geral:', e); }
     }
 
     if (window.qz) { initQz(); return; }
