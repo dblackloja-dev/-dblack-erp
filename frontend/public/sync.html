@@ -16,7 +16,7 @@ document.getElementById('btn').onclick = async function() {
   var token = localStorage.getItem('dblack_token');
   if (!token) { log.innerHTML = '<p style="color:red">ERRO: Não está logado. Abra o ERP primeiro e faça login.</p>'; btn.disabled = false; btn.textContent = 'SINCRONIZAR ESTOQUE'; return; }
 
-  var stock = JSON.parse(localStorage.getItem('stock') || '{}');
+  var stock = JSON.parse(localStorage.getItem('dblack_stock') || '{}');
   var total = 0;
   var ok = 0;
   var erros = 0;
