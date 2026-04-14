@@ -433,13 +433,24 @@ export default function App() {
       }
     }
 
-    function initQz() {
+    async function initQz() {
       if (!window.qz) return;
       try {
         window.qz.security.setCertificatePromise(resolve => resolve(QZ_CERT));
         window.qz.security.setSignaturePromise(toSign => resolve => qzSign(toSign).then(resolve));
         if (!window.qz.websocket.isActive()) {
-          window.qz.websocket.connect({ retries: 5, delay: 1000, keepAlive: 30 }).catch(() => {});
+          try {
+            // Tenta conexão segura (wss://) primeiro
+            await window.qz.websocket.connect({ retries: 2, delay: 500, keepAlive: 30 });
+          } catch(e1) {
+            // Fallback: conexão não-segura (ws://localhost) — Chrome permite de HTTPS
+            try {
+              await window.qz.websocket.connect({ usingSecure: false, retries: 3, delay: 1000, keepAlive: 30 });
+              console.log('[QZ] Conectado via ws:// (insecure fallback)');
+            } catch(e2) {
+              console.warn('[QZ] Não foi possível conectar:', e2.message||e2);
+            }
+          }
         }
       } catch(e) {}
     }

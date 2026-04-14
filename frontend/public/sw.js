@@ -47,6 +47,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // QZ Tray: NUNCA interceptar — deixar passar direto
+  if (url.hostname === 'localhost' && url.port && url.port !== location.port) return;
+  if (url.pathname === '/qz-tray.js') return;
+  if (url.pathname.startsWith('/api/qz-')) return;
+
   // Requisições de API (POST/PUT/DELETE) — não cachear, deixar passar
   if (url.pathname.startsWith('/api/')) {
     // GET de API: tenta rede primeiro, fallback para cache
