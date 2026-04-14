@@ -1320,6 +1320,9 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                   <span style={{fontWeight:700,color:C.red}}>-{fmt(discountValue)}</span>
                 </div>}
 
+                {/* Confirmar */}
+                {discountValue>0&&<button style={{width:"100%",marginTop:6,padding:"10px",borderRadius:8,border:"none",background:C.gold,color:"#000",cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}} onClick={()=>setShowDiscountPanel(false)}>✓ Aplicar Desconto (-{fmt(discountValue)})</button>}
+
                 {/* Clear */}
                 {(cartDiscount>0||Object.values(itemDiscounts).some(v=>v>0))&&<button style={{width:"100%",marginTop:4,padding:"4px",borderRadius:5,border:"none",background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={()=>{setCartDiscount(0);upTab({discountItemIds:[],itemDiscounts:{}});}}>Remover desconto</button>}
               </div>
