@@ -2048,6 +2048,41 @@ function ReceiptComprovante({data,onClose}){
             <HR2/>
             <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
           </>}
+
+          {/* ── TRANSFERÊNCIA ── */}
+          {data.type==="transferencia"&&<>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+            <div style={{textAlign:"center",fontSize:12,letterSpacing:1,fontWeight:900}}>TRANSFERÊNCIA DE MERCADORIA</div>
+            <HR2/>
+            <Row l={"Data: "+data.date} r={"Hora: "+data.time}/>
+            <Row l={"ID: "+data.id.slice(-8).toUpperCase()} r=""/>
+            <HR/>
+            <Row l="ORIGEM:" r={data.from}/>
+            <Row l="DESTINO:" r={data.to}/>
+            <HR/>
+            {data.description&&<Row l="Motivo:" r={data.description}/>}
+            {data.requestedBy&&<Row l="Pedido por:" r={data.requestedBy}/>}
+            {data.separatedBy&&<Row l="Separado por:" r={data.separatedBy}/>}
+            <Row l="Pago:" r={data.paid?"SIM":"NAO"}/>
+            <HR2/>
+            <div style={{fontWeight:900,fontSize:10,letterSpacing:1,marginBottom:4}}>PRODUTOS</div>
+            {data.items.map((item,i)=><div key={i} style={{padding:"3px 0",borderBottom:"1px dotted #999"}}>
+              <div style={{fontWeight:700,fontSize:11}}>{item.productName}</div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}>
+                <span>SKU: {item.sku}</span>
+                <span>{item.qty} un. x {fmt(item.cost)} = {fmt(item.cost*item.qty)}</span>
+              </div>
+            </div>)}
+            <HR2/>
+            <Row l={"TOTAL PECAS:"} r={data.totalPcs+" un."}/>
+            <Row l={"VALOR CUSTO:"} r={fmt(data.totalVal)}/>
+            <HR2/>
+            <div style={{marginTop:16,fontSize:10}}>
+              <div style={{borderBottom:"1px solid #000",marginBottom:4,paddingBottom:12}}>Assinatura (separou): ________________________</div>
+              <div style={{borderBottom:"1px solid #000",marginBottom:4,paddingBottom:12}}>Assinatura (recebeu): ________________________</div>
+            </div>
+            <div style={{textAlign:"center",fontSize:9,marginTop:6,color:"#666"}}>Documento gerado em {new Date().toLocaleString("pt-BR")}</div>
+          </>}
         </div>
 
         {/* Botões (mesmo padrão do ReceiptCupom) */}
@@ -2393,11 +2428,19 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const [movProduct,setMovProduct]=useState("");
   const [movQty,setMovQty]=useState("");
   const [movReason,setMovReason]=useState("");
+  const [movSearch,setMovSearch]=useState("");
+  const movSearchRef=useRef(null);
 
-  // Transfer form
-  const [transProduct,setTransProduct]=useState("");
-  const [transQty,setTransQty]=useState("");
+  // Transfer form — múltiplos produtos
+  const [transItems,setTransItems]=useState([]); // [{productId,productName,img,qty,stock}]
+  const [transSearch,setTransSearch]=useState("");
   const [transTo,setTransTo]=useState("");
+  const [transDesc,setTransDesc]=useState("");
+  const [transRequestedBy,setTransRequestedBy]=useState("");
+  const [transSeparatedBy,setTransSeparatedBy]=useState("");
+  const [transPaid,setTransPaid]=useState(false);
+  const [printTransfer,setPrintTransfer]=useState(null);
+  const transSearchRef=useRef(null);
 
   // Count form
   const [countData,setCountData]=useState(null); // [{productId, systemQty, countedQty}]
@@ -2423,6 +2466,35 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     }
   };
 
+  // Busca produto por EAN, SKU ou nome
+  const searchProducts=(query)=>{
+    if(!query) return [];
+    const q=query.toLowerCase().trim();
+    return storeProducts.filter(p=>
+      (p.ean&&p.ean===q) || p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
+    ).slice(0,10);
+  };
+
+  // Seleciona produto na busca (entrada/saída)
+  const selectMovProduct=(p)=>{
+    setMovProduct(p.id);
+    setMovSearch(p.name);
+    // Se bipou EAN, foca na quantidade automaticamente
+    if(p.ean&&movSearch.trim()===p.ean) setTimeout(()=>document.querySelector('[data-mov-qty]')?.focus(),50);
+  };
+
+  // Seleciona produto na busca (transferência) — adiciona à lista
+  const addTransItem=(p)=>{
+    const existing=transItems.find(i=>i.productId===p.id);
+    if(existing){
+      setTransItems(prev=>prev.map(i=>i.productId===p.id?{...i,qty:i.qty+1}:i));
+    } else {
+      setTransItems(prev=>[...prev,{productId:p.id,productName:p.name,img:p.img,sku:p.sku,qty:1,stock:p.stock,price:p.price,cost:p.cost}]);
+    }
+    setTransSearch("");
+    transSearchRef.current?.focus();
+  };
+
   // Entry/Exit — usa activeTab diretamente para evitar race condition com setState
   const doMovement=()=>{
     if(!movProduct||!movQty||+movQty<=0)return showToast("Selecione produto e quantidade!","error");
@@ -2436,21 +2508,34 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     setMovProduct("");setMovQty("");setMovReason("");
   };
 
-  // Transfer
+  // Transfer — múltiplos produtos
   const doTransfer=()=>{
-    if(!transProduct||!transQty||+transQty<=0||!transTo)return showToast("Preencha todos os campos!","error");
-    const qty=+transQty;
-    const current=(stock[activeStockId]||{})[transProduct]||0;
-    // if(qty>current)return showToast("Estoque insuficiente! Tem "+current+" un.","error");
-    const prod=catalog.find(p=>p.id===transProduct);
+    if(transItems.length===0)return showToast("Adicione pelo menos um produto!","error");
+    if(!transTo)return showToast("Selecione a loja destino!","error");
     const destStore=STORES.find(s=>s.id===transTo);
-    adjustStock(transProduct,-qty,activeStockId,{skipApi:true});
-    adjustStock(transProduct,qty,getStockId(transTo),{skipApi:true});
-    api.transferStock({fromStockId:activeStockId,toStockId:getStockId(transTo),productId:transProduct,quantity:qty}).catch(console.error);
-    const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"transferencia",productId:transProduct,productName:prod?.name||"",qty,reason:"Transferência para "+destStore?.name,store:currentStore.name,from:currentStore.name,to:destStore?.name};
-    setMovHistory(prev=>[mov,...prev]);
-    showToast(qty+" un. de "+prod?.name+" transferidos para "+destStore?.name+"!");
-    setTransProduct("");setTransQty("");setTransTo("");
+    const today=new Date().toISOString().split("T")[0];
+    const time=new Date().toLocaleTimeString("pt-BR");
+
+    transItems.forEach(item=>{
+      adjustStock(item.productId,-item.qty,activeStockId,{skipApi:true});
+      adjustStock(item.productId,item.qty,getStockId(transTo),{skipApi:true});
+      api.transferStock({fromStockId:activeStockId,toStockId:getStockId(transTo),productId:item.productId,quantity:item.qty}).catch(console.error);
+      setMovHistory(prev=>[{id:genId(),date:today,time,type:"transferencia",productId:item.productId,productName:item.productName,qty:item.qty,reason:(transDesc||"Transferência")+" → "+destStore?.name,store:currentStore.name,from:currentStore.name,to:destStore?.name},...prev]);
+    });
+
+    const totalPcs=transItems.reduce((s,i)=>s+i.qty,0);
+    const totalVal=transItems.reduce((s,i)=>s+i.cost*i.qty,0);
+
+    // Dados para o cupom
+    setPrintTransfer({
+      id:genId(),date:today,time,
+      from:currentStore.name,to:destStore?.name,
+      items:transItems,totalPcs,totalVal,
+      description:transDesc,requestedBy:transRequestedBy,separatedBy:transSeparatedBy,paid:transPaid
+    });
+
+    showToast(totalPcs+" peças transferidas para "+destStore?.name+"!");
+    setTransItems([]);setTransTo("");setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);
   };
 
   // Start count
@@ -2529,12 +2614,39 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           <h3 style={{fontSize:16,fontWeight:800,marginBottom:16,color:activeTab==="entrada"?C.grn:C.red}}>
             {activeTab==="entrada"?"📥 Registrar Entrada de Mercadoria":"📤 Registrar Saída de Mercadoria"}
           </h3>
-          <div style={S.formGrid}>
-            <select style={S.sel} value={movProduct} onChange={e=>setMovProduct(e.target.value)}>
-              <option value="">Selecione o produto</option>
-              {storeProducts.map(p=><option key={p.id} value={p.id}>{p.img} {p.name} (est: {p.stock})</option>)}
-            </select>
-            <input style={S.inp} type="number" placeholder="Quantidade" value={movQty} onChange={e=>setMovQty(e.target.value)} min={1}/>
+          {/* Busca por EAN/SKU/Nome */}
+          <div style={{position:"relative",marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:C.s2,borderRadius:10,border:`1px solid ${movProduct?activeTab==="entrada"?C.grn:C.red:C.brd}`}}>
+              <span style={{fontSize:16}}>🔍</span>
+              <input ref={movSearchRef} style={{...S.inp,flex:1,border:"none",background:"transparent",padding:0,fontSize:14}} placeholder="Bipe o código de barras, SKU ou digite o nome..." value={movSearch} onChange={e=>{setMovSearch(e.target.value);setMovProduct("");}} onKeyDown={e=>{
+                if(e.key==="Enter"&&movSearch){
+                  const results=searchProducts(movSearch);
+                  if(results.length===1) selectMovProduct(results[0]);
+                  // Se bipou EAN exato, seleciona direto
+                  const eanMatch=storeProducts.find(p=>p.ean&&p.ean===movSearch.trim());
+                  if(eanMatch) selectMovProduct(eanMatch);
+                }
+              }} autoFocus/>
+              {movProduct&&<span style={{color:C.grn,fontSize:14}}>✓</span>}
+              {movSearch&&!movProduct&&<button onClick={()=>{setMovSearch("");setMovProduct("");}} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:14}}>✕</button>}
+            </div>
+            {/* Resultados da busca */}
+            {movSearch&&!movProduct&&searchProducts(movSearch).length>0&&<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:C.s1,border:`1px solid ${C.brd}`,borderRadius:10,marginTop:4,maxHeight:250,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,.4)"}}>
+              {searchProducts(movSearch).map(p=><div key={p.id} onClick={()=>selectMovProduct(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${C.brd}`}} onMouseEnter={e=>e.currentTarget.style.background="rgba(255,215,64,.06)"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <span style={{fontSize:20}}>{p.img}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:13}}>{p.name}</div>
+                  <div style={{fontSize:10,color:C.dim}}>SKU: {p.sku}{p.ean?" • EAN: "+p.ean:""}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:700,color:C.gold}}>{p.stock} un.</div>
+                  <div style={{fontSize:10,color:C.dim}}>{fmt(p.price)}</div>
+                </div>
+              </div>)}
+            </div>}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <input data-mov-qty="" style={S.inp} type="number" placeholder="Quantidade" value={movQty} onChange={e=>setMovQty(e.target.value)} min={1}/>
             <input style={S.inp} placeholder={activeTab==="entrada"?"Motivo (NF, reposição, devolução...)":"Motivo (avaria, perda, uso interno...)"} value={movReason} onChange={e=>setMovReason(e.target.value)}/>
           </div>
           {movProduct&&<div style={{marginTop:12,padding:12,background:C.s2,borderRadius:10,display:"flex",alignItems:"center",gap:10}}>
@@ -2555,37 +2667,79 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
         <div style={{...S.card,borderColor:"rgba(224,64,251,.2)",borderLeft:"4px solid "+C.pur}}>
           <h3 style={{fontSize:16,fontWeight:800,marginBottom:4,color:C.pur}}>🔄 Transferência entre Lojas</h3>
           <p style={{fontSize:12,color:C.dim,marginBottom:16}}>Enviar mercadoria de <strong style={{color:currentStore.color}}>{currentStore.name}</strong> para outra loja</p>
-          <div style={S.formGrid}>
-            <select style={S.sel} value={transProduct} onChange={e=>setTransProduct(e.target.value)}>
-              <option value="">Selecione o produto</option>
-              {storeProducts.filter(p=>p.stock>0).map(p=><option key={p.id} value={p.id}>{p.img} {p.name} (est: {p.stock})</option>)}
-            </select>
-            <input style={S.inp} type="number" placeholder="Quantidade" value={transQty} onChange={e=>setTransQty(e.target.value)} min={1}/>
+
+          {/* Busca por EAN/SKU/Nome */}
+          <div style={{position:"relative",marginBottom:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:C.s2,borderRadius:10,border:`1px solid ${C.pur}44`}}>
+              <span style={{fontSize:16}}>🔍</span>
+              <input ref={transSearchRef} style={{...S.inp,flex:1,border:"none",background:"transparent",padding:0,fontSize:14}} placeholder="Bipe ou busque produtos para adicionar..." value={transSearch} onChange={e=>setTransSearch(e.target.value)} onKeyDown={e=>{
+                if(e.key==="Enter"&&transSearch){
+                  const eanMatch=storeProducts.find(p=>p.ean&&p.ean===transSearch.trim());
+                  if(eanMatch){addTransItem(eanMatch);return;}
+                  const results=searchProducts(transSearch);
+                  if(results.length===1) addTransItem(results[0]);
+                }
+              }}/>
+            </div>
+            {transSearch&&searchProducts(transSearch).length>0&&<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:C.s1,border:`1px solid ${C.brd}`,borderRadius:10,marginTop:4,maxHeight:250,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,.4)"}}>
+              {searchProducts(transSearch).map(p=><div key={p.id} onClick={()=>addTransItem(p)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${C.brd}`}} onMouseEnter={e=>e.currentTarget.style.background="rgba(224,64,251,.06)"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <span style={{fontSize:20}}>{p.img}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:13}}>{p.name}</div>
+                  <div style={{fontSize:10,color:C.dim}}>SKU: {p.sku}{p.ean?" • EAN: "+p.ean:""}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:700,color:C.gold}}>{p.stock} un.</div>
+                  <div style={{fontSize:10,color:C.dim}}>{fmt(p.price)}</div>
+                </div>
+              </div>)}
+            </div>}
+          </div>
+
+          {/* Lista de produtos adicionados */}
+          {transItems.length>0&&<div style={{marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:6}}>PRODUTOS NA TRANSFERÊNCIA ({transItems.length})</div>
+            <div style={S.tWrap}><table style={S.table}><thead><tr>
+              <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Estoque</th><th style={S.th}>Qtd</th><th style={S.th}>Custo</th><th style={S.th}></th>
+            </tr></thead><tbody>
+              {transItems.map((item,idx)=><tr key={item.productId} style={S.tr}>
+                <td style={S.td}><span style={{fontSize:16}}>{item.img}</span></td>
+                <td style={{...S.td,fontWeight:600,fontSize:12}}>{item.productName}</td>
+                <td style={{...S.td,fontFamily:"monospace",fontSize:10}}>{item.sku}</td>
+                <td style={S.td}><span style={{...S.stBadge,...S.stOk}}>{item.stock}</span></td>
+                <td style={S.td}><input type="number" min={1} max={item.stock} value={item.qty} onChange={e=>setTransItems(prev=>prev.map((it,i)=>i===idx?{...it,qty:Math.max(1,+e.target.value||1)}:it))} style={{...S.inp,width:60,textAlign:"center",padding:"4px 6px"}}/></td>
+                <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(item.cost*item.qty)}</td>
+                <td style={S.td}><button onClick={()=>setTransItems(prev=>prev.filter((_,i)=>i!==idx))} style={{...S.smBtn,color:C.red}}>✕</button></td>
+              </tr>)}
+              <tr style={{background:C.s2}}><td colSpan={4} style={{...S.td,fontWeight:700,textAlign:"right"}}>Total:</td><td style={{...S.td,fontWeight:800,color:C.pur}}>{transItems.reduce((s,i)=>s+i.qty,0)} pç</td><td style={{...S.td,fontWeight:700,color:C.gold}}>{fmt(transItems.reduce((s,i)=>s+i.cost*i.qty,0))}</td><td style={S.td}></td></tr>
+            </tbody></table></div>
+          </div>}
+
+          {/* Campos extras */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
             <select style={S.sel} value={transTo} onChange={e=>setTransTo(e.target.value)}>
-              <option value="">Loja destino</option>
+              <option value="">Loja destino *</option>
               {otherStores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+            <input style={S.inp} placeholder="Descrição/Motivo" value={transDesc} onChange={e=>setTransDesc(e.target.value)}/>
+            <input style={S.inp} placeholder="Quem pediu" value={transRequestedBy} onChange={e=>setTransRequestedBy(e.target.value)}/>
+            <input style={S.inp} placeholder="Quem separou" value={transSeparatedBy} onChange={e=>setTransSeparatedBy(e.target.value)}/>
           </div>
-          {transProduct&&transTo&&transQty&&<div style={{marginTop:12,padding:14,background:C.s2,borderRadius:10}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,flexWrap:"wrap"}}>
-              <div style={{textAlign:"center"}}>
-                <div style={{fontSize:11,color:currentStore.color,fontWeight:700,marginBottom:4}}>{currentStore.name}</div>
-                <div style={{fontSize:20,fontWeight:800,color:C.red}}>{(stock[activeStockId]||{})[transProduct]||0} → {Math.max(0,((stock[activeStockId]||{})[transProduct]||0)-(+transQty))}</div>
-              </div>
-              <div style={{fontSize:24}}>➡️</div>
-              <div style={{textAlign:"center"}}>
-                <div style={{fontSize:11,color:STORES.find(s=>s.id===transTo)?.color,fontWeight:700,marginBottom:4}}>{STORES.find(s=>s.id===transTo)?.name}</div>
-                <div style={{fontSize:20,fontWeight:800,color:C.grn}}>{(stock[getStockId(transTo)]||{})[transProduct]||0} → {((stock[getStockId(transTo)]||{})[transProduct]||0)+(+transQty)}</div>
-              </div>
-            </div>
-            <div style={{textAlign:"center",marginTop:8,fontSize:12,color:C.dim}}>{+transQty} un. de <strong>{catalog.find(p=>p.id===transProduct)?.name}</strong></div>
-          </div>}
-          <div style={{marginTop:14,display:"flex",justifyContent:"flex-end"}}>
-            <button style={{...S.primBtn,padding:"10px 24px",background:`linear-gradient(135deg,${C.pur},#9C27B0)`}} onClick={doTransfer}>
-              {I.check} CONFIRMAR TRANSFERÊNCIA
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.dim,cursor:"pointer",marginBottom:14}}>
+            <input type="checkbox" checked={transPaid} onChange={e=>setTransPaid(e.target.checked)} style={{accentColor:C.grn,width:18,height:18}}/>
+            <span>{transPaid?"✅ Cliente PAGOU na loja destino":"❌ NÃO pago"}</span>
+          </label>
+
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+            {transItems.length>0&&<button style={S.secBtn} onClick={()=>{setTransItems([]);setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);}}>Limpar</button>}
+            <button style={{...S.primBtn,padding:"10px 24px",background:`linear-gradient(135deg,${C.pur},#9C27B0)`,opacity:transItems.length===0?.5:1}} onClick={doTransfer} disabled={transItems.length===0}>
+              {I.check} CONFIRMAR TRANSFERÊNCIA ({transItems.reduce((s,i)=>s+i.qty,0)} pç)
             </button>
           </div>
         </div>
+
+        {/* Cupom de transferência */}
+        {printTransfer&&<ReceiptComprovante data={{type:"transferencia",...printTransfer,store:currentStore.name}} onClose={()=>setPrintTransfer(null)}/>}
 
         {/* Quick view: stock across all stores */}
         <div style={S.card}>
