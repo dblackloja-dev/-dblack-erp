@@ -1717,7 +1717,8 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       center(storeName,10,false);
       line();
       // Info
-      row(sale.cupom||"",fmtDate(sale.date),true);
+      const saleTime=sale.created_at?new Date(sale.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):"";
+      row(sale.cupom||"",fmtDate(sale.date)+(saleTime?" "+saleTime:""),true);
       row("Vendedor: "+(sale.seller||"-"),"");
       row("Cliente: "+(sale.customer||"Avulso"),"");
       line();
@@ -1817,7 +1818,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       <div style={{textAlign:"center",fontSize:11,letterSpacing:1}}>CUPOM NAO FISCAL</div>
       <div style={{textAlign:"center",fontSize:10}}>{STORES.find(s=>s.id===sale.storeId)?.name||""}</div>
       <HR/>
-      <Row l={sale.cupom} r={fmtDate(sale.date)} bold/>
+      <Row l={sale.cupom} r={fmtDate(sale.date)+(sale.created_at?" "+new Date(sale.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):"")} bold/>
       <Row l={"Vendedor: "+sale.seller} r=""/>
       <Row l={"Cliente: "+sale.customer} r=""/>
       <HR/>
@@ -5022,7 +5023,8 @@ const S = {
 // ═══════════════════════════════════════
 function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}){
   const todayStr=new Date().toISOString().split("T")[0];
-  const [dateFilter,setDateFilter]=useState(todayStr);
+  const [dateFrom,setDateFrom]=useState(todayStr);
+  const [dateTo,setDateTo]=useState(todayStr);
   const [search,setSearch]=useState("");
   const [showCanceled,setShowCanceled]=useState(false);
   // Receipt modal
@@ -5038,7 +5040,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
 
   const allSales=storeSales||[];
   const filtered=allSales.filter(s=>{
-    if(s.date!==dateFilter)return false;
+    if(s.date<dateFrom||s.date>dateTo)return false;
     if(!showCanceled&&s.status==="Cancelada")return false;
     if(search){
       const q=search.toLowerCase();
@@ -5050,7 +5052,20 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const ativas=filtered.filter(s=>s.status!=="Cancelada");
   const totalRev=ativas.reduce((s,v)=>s+v.total,0);
   const totalDesc=ativas.reduce((s,v)=>s+(v.discount||0),0);
-  const canceladas=allSales.filter(s=>s.date===dateFilter&&s.status==="Cancelada").length;
+  const canceladas=filtered.filter(s=>s.status==="Cancelada").length;
+
+  // Resumo por forma de pagamento
+  const paymentSummary={};
+  ativas.forEach(s=>{
+    const pays=s.payments&&s.payments.length>0?s.payments:[{method:s.payment||"Outros",value:s.total}];
+    pays.forEach(p=>{
+      const method=p.method||"Outros";
+      if(!paymentSummary[method]) paymentSummary[method]={count:0,total:0};
+      paymentSummary[method].count++;
+      paymentSummary[method].total+=(+p.value||0);
+    });
+  });
+  const isMultiDay=dateFrom!==dateTo;
 
   // Vendas do operador logado hoje
   const minhasVendas=allSales.filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?s.sellerId===loggedUser.id:true));
@@ -5116,9 +5131,15 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
       {/* ── TOOLBAR ── */}
       <div style={S.toolbar}>
         <h3 style={{margin:0,fontSize:15}}>📋 Conferência de Vendas</h3>
-        <input type="date" value={dateFilter} onChange={e=>setDateFilter(e.target.value)}
-          style={{...S.inp,padding:"7px 12px",fontSize:13,width:"auto"}}/>
-        <div style={{...S.searchBar,flex:1,maxWidth:280}}>{I.search}
+        <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <input type="date" value={dateFrom} onChange={e=>{setDateFrom(e.target.value);if(e.target.value>dateTo)setDateTo(e.target.value);}}
+            style={{...S.inp,padding:"7px 10px",fontSize:12,width:"auto"}}/>
+          <span style={{color:C.dim,fontSize:11}}>até</span>
+          <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} min={dateFrom}
+            style={{...S.inp,padding:"7px 10px",fontSize:12,width:"auto"}}/>
+          <button style={{...S.secBtn,fontSize:10,padding:"6px 10px"}} onClick={()=>{setDateFrom(todayStr);setDateTo(todayStr);}}>Hoje</button>
+        </div>
+        <div style={{...S.searchBar,flex:1,maxWidth:250}}>{I.search}
           <input style={S.searchIn} placeholder="Buscar cliente, cupom, vendedor..." value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
         <button style={{...S.secBtn,fontSize:11,padding:"7px 12px",borderColor:showCanceled?C.red:"",color:showCanceled?C.red:""}}
@@ -5128,7 +5149,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
       </div>
 
       {/* ── MINHAS VENDAS HOJE ── */}
-      {dateFilter===todayStr&&<div style={{background:"linear-gradient(135deg,rgba(255,215,64,.08),rgba(255,215,64,.03))",border:`1px solid rgba(255,215,64,.25)`,borderRadius:14,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+      {dateFrom===todayStr&&dateTo===todayStr&&<div style={{background:"linear-gradient(135deg,rgba(255,215,64,.08),rgba(255,215,64,.03))",border:`1px solid rgba(255,215,64,.25)`,borderRadius:14,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
         <div style={{fontSize:22,lineHeight:1}}>🧑‍💼</div>
         <div style={{flex:1,minWidth:160}}>
           <div style={{fontSize:11,color:C.dim,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:2}}>Minhas vendas hoje</div>
@@ -5162,14 +5183,36 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
         </div>)}
       </div>
 
+      {/* ── RESUMO POR FORMA DE PAGAMENTO ── */}
+      {ativas.length>0&&<div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:"14px 18px",marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:10}}>💳 VENDAS POR FORMA DE PAGAMENTO {isMultiDay?"("+fmtDate(dateFrom)+" a "+fmtDate(dateTo)+")":"— "+fmtDate(dateFrom)}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
+          {Object.entries(paymentSummary).sort((a,b)=>b[1].total-a[1].total).map(([method,data])=>{
+            const colors={"PIX":C.blu,"Dinheiro":C.grn,"Crédito":C.pur,"Débito":C.gold,"Pix Parcelado":"#00ACC1","Crédito 2x":"#AB47BC","Crédito 3x":"#7E57C2"};
+            const color=colors[method]||C.dim;
+            return <div key={method} style={{background:color+"10",border:`1px solid ${color}33`,borderRadius:10,padding:"10px 16px",minWidth:120,textAlign:"center"}}>
+              <div style={{fontSize:18,fontWeight:800,color}}>{fmt(data.total)}</div>
+              <div style={{fontSize:12,fontWeight:700,color,marginTop:2}}>{method}</div>
+              <div style={{fontSize:10,color:C.dim}}>{data.count} venda{data.count>1?"s":""}</div>
+            </div>;
+          })}
+          <div style={{background:C.gold+"10",border:`1px solid ${C.gold}44`,borderRadius:10,padding:"10px 16px",minWidth:140,textAlign:"center"}}>
+            <div style={{fontSize:22,fontWeight:900,color:C.gold}}>{fmt(totalRev)}</div>
+            <div style={{fontSize:12,fontWeight:800,color:C.gold}}>TOTAL {isMultiDay?"PERÍODO":"DIA"}</div>
+            <div style={{fontSize:10,color:C.dim}}>{ativas.length} venda{ativas.length>1?"s":""}</div>
+          </div>
+        </div>
+      </div>}
+
       {/* ── TABELA DE VENDAS ── */}
       {filtered.length===0
         ?<div style={{textAlign:"center",padding:"40px 0",color:C.dim,background:C.s1,borderRadius:12,border:`1px solid ${C.brd}`}}>
-            Nenhuma venda encontrada para {new Date(dateFilter+"T12:00:00").toLocaleDateString("pt-BR")}
+            Nenhuma venda encontrada para {isMultiDay?fmtDate(dateFrom)+" a "+fmtDate(dateTo):fmtDate(dateFrom)}
           </div>
         :<div style={S.tWrap}><table style={S.table}>
           <thead><tr>
             <th style={S.th}>Cupom</th>
+            <th style={S.th}>Hora</th>
             <th style={S.th}>Cliente</th>
             <th style={S.th}>Vendedor</th>
             <th style={S.th}>Itens</th>
@@ -5181,8 +5224,10 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
           </tr></thead>
           <tbody>{filtered.map(sale=>{
             const cancelada=sale.status==="Cancelada";
+            const hora=sale.created_at?new Date(sale.created_at).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):"—";
             return <tr key={sale.id} style={{...S.tr,...(cancelada?{opacity:.45,background:"rgba(255,82,82,.04)"}:{})}}>
               <td style={{...S.td,fontFamily:"monospace",fontSize:11,color:C.gold}}>{sale.cupom}</td>
+              <td style={{...S.td,fontFamily:"monospace",fontSize:11,color:C.dim}}>{hora}</td>
               <td style={{...S.td,fontWeight:600}}>{sale.customer}</td>
               <td style={{...S.td,fontSize:12,color:C.dim}}>{sale.seller}</td>
               <td style={S.td}>
