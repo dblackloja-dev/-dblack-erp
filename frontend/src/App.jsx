@@ -720,7 +720,7 @@ export default function App() {
           {tab==="despesas" && <DespesasModule {...{storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast,expenseCategories,setExpenseCategories,cashState,setCashState,loggedUser}} />}
 
           {/* VENDAS */}
-          {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}} />}
+          {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId,cashState,setCashState}} />}
 
           {/* CAIXA */}
           {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals,advances,setAdvances,employees}} />}
@@ -5088,7 +5088,7 @@ const S = {
 // ═══════════════════════════════════════
 // ═══  VENDAS MODULE                  ═══
 // ═══════════════════════════════════════
-function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}){
+function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId,cashState,setCashState}){
   const todayStr=new Date().toISOString().split("T")[0];
   const [dateFrom,setDateFrom]=useState(todayStr);
   const [dateTo,setDateTo]=useState(todayStr);
@@ -5169,9 +5169,17 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
           n[sid]=st;return n;
         });
       }
+      // Desconta o valor da venda do caixa (devolução ao cliente)
+      const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+      setCashState(prev=>{
+        const n={...prev};
+        const cs=n[cashKey]||{open:false,initial:0,history:[]};
+        n[cashKey]={...cs,history:[...(cs.history||[]),{type:"saida",value:cancelModal.total,desc:"Cancelamento: "+cancelModal.cupom+" ("+cancelModal.customer+")",time:new Date().toLocaleTimeString("pt-BR")}]};
+        return n;
+      });
       api.updateSale&&api.updateSale(cancelModal.id,{status:"Cancelada",canceledBy:auth.name,canceledAt}).catch(()=>{});
       setCancelModal(null);setAuthPass("");setAuthError("");
-      showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name);
+      showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name+" — "+fmt(cancelModal.total)+" descontado do caixa");
     }catch(e){setAuthError("Erro ao verificar senha. Tente novamente.");}
   };
 
