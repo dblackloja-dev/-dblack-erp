@@ -5027,6 +5027,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const [dateTo,setDateTo]=useState(todayStr);
   const [search,setSearch]=useState("");
   const [showCanceled,setShowCanceled]=useState(false);
+  const [payFilter,setPayFilter]=useState(""); // filtra por forma de pagamento
   // Receipt modal
   const [receiptSale,setReceiptSale]=useState(null);
   // Cancel modal
@@ -5042,6 +5043,10 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const filtered=allSales.filter(s=>{
     if(s.date<dateFrom||s.date>dateTo)return false;
     if(!showCanceled&&s.status==="Cancelada")return false;
+    if(payFilter){
+      const pays=s.payments&&s.payments.length>0?s.payments:[{method:s.payment||"Outros",value:s.total}];
+      if(!pays.some(p=>(p.method||"Outros")===payFilter))return false;
+    }
     if(search){
       const q=search.toLowerCase();
       return s.customer?.toLowerCase().includes(q)||s.cupom?.toLowerCase().includes(q)||s.seller?.toLowerCase().includes(q);
@@ -5190,16 +5195,19 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
           {Object.entries(paymentSummary).sort((a,b)=>b[1].total-a[1].total).map(([method,data])=>{
             const colors={"PIX":C.blu,"Dinheiro":C.grn,"Crédito":C.pur,"Débito":C.gold,"Pix Parcelado":"#00ACC1","Crédito 2x":"#AB47BC","Crédito 3x":"#7E57C2"};
             const color=colors[method]||C.dim;
-            return <div key={method} style={{background:color+"10",border:`1px solid ${color}33`,borderRadius:10,padding:"10px 16px",minWidth:120,textAlign:"center"}}>
+            const active=payFilter===method;
+            return <div key={method} onClick={()=>setPayFilter(active?"":method)} style={{background:active?color+"22":color+"10",border:`2px solid ${active?color:color+"33"}`,borderRadius:10,padding:"10px 16px",minWidth:120,textAlign:"center",cursor:"pointer",transform:active?"scale(1.05)":"",transition:"all .15s"}}>
               <div style={{fontSize:18,fontWeight:800,color}}>{fmt(data.total)}</div>
               <div style={{fontSize:12,fontWeight:700,color,marginTop:2}}>{method}</div>
               <div style={{fontSize:10,color:C.dim}}>{data.count} venda{data.count>1?"s":""}</div>
+              {active&&<div style={{fontSize:9,color,marginTop:3,fontWeight:700}}>✓ FILTRADO</div>}
             </div>;
           })}
-          <div style={{background:C.gold+"10",border:`1px solid ${C.gold}44`,borderRadius:10,padding:"10px 16px",minWidth:140,textAlign:"center"}}>
+          <div onClick={()=>setPayFilter("")} style={{background:payFilter?"transparent":C.gold+"10",border:`2px solid ${payFilter?"transparent":C.gold+"44"}`,borderRadius:10,padding:"10px 16px",minWidth:140,textAlign:"center",cursor:"pointer"}}>
             <div style={{fontSize:22,fontWeight:900,color:C.gold}}>{fmt(totalRev)}</div>
             <div style={{fontSize:12,fontWeight:800,color:C.gold}}>TOTAL {isMultiDay?"PERÍODO":"DIA"}</div>
             <div style={{fontSize:10,color:C.dim}}>{ativas.length} venda{ativas.length>1?"s":""}</div>
+            {payFilter&&<div style={{fontSize:9,color:C.gold,marginTop:3,fontWeight:700}}>Clique para ver todas</div>}
           </div>
         </div>
       </div>}
