@@ -264,6 +264,18 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS cash_advances (
+      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL,
+      emp_id TEXT NOT NULL,
+      emp_name TEXT NOT NULL,
+      value NUMERIC NOT NULL,
+      description TEXT,
+      authorized_by TEXT,
+      month TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
     -- Conversas do agente de suporte Black IA
     CREATE TABLE IF NOT EXISTS agent_conversations (
       id TEXT PRIMARY KEY,
@@ -311,6 +323,8 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_cash_movements_store ON cash_movements(store_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_exchanges_store ON exchanges(store_id, date)',
     'CREATE INDEX IF NOT EXISTS idx_withdrawals_store ON cash_withdrawals(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_advances_store ON cash_advances(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_advances_emp ON cash_advances(emp_id, month)',
     'CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)',
     'CREATE INDEX IF NOT EXISTS idx_users_store ON users(store_id)',
     'CREATE INDEX IF NOT EXISTS idx_agent_logs_conv ON agent_logs(conversation_id, created_at)',

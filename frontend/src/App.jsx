@@ -274,6 +274,7 @@ export default function App() {
     {id:"pay2",month:"2026-03",empId:"emp2",empName:"Carlos Silva",storeId:"loja1",baseSalary:1800,metaBonus:0,awards:0,overtime:180,storeDiscount:80,advances:200,otherDeductions:0,totalEarnings:1980,totalDeductions:280,netPay:1700,paid:true,paidDate:"2026-04-05",notes:""},
   ]));
   const [withdrawals, setWithdrawals] = useState(() => ls('withdrawals', []));
+  const [advances, setAdvances] = useState(() => ls('advances', []));
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
 
   // ─── AUTO-SAVE no localStorage ───
@@ -291,6 +292,7 @@ export default function App() {
   useEffect(() => { lsSave('employees', employees); }, [employees]);
   useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
   useEffect(() => { lsSave('withdrawals', withdrawals); }, [withdrawals]);
+  useEffect(() => { lsSave('advances', advances); }, [advances]);
   useEffect(() => { lsSave('expenseCategories', expenseCategories); }, [expenseCategories]);
 
   // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
@@ -325,8 +327,9 @@ export default function App() {
       api.getInvestments(),
       api.getUsers(),
       api.getWithdrawals(),
+      api.getAdvances(),
       api.getExpenseCategories(),
-    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,expCats]) => {
+    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
       if(prods?.length) setCatalog(prods.map(prodFromApi));
       if(stk&&Object.keys(stk).length) setStock(stk);
       if(sls?.length){
@@ -372,6 +375,7 @@ export default function App() {
       if(invs?.length) setInvestments(invs);
       if(usrs?.length) setUsers(usrs);
       setWithdrawals(wdrs?.length ? wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})) : []);
+      setAdvances(advs?.length ? advs.map(a=>({...a,storeId:a.store_id,empId:a.emp_id,empName:a.emp_name,authorizedBy:a.authorized_by,createdAt:a.created_at})) : []);
       if(expCats?.length) setExpenseCategories(expCats.map(c=>c.name));
     }).catch(e => console.error('Erro ao carregar do servidor:', e))
       .finally(() => { if(!silent) setApiLoaded(true); });
@@ -719,10 +723,10 @@ export default function App() {
           {tab==="vendas" && <VendasModule {...{storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId}} />}
 
           {/* CAIXA */}
-          {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals}} />}
+          {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals,advances,setAdvances,employees}} />}
 
           {/* RH / FOLHA */}
-          {tab==="rh" && <RHModule {...{employees,setEmployees,payrolls,setPayrolls,showToast}} />}
+          {tab==="rh" && <RHModule {...{employees,setEmployees,payrolls,setPayrolls,advances,showToast}} />}
 
           {/* USUÁRIOS */}
           {tab==="usuarios" && <UsersModule {...{users,setUsers,showToast,loggedUser}} />}
@@ -3074,7 +3078,7 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
 // ═══════════════════════════════════
 // ═══  CAIXA MODULE               ═══
 // ═══════════════════════════════════
-function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals}){
+function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals,advances,setAdvances,employees}){
   const cashKey = activeStore + "_" + (loggedUser?.id || "main");
   const [caixaTab,setCaixaTab]=useState("operacao"); // operacao, retiradas
   const [openVal,setOpenVal]=useState(()=>storeCash.initial!=null?storeCash.initial:0);
@@ -3228,6 +3232,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const caixaTabs=[
     {id:"operacao",label:"Operação",icon:"💰"},
     {id:"retiradas",label:"Retiradas Grandes",icon:"💸"},
+    {id:"vales",label:"Vales Colaboradores",icon:"🧾"},
   ];
 
   return(
@@ -3455,6 +3460,112 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
           </div>}
         </div>
       </div>}
+
+      {/* ═══ ABA VALES COLABORADORES ═══ */}
+      {caixaTab==="vales"&&(()=>{
+        const storeAdvances=(advances||[]).filter(a=>(a.storeId||a.store_id)===activeStore);
+        const storeEmps=(employees||[]).filter(e=>e.storeId===activeStore||e.store_id===activeStore||e.storeId==="all");
+        const totalVales=storeAdvances.reduce((s,a)=>s+(+a.value||0),0);
+        const currentMonth=new Date().toISOString().slice(0,7);
+        const monthAdvances=storeAdvances.filter(a=>(a.month||"")===currentMonth);
+        const totalMes=monthAdvances.reduce((s,a)=>s+(+a.value||0),0);
+
+        return <div>
+          <div style={S.kpiRow}>
+            <KPI icon="🧾" label="Total Vales" value={fmt(totalVales)} sub={storeAdvances.length+" registros"} color={C.gold}/>
+            <KPI icon="📅" label="Vales do Mês" value={fmt(totalMes)} sub={monthAdvances.length+" neste mês"} color={C.blu}/>
+          </div>
+
+          {/* Formulário */}
+          <div style={S.card}>
+            <h3 style={S.cardTitle}>🧾 Registrar Vale (Adiantamento)</h3>
+            <p style={{fontSize:12,color:C.dim,marginBottom:12}}>Valor retirado do caixa como adiantamento para colaborador. Será descontado automaticamente na folha de pagamento.</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Colaborador *</label>
+                <select id="adv-emp" style={{...S.sel,width:"100%"}} defaultValue="">
+                  <option value="">Selecione o colaborador</option>
+                  {storeEmps.filter(e=>e.active!==false).map(e=><option key={e.id} value={e.id}>{e.name} — {e.role||"Colaborador"}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Valor R$ *</label>
+                <input id="adv-val" style={{...S.inp,width:"100%",fontSize:16,fontWeight:700}} type="number" placeholder="0,00"/>
+              </div>
+              <div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Motivo</label>
+                <input id="adv-desc" style={{...S.inp,width:"100%"}} placeholder="Ex: Adiantamento salarial, emergência..."/>
+              </div>
+              <div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Autorizado por</label>
+                <input id="adv-auth" style={{...S.inp,width:"100%"}} placeholder={loggedUser?.name||""} defaultValue={loggedUser?.name||""}/>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:12}}>
+              <button style={{...S.primBtn,background:`linear-gradient(135deg,${C.gold},${C.goldD||"#FFA000"})`}} onClick={()=>{
+                const empEl=document.getElementById("adv-emp");
+                const valEl=document.getElementById("adv-val");
+                const descEl=document.getElementById("adv-desc");
+                const authEl=document.getElementById("adv-auth");
+                const empId=empEl?.value;
+                const val=+valEl?.value;
+                if(!empId)return showToast("Selecione o colaborador!","error");
+                if(!val||val<=0)return showToast("Informe o valor!","error");
+                const emp=storeEmps.find(e=>e.id===empId);
+                const newAdv={id:genId(),storeId:activeStore,store_id:activeStore,empId,emp_id:empId,empName:emp?.name||"",emp_name:emp?.name||"",value:val,description:descEl?.value||"",authorizedBy:authEl?.value||loggedUser?.name||"",authorized_by:authEl?.value||loggedUser?.name||"",month:currentMonth,createdAt:new Date().toISOString(),created_at:new Date().toISOString()};
+                setAdvances(prev=>[newAdv,...prev]);
+                api.createAdvance({store_id:activeStore,emp_id:empId,emp_name:emp?.name||"",value:val,description:descEl?.value||"",authorized_by:authEl?.value||loggedUser?.name||""}).catch(console.error);
+                // Desconta do caixa
+                setCashState(prev=>{
+                  const n={...prev};
+                  const cs=n[cashKey]||{open:false,initial:0,history:[]};
+                  n[cashKey]={...cs,history:[...(cs.history||[]),{type:"saida",value:val,desc:"Vale: "+(emp?.name||"")+" - "+(descEl?.value||"Adiantamento"),time:new Date().toLocaleTimeString("pt-BR")}]};
+                  return n;
+                });
+                // Limpa
+                if(valEl)valEl.value="";
+                if(descEl)descEl.value="";
+                if(empEl)empEl.value="";
+                showToast("Vale de "+fmt(val)+" para "+(emp?.name||"")+" registrado!");
+              }}>🧾 Registrar Vale</button>
+            </div>
+          </div>
+
+          {/* Histórico */}
+          <div style={S.card}>
+            <h3 style={S.cardTitle}>📋 Histórico de Vales</h3>
+            <div style={S.tWrap}><table style={S.table}><thead><tr>
+              <th style={S.th}>Data</th><th style={S.th}>Colaborador</th><th style={S.th}>Valor</th><th style={S.th}>Motivo</th><th style={S.th}>Autorizado</th><th style={S.th}>Mês Ref.</th><th style={S.th}></th>
+            </tr></thead><tbody>
+              {storeAdvances.length===0
+                ?<tr><td colSpan={7} style={{...S.td,textAlign:"center",opacity:.4,padding:20}}>Nenhum vale registrado</td></tr>
+                :storeAdvances.map(a=><tr key={a.id} style={S.tr}>
+                  <td style={{...S.td,fontSize:11}}>{new Date(a.createdAt||a.created_at).toLocaleDateString("pt-BR")}</td>
+                  <td style={{...S.td,fontWeight:700}}>{a.empName||a.emp_name}</td>
+                  <td style={{...S.td,fontWeight:700,color:C.red}}>{fmt(+a.value)}</td>
+                  <td style={{...S.td,fontSize:11}}>{a.description||"-"}</td>
+                  <td style={{...S.td,fontSize:11}}>{a.authorizedBy||a.authorized_by||"-"}</td>
+                  <td style={S.td}><span style={S.payBadge}>{a.month}</span></td>
+                  <td style={S.td}><button style={{...S.smBtn,color:C.red}} onClick={()=>{if(!confirm("Excluir este vale?"))return;setAdvances(prev=>prev.filter(x=>x.id!==a.id));api.deleteAdvance(a.id).catch(console.error);showToast("Vale excluído!");}}>🗑️</button></td>
+                </tr>)
+              }
+            </tbody></table></div>
+          </div>
+
+          {/* Resumo por colaborador */}
+          {monthAdvances.length>0&&<div style={S.card}>
+            <h3 style={S.cardTitle}>👥 Resumo do Mês ({currentMonth})</h3>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {Object.entries(monthAdvances.reduce((acc,a)=>{const n=a.empName||a.emp_name;acc[n]=(acc[n]||0)+(+a.value||0);return acc;},{})).map(([name,total])=>
+                <div key={name} style={{background:C.s2,borderRadius:10,padding:"10px 16px",border:`1px solid ${C.brd}`,textAlign:"center"}}>
+                  <div style={{fontSize:16,fontWeight:800,color:C.red}}>{fmt(total)}</div>
+                  <div style={{fontSize:11,color:C.dim}}>{name}</div>
+                </div>
+              )}
+            </div>
+          </div>}
+        </div>;
+      })()}
     </div>
   );
 }
@@ -3462,7 +3573,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 // ═══════════════════════════════════
 // ═══  RH / FOLHA DE PAGAMENTO   ═══
 // ═══════════════════════════════════
-function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
+function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToast}){
   const [activeTab,setActiveTab]=useState("colaboradores"); // colaboradores, folha, historico
   const [showEmpForm,setShowEmpForm]=useState(false);
   const [showPayForm,setShowPayForm]=useState(false);
@@ -3522,9 +3633,11 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
     showToast("Pagamento excluído!");
   };
 
-  // Select employee for payroll
+  // Select employee for payroll — calcula vales automaticamente
   const selectEmpForPay=(emp)=>{
-    setPay(p=>({...p,empId:emp.id,baseSalary:emp.salary}));
+    const empAdvances=(advances||[]).filter(a=>(a.empId||a.emp_id)===emp.id&&(a.month||"")===pay.month);
+    const totalAdvances=empAdvances.reduce((s,a)=>s+(+a.value||0),0);
+    setPay(p=>({...p,empId:emp.id,baseSalary:emp.salary,advances:totalAdvances||""}));
     setSelectedEmp(emp);
   };
 
@@ -3692,7 +3805,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,showToast}){
                 <div style={{fontSize:13,fontWeight:800,color:C.red,marginBottom:12,letterSpacing:1}}>📉 DESCONTOS</div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Desconto em Loja (compras)</label><input style={{...S.inp,width:"100%"}} type="number" placeholder="0,00" value={pay.storeDiscount} onChange={e=>setPay(p=>({...p,storeDiscount:e.target.value}))}/></div>
-                  <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Vale / Adiantamento</label><input style={{...S.inp,width:"100%"}} type="number" placeholder="0,00" value={pay.advances} onChange={e=>setPay(p=>({...p,advances:e.target.value}))}/></div>
+                  <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Vale / Adiantamento {+pay.advances>0?"(do caixa)":""}</label><input style={{...S.inp,width:"100%",borderColor:+pay.advances>0?C.gold+"66":C.brd}} type="number" placeholder="0,00" value={pay.advances} onChange={e=>setPay(p=>({...p,advances:e.target.value}))}/>{+pay.advances>0&&<div style={{fontSize:9,color:C.gold,marginTop:2}}>🧾 Preenchido automaticamente com vales registrados no caixa</div>}</div>
                   <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Outros Descontos</label><input style={{...S.inp,width:"100%"}} type="number" placeholder="0,00" value={pay.otherDeductions} onChange={e=>setPay(p=>({...p,otherDeductions:e.target.value}))}/></div>
                 </div>
                 <div style={{marginTop:12,padding:"8px 12px",background:"rgba(255,82,82,.06)",borderRadius:8,display:"flex",justifyContent:"space-between",fontSize:13}}>

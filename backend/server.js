@@ -728,6 +728,65 @@ app.delete('/api/withdrawals/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════
+// ═══  CASH ADVANCES (Vales)              ═══
+// ═══════════════════════════════════════════
+app.get('/api/advances', async (req, res) => {
+  try {
+    const storeId = req.query.store_id;
+    const month = req.query.month;
+    let q = 'SELECT * FROM cash_advances';
+    const params = [];
+    const conditions = [];
+    if (storeId) { conditions.push('store_id = $' + (params.length + 1)); params.push(storeId); }
+    if (month) { conditions.push('month = $' + (params.length + 1)); params.push(month); }
+    if (conditions.length) q += ' WHERE ' + conditions.join(' AND ');
+    q += ' ORDER BY created_at DESC';
+    const advances = await queryAll(q, params);
+    res.json(advances);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/advances', async (req, res) => {
+  try {
+    const a = req.body;
+    const id = genId();
+    const month = a.month || new Date().toISOString().slice(0, 7);
+    await queryRun(
+      'INSERT INTO cash_advances (id, store_id, emp_id, emp_name, value, description, authorized_by, month) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, a.store_id, a.emp_id, a.emp_name, a.value, a.description || '', a.authorized_by || '', month]
+    );
+
+    // Registra saída no caixa
+    await queryRun(
+      'INSERT INTO cash_movements (id, store_id, type, value, description) VALUES ($1,$2,$3,$4,$5)',
+      [genId(), a.store_id, 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`]
+    );
+
+    res.json({ id, ...a, month, created_at: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/advances/:id', async (req, res) => {
+  try {
+    await queryRun('DELETE FROM cash_advances WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Soma de vales por colaborador/mês (para folha de pagamento)
+app.get('/api/advances/summary', async (req, res) => {
+  try {
+    const month = req.query.month;
+    if (!month) return res.status(400).json({ error: 'Informe o mês (month=YYYY-MM)' });
+    const summary = await queryAll(
+      'SELECT emp_id, emp_name, SUM(value) as total FROM cash_advances WHERE month = $1 GROUP BY emp_id, emp_name',
+      [month]
+    );
+    res.json(summary);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════
 // ═══  EMPLOYEES                          ═══
 // ═══════════════════════════════════════════
 app.get('/api/employees', async (req, res) => {

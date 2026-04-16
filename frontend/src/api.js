@@ -282,6 +282,12 @@ const api = {
   createWithdrawal: (data) => request('/withdrawals', { method: 'POST', body: data }),
   deleteWithdrawal: (id) => request(`/withdrawals/${id}`, { method: 'DELETE' }),
 
+  // Cash Advances (Vales)
+  getAdvances: (storeId) => request(`/advances${storeId ? `?store_id=${storeId}` : ''}`),
+  createAdvance: (data) => request('/advances', { method: 'POST', body: data }),
+  deleteAdvance: (id) => request(`/advances/${id}`, { method: 'DELETE' }),
+  getAdvancesSummary: (month) => request(`/advances/summary?month=${month}`),
+
   // Sellers
   getSellers: () => request('/sellers'),
   updateSeller: (id, data) => request(`/sellers/${id}`, { method: 'PUT', body: data }),
