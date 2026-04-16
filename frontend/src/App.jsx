@@ -4195,8 +4195,10 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
   const [cashRecSplit,setCashRecSplit]=useState("");
   // Cupom de troca
   const [receiptExchange,setReceiptExchange]=useState(null);
-
+  // Filtro relatório de trocas
   const todayStr=new Date().toISOString().split("T")[0];
+  const [exchFilterFrom,setExchFilterFrom]=useState(todayStr);
+  const [exchFilterTo,setExchFilterTo]=useState(todayStr);
 
   const searchCupom=()=>{
     const q=cupomInput.trim().toUpperCase();
@@ -4361,7 +4363,72 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
             <button style={S.primBtn} onClick={searchCupom}>{I.search} Buscar</button>
           </div>
         </div>
-        {storeExchanges.length>0&&<div style={S.card}><h3 style={S.cardTitle}>Histórico</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Data</th><th style={S.th}>Cliente</th><th style={S.th}>Tipo</th><th style={S.th}>Devolveu</th><th style={S.th}>Levou</th><th style={S.th}>Dif.</th><th style={S.th}>Status</th><th style={S.th}>Ação</th></tr></thead><tbody>{storeExchanges.map(e=><tr key={e.id} style={{...S.tr,opacity:e.status==="Cancelada"?.5:1}}><td style={S.td}>{fmtDate(e.date)}</td><td style={{...S.td,fontWeight:600}}>{e.customer}</td><td style={S.td}><span style={{...S.stBadge,...(e.type==="Troca"?S.stOk:S.stLow)}}>{e.type}</span></td><td style={S.td}>{e.items.map(i=>i.qty+"x "+i.name).join(", ")}</td><td style={S.td}>{e.newItems?.length>0?e.newItems.map(i=>i.qty+"x "+i.name).join(", "):"-"}</td><td style={{...S.td,fontWeight:700,color:e.difference>0?C.org:e.difference<0?C.grn:C.dim}}>{e.difference>0?"+"+fmt(e.difference):e.difference<0?fmt(Math.abs(e.difference)):"R$ 0"}</td><td style={S.td}><span style={{...S.stBadge,...(e.status==="Cancelada"?{background:"rgba(255,82,82,.15)",color:"#ff5252"}:S.stOk)}}>{e.status||"Concluída"}</span></td><td style={S.td}>{e.status!=="Cancelada"&&<button onClick={()=>cancelExchange(e)} style={{padding:"4px 10px",borderRadius:6,border:`1px solid rgba(255,82,82,.4)`,background:"rgba(255,82,82,.1)",color:"#ff5252",fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>Cancelar</button>}</td></tr>)}</tbody></table></div></div>}
+        {/* ── RELATÓRIO DE TROCAS ── */}
+        {(()=>{
+          const [exchDateFrom,setExchDateFrom]=[exchFilterFrom,setExchFilterFrom];
+          const [exchDateTo,setExchDateTo]=[exchFilterTo,setExchFilterTo];
+          const filteredExch=storeExchanges.filter(e=>e.date>=exchDateFrom&&e.date<=exchDateTo);
+          const ativasExch=filteredExch.filter(e=>e.status!=="Cancelada");
+          const canceladasExch=filteredExch.filter(e=>e.status==="Cancelada");
+          const totalTrocas=ativasExch.filter(e=>e.type==="Troca").length;
+          const totalDev=ativasExch.filter(e=>e.type!=="Troca").length;
+          const totalDiff=ativasExch.reduce((s,e)=>s+(e.difference||0),0);
+          const isMulti=exchDateFrom!==exchDateTo;
+
+          return <div style={S.card}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:14}}>
+              <h3 style={{...S.cardTitle,margin:0}}>📋 Relatório de Trocas/Devoluções</h3>
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <input type="date" value={exchDateFrom} onChange={e=>{setExchDateFrom(e.target.value);if(e.target.value>exchDateTo)setExchDateTo(e.target.value);}} style={{...S.inp,padding:"6px 10px",fontSize:12,width:"auto"}}/>
+                <span style={{color:C.dim,fontSize:11}}>até</span>
+                <input type="date" value={exchDateTo} onChange={e=>setExchDateTo(e.target.value)} min={exchDateFrom} style={{...S.inp,padding:"6px 10px",fontSize:12,width:"auto"}}/>
+                <button style={{...S.secBtn,fontSize:10,padding:"5px 10px"}} onClick={()=>{setExchDateFrom(todayStr);setExchDateTo(todayStr);}}>Hoje</button>
+              </div>
+            </div>
+
+            {/* KPIs */}
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+              <div style={{background:"rgba(0,230,118,.06)",border:"1px solid rgba(0,230,118,.2)",borderRadius:10,padding:"10px 16px",textAlign:"center",minWidth:100}}>
+                <div style={{fontSize:20,fontWeight:800,color:C.grn}}>{totalTrocas}</div>
+                <div style={{fontSize:10,color:C.dim}}>Trocas</div>
+              </div>
+              <div style={{background:"rgba(255,82,82,.06)",border:"1px solid rgba(255,82,82,.2)",borderRadius:10,padding:"10px 16px",textAlign:"center",minWidth:100}}>
+                <div style={{fontSize:20,fontWeight:800,color:C.red}}>{totalDev}</div>
+                <div style={{fontSize:10,color:C.dim}}>Devoluções</div>
+              </div>
+              <div style={{background:"rgba(255,152,0,.06)",border:"1px solid rgba(255,152,0,.2)",borderRadius:10,padding:"10px 16px",textAlign:"center",minWidth:100}}>
+                <div style={{fontSize:20,fontWeight:800,color:totalDiff>0?C.org:totalDiff<0?C.grn:C.dim}}>{totalDiff>0?"+"+fmt(totalDiff):totalDiff<0?"-"+fmt(Math.abs(totalDiff)):"R$ 0"}</div>
+                <div style={{fontSize:10,color:C.dim}}>Diferença</div>
+              </div>
+              <div style={{background:"rgba(255,215,64,.06)",border:"1px solid rgba(255,215,64,.2)",borderRadius:10,padding:"10px 16px",textAlign:"center",minWidth:100}}>
+                <div style={{fontSize:20,fontWeight:800,color:C.gold}}>{filteredExch.length}</div>
+                <div style={{fontSize:10,color:C.dim}}>Total {isMulti?"período":"dia"}</div>
+              </div>
+              {canceladasExch.length>0&&<div style={{background:"rgba(255,82,82,.06)",border:"1px solid rgba(255,82,82,.2)",borderRadius:10,padding:"10px 16px",textAlign:"center",minWidth:100}}>
+                <div style={{fontSize:20,fontWeight:800,color:C.red}}>{canceladasExch.length}</div>
+                <div style={{fontSize:10,color:C.dim}}>Canceladas</div>
+              </div>}
+            </div>
+
+            {/* Tabela */}
+            {filteredExch.length===0
+              ?<div style={{textAlign:"center",padding:20,color:C.dim,opacity:.5}}>Nenhuma troca/devolução {isMulti?"no período":"nesta data"}</div>
+              :<div style={S.tWrap}><table style={S.table}><thead><tr>
+                <th style={S.th}>Data</th><th style={S.th}>Cliente</th><th style={S.th}>Tipo</th><th style={S.th}>Devolveu</th><th style={S.th}>Levou</th><th style={S.th}>Dif.</th><th style={S.th}>Cupom Orig.</th><th style={S.th}>Status</th><th style={S.th}>Ação</th>
+              </tr></thead><tbody>{filteredExch.map(e=><tr key={e.id} style={{...S.tr,opacity:e.status==="Cancelada"?.5:1}}>
+                <td style={S.td}>{fmtDate(e.date)}</td>
+                <td style={{...S.td,fontWeight:600}}>{e.customer}</td>
+                <td style={S.td}><span style={{...S.stBadge,...(e.type==="Troca"?S.stOk:S.stLow)}}>{e.type}</span></td>
+                <td style={{...S.td,fontSize:11}}>{(e.items||[]).map(i=>i.qty+"x "+i.name).join(", ")}</td>
+                <td style={{...S.td,fontSize:11}}>{e.newItems?.length>0?e.newItems.map(i=>i.qty+"x "+i.name).join(", "):"-"}</td>
+                <td style={{...S.td,fontWeight:700,color:e.difference>0?C.org:e.difference<0?C.grn:C.dim}}>{e.difference>0?"+"+fmt(e.difference):e.difference<0?fmt(Math.abs(e.difference)):"R$ 0"}</td>
+                <td style={{...S.td,fontFamily:"monospace",fontSize:10,color:C.gold}}>{e.cupomOriginal||e.cupom_original||"-"}</td>
+                <td style={S.td}><span style={{...S.stBadge,...(e.status==="Cancelada"?{background:"rgba(255,82,82,.15)",color:"#ff5252"}:S.stOk)}}>{e.status||"Concluída"}</span></td>
+                <td style={S.td}>{e.status!=="Cancelada"&&<button onClick={()=>cancelExchange(e)} style={{padding:"4px 10px",borderRadius:6,border:"1px solid rgba(255,82,82,.4)",background:"rgba(255,82,82,.1)",color:"#ff5252",fontWeight:700,cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>Cancelar</button>}</td>
+              </tr>)}</tbody></table></div>
+            }
+          </div>;
+        })()}
       </div>}
 
       {/* ── STEP 1: Selecionar peças a devolver (múltiplas) ── */}
