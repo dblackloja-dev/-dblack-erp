@@ -3192,9 +3192,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     const totalVendas=vendas.reduce((s,v)=>s+v.total,0);
     const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);
     const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
+    // Salva o valor contado em dinheiro como fundo para a próxima abertura
+    const dinheiroContado=+(counted["dinheiro"]||0);
     updateCash(cs=>({
       ...cs,
       open:false,
+      initial:dinheiroContado,
       closedAt:new Date().toISOString(),
       closeReport:reportData
     }));
@@ -3298,7 +3301,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
         <h3 style={S.cardTitle}>🔓 Abrir Caixa</h3>
         <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:12,color:C.dim}}>Fundo de troco:</span>
-          <input style={{...S.inp,width:120,textAlign:"center",fontSize:18,fontWeight:700}} type="number" value={openVal} onChange={e=>setOpenVal(+e.target.value)}/>
+          {lastReport?<>
+            <span style={{...S.inp,width:120,textAlign:"center",fontSize:18,fontWeight:700,background:"rgba(255,215,64,.08)",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{fmt(openVal)}</span>
+            <span style={{fontSize:10,color:C.dim}}>Valor do último fechamento</span>
+          </>:
+            <input style={{...S.inp,width:120,textAlign:"center",fontSize:18,fontWeight:700}} type="number" value={openVal} onChange={e=>setOpenVal(+e.target.value)}/>
+          }
           <button style={S.primBtn} onClick={openCash}>{I.unlock} Abrir Caixa</button>
         </div>
         {lastReport&&<div style={{marginTop:16,padding:14,background:C.s2,borderRadius:10,border:`1px solid ${C.brd}`}}>
