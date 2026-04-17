@@ -4344,8 +4344,12 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
     resetFlow();
   };
 
+  const [cancelingExchId,setCancelingExchId]=useState(null);
   const cancelExchange=(ex)=>{
+    if(cancelingExchId)return; // Evita cliques múltiplos
+    if(ex.status==="Cancelada")return;
     if(!confirm("Cancelar esta troca?\n\nIsso vai reverter o estoque e estornar o valor do caixa."))return;
+    setCancelingExchId(ex.id);
     // Reverte estoque: peças devolvidas saem, peças levadas voltam
     setStock(prev=>{
       const n={...prev};const st={...(n[activeStockId]||{})};
@@ -4367,6 +4371,7 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
       return n;
     });
     api.cancelExchange(ex.id).catch(console.error);
+    setCancelingExchId(null);
     showToast("Troca cancelada e estoque revertido!");
   };
 
