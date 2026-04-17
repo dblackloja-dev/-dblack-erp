@@ -2087,6 +2087,8 @@ function ReceiptComprovante({data,onClose}){
             <Row l="DESTINO:" r={data.to}/>
             <HR/>
             {data.description&&<Row l="Motivo:" r={data.description}/>}
+            {data.clientName&&<Row l="Cliente:" r={data.clientName}/>}
+            {data.clientPhone&&<Row l="Telefone:" r={data.clientPhone}/>}
             {data.requestedBy&&<Row l="Pedido por:" r={data.requestedBy}/>}
             {data.separatedBy&&<Row l="Separado por:" r={data.separatedBy}/>}
             <Row l="Pago:" r={data.paid?"SIM":"NAO"}/>
@@ -2465,6 +2467,8 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const [transRequestedBy,setTransRequestedBy]=useState("");
   const [transSeparatedBy,setTransSeparatedBy]=useState("");
   const [transPaid,setTransPaid]=useState(false);
+  const [transClientName,setTransClientName]=useState("");
+  const [transClientPhone,setTransClientPhone]=useState("");
   const [printTransfer,setPrintTransfer]=useState(null);
   const transSearchRef=useRef(null);
 
@@ -2538,6 +2542,10 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const doTransfer=()=>{
     if(transItems.length===0)return showToast("Adicione pelo menos um produto!","error");
     if(!transTo)return showToast("Selecione a loja destino!","error");
+    if(!transRequestedBy)return showToast("Informe quem pediu!","error");
+    if(!transSeparatedBy)return showToast("Informe quem separou!","error");
+    if(!transClientName)return showToast("Informe o nome do cliente!","error");
+    if(!transClientPhone)return showToast("Informe o telefone do cliente!","error");
     const destStore=STORES.find(s=>s.id===transTo);
     const today=new Date().toISOString().split("T")[0];
     const time=new Date().toLocaleTimeString("pt-BR");
@@ -2557,11 +2565,12 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       id:genId(),date:today,time,
       from:currentStore.name,to:destStore?.name,
       items:transItems,totalPcs,totalVal,
-      description:transDesc,requestedBy:transRequestedBy,separatedBy:transSeparatedBy,paid:transPaid
+      description:transDesc,requestedBy:transRequestedBy,separatedBy:transSeparatedBy,paid:transPaid,
+      clientName:transClientName,clientPhone:transClientPhone
     });
 
     showToast(totalPcs+" peças transferidas para "+destStore?.name+"!");
-    setTransItems([]);setTransTo("");setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);
+    setTransItems([]);setTransTo("");setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);setTransClientName("");setTransClientPhone("");
   };
 
   // Start count
@@ -2743,13 +2752,15 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
 
           {/* Campos extras */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-            <select style={S.sel} value={transTo} onChange={e=>setTransTo(e.target.value)}>
+            <select style={{...S.sel,borderColor:!transTo?C.red+"44":C.brd}} value={transTo} onChange={e=>setTransTo(e.target.value)}>
               <option value="">Loja destino *</option>
               {otherStores.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <input style={S.inp} placeholder="Descrição/Motivo" value={transDesc} onChange={e=>setTransDesc(e.target.value)}/>
-            <input style={S.inp} placeholder="Quem pediu" value={transRequestedBy} onChange={e=>setTransRequestedBy(e.target.value)}/>
-            <input style={S.inp} placeholder="Quem separou" value={transSeparatedBy} onChange={e=>setTransSeparatedBy(e.target.value)}/>
+            <input style={{...S.inp,borderColor:!transClientName?C.red+"44":C.brd}} placeholder="Nome do cliente *" value={transClientName} onChange={e=>setTransClientName(e.target.value)}/>
+            <input style={{...S.inp,borderColor:!transClientPhone?C.red+"44":C.brd}} placeholder="Telefone do cliente *" value={transClientPhone} onChange={e=>setTransClientPhone(e.target.value)}/>
+            <input style={{...S.inp,borderColor:!transRequestedBy?C.red+"44":C.brd}} placeholder="Quem pediu *" value={transRequestedBy} onChange={e=>setTransRequestedBy(e.target.value)}/>
+            <input style={{...S.inp,borderColor:!transSeparatedBy?C.red+"44":C.brd}} placeholder="Quem separou *" value={transSeparatedBy} onChange={e=>setTransSeparatedBy(e.target.value)}/>
           </div>
           <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.dim,cursor:"pointer",marginBottom:14}}>
             <input type="checkbox" checked={transPaid} onChange={e=>setTransPaid(e.target.checked)} style={{accentColor:C.grn,width:18,height:18}}/>
@@ -2757,7 +2768,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           </label>
 
           <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
-            {transItems.length>0&&<button style={S.secBtn} onClick={()=>{setTransItems([]);setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);}}>Limpar</button>}
+            {transItems.length>0&&<button style={S.secBtn} onClick={()=>{setTransItems([]);setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);setTransClientName("");setTransClientPhone("");}}>Limpar</button>}
             <button style={{...S.primBtn,padding:"10px 24px",background:`linear-gradient(135deg,${C.pur},#9C27B0)`,opacity:transItems.length===0?.5:1}} onClick={doTransfer} disabled={transItems.length===0}>
               {I.check} CONFIRMAR TRANSFERÊNCIA ({transItems.reduce((s,i)=>s+i.qty,0)} pç)
             </button>
