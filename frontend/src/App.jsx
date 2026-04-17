@@ -2055,6 +2055,27 @@ function ReceiptComprovante({data,onClose}){
           </>}
 
           {/* ── TRANSFERÊNCIA ── */}
+          {/* ── RETIRADA GRANDE ── */}
+          {data.type==="retirada"&&<>
+            <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
+            <div style={{textAlign:"center",fontSize:12,letterSpacing:1,fontWeight:900}}>COMPROVANTE DE RETIRADA</div>
+            <div style={{textAlign:"center",fontSize:10}}>{data.store}</div>
+            <HR2/>
+            <Row l={"Data: "+data.date} r={"Hora: "+data.time}/>
+            <Row l={"Operador: "+data.operator} r=""/>
+            <HR/>
+            <Row l="Responsavel:" r={data.responsible}/>
+            {data.destination&&<Row l="Destino:" r={data.destination}/>}
+            <Row l="Motivo:" r={data.description||"-"}/>
+            <HR2/>
+            <div style={{textAlign:"center",fontSize:24,fontWeight:900,margin:"8px 0",color:"#000"}}>- {fmt(data.value)}</div>
+            <HR2/>
+            <div style={{marginTop:16,fontSize:10}}>
+              <div style={{borderBottom:"1px solid #000",paddingBottom:14,marginBottom:6}}>Assinatura: ________________________</div>
+            </div>
+            <div style={{textAlign:"center",fontSize:9,marginTop:6,color:"#666"}}>Documento gerado em {new Date().toLocaleString("pt-BR")}</div>
+          </>}
+
           {data.type==="transferencia"&&<>
             <div style={{textAlign:"center",fontWeight:900,fontSize:16,letterSpacing:3}}>D'BLACK STORE</div>
             <div style={{textAlign:"center",fontSize:12,letterSpacing:1,fontWeight:900}}>TRANSFERÊNCIA DE MERCADORIA</div>
@@ -3177,6 +3198,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const [wdResp,setWdResp]=useState(loggedUser?.name||"");
   const [wdDest,setWdDest]=useState("");
   const [wdFilterDate,setWdFilterDate]=useState("");
+  const [printWithdrawal,setPrintWithdrawal]=useState(null);
 
   const storeWithdrawals=(withdrawals||[]).filter(w=>(w.storeId||w.store_id)===activeStore);
   const filteredWithdrawals=wdFilterDate?storeWithdrawals.filter(w=>{const d=new Date(w.createdAt||w.created_at).toISOString().split("T")[0];return d===wdFilterDate;}):storeWithdrawals;
@@ -3196,6 +3218,8 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
       n[cashKey]={...cs,history:[...(cs.history||[]),newMov]};
       return n;
     });
+    // Gera comprovante
+    setPrintWithdrawal({type:"retirada",value:+wdVal,description:wdDesc,responsible:wdResp||loggedUser?.name||"",destination:wdDest,store:STORES.find(s=>s.id===activeStore)?.name||"",date:new Date().toLocaleDateString("pt-BR"),time:new Date().toLocaleTimeString("pt-BR"),operator:loggedUser?.name||"—"});
     setWdVal("");setWdDesc("");setWdDest("");
     showToast("Retirada de "+fmt(+wdVal)+" registrada!");
   };
@@ -3460,6 +3484,8 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
             <span style={{fontSize:18,fontWeight:900,color:C.red}}>{fmt(filteredWithdrawals.reduce((s,w)=>s+(+w.value||0),0))}</span>
           </div>}
         </div>
+        {/* Comprovante de retirada */}
+        {printWithdrawal&&<ReceiptComprovante data={printWithdrawal} onClose={()=>setPrintWithdrawal(null)}/>}
       </div>}
 
       {/* ═══ ABA VALES COLABORADORES ═══ */}
