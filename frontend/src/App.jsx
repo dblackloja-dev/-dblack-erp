@@ -384,6 +384,10 @@ export default function App() {
   useEffect(() => {
     if (!loggedUser) return;
     loadAllData(false);
+    // Tenta sincronizar fila offline ao logar (caso tenha itens presos)
+    if (navigator.onLine && api.getQueueCount() > 0) {
+      setTimeout(() => api.syncNow(), 2000);
+    }
     // Auto-refresh a cada 30 segundos (silencioso, sem loading)
     const interval = setInterval(() => loadAllData(true), 30000);
     return () => clearInterval(interval);
@@ -643,6 +647,7 @@ export default function App() {
         {!isOnline && <><span style={{fontSize:16}}>📡</span> MODO OFFLINE — suas ações estão sendo salvas localmente</>}
         {isOnline && offlineQueue > 0 && <><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>🔄</span> Sincronizando {offlineQueue} ação(ões) pendente(s)...</>}
         {offlineQueue > 0 && <span style={{background:"rgba(255,255,255,.2)",borderRadius:10,padding:"2px 8px",fontSize:11}}>{offlineQueue} na fila</span>}
+        {isOnline && offlineQueue > 0 && <button onClick={()=>{api.syncNow();showToast("Forçando sincronização...");}} style={{background:"rgba(255,255,255,.25)",border:"none",color:"#fff",borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Sincronizar agora</button>}
       </div>}
 
       {/* SIDEBAR */}
@@ -5211,17 +5216,11 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
           n[sid]=st;return n;
         });
       }
-      // Desconta o valor da venda do caixa (devolução ao cliente)
-      const cashKey=activeStore+"_"+(loggedUser?.id||"main");
-      setCashState(prev=>{
-        const n={...prev};
-        const cs=n[cashKey]||{open:false,initial:0,history:[]};
-        n[cashKey]={...cs,history:[...(cs.history||[]),{type:"saida",value:cancelModal.total,desc:"Cancelamento: "+cancelModal.cupom+" ("+cancelModal.customer+")",time:new Date().toLocaleTimeString("pt-BR")}]};
-        return n;
-      });
+      // Venda cancelada simplesmente para de ser contabilizada no caixa (filtro status !== "Cancelada")
+      // Não precisa registrar saída — o valor deixa de existir nos cálculos automaticamente
       api.updateSale&&api.updateSale(cancelModal.id,{status:"Cancelada",canceledBy:auth.name,canceledAt}).catch(()=>{});
       setCancelModal(null);setAuthPass("");setAuthError("");
-      showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name+" — "+fmt(cancelModal.total)+" descontado do caixa");
+      showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name);
     }catch(e){setAuthError("Erro ao verificar senha. Tente novamente.");}
   };
 

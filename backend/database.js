@@ -9,6 +9,13 @@ const pool = new Pool({
   ssl: connString && !connString.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+
+pool.on('error', (err) => {
+  console.error('[POOL] Erro inesperado:', err.message);
 });
 
 // Helpers para facilitar as queries

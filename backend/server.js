@@ -507,14 +507,14 @@ app.put('/api/sales/:id', async (req, res) => {
   try {
     const { status, payment, payments, canceled_by, canceled_at } = req.body;
 
+    await client.query('BEGIN');
+
     // Se está cancelando, devolver itens ao estoque
     if (status === 'Cancelada') {
-      const sale = await client.query('SELECT * FROM sales WHERE id = $1', [req.params.id]);
+      const sale = await client.query('SELECT * FROM sales WHERE id = $1 FOR UPDATE', [req.params.id]);
       if (sale.rows[0] && sale.rows[0].status !== 'Cancelada') {
-        await client.query('BEGIN');
         const saleData = sale.rows[0];
         const items = JSON.parse(saleData.items || '[]');
-        // Busca o stock_id da loja
         const store = await client.query('SELECT stock_id FROM stores WHERE id = $1', [saleData.store_id]);
         const stockId = store.rows[0]?.stock_id || saleData.store_id;
 
@@ -528,28 +528,20 @@ app.put('/api/sales/:id', async (req, res) => {
             [genId(), stockId, item.id, 'devolucao_cancelamento', item.qty, `Cancelamento da venda ${req.params.id}`, canceled_by || '']
           );
         }
-
-        await client.query(
-          'UPDATE sales SET status=$1, payment=$2, payments=$3, canceled_by=$4, canceled_at=$5 WHERE id=$6',
-          [status, payment || '', JSON.stringify(payments || []), canceled_by || '', canceled_at || '', req.params.id]
-        );
-        await client.query('COMMIT');
-        client.release();
-        return res.json({ success: true });
       }
     }
 
-    // Atualização normal (sem cancelamento)
     await client.query(
       'UPDATE sales SET status=$1, payment=$2, payments=$3, canceled_by=$4, canceled_at=$5 WHERE id=$6',
       [status, payment || '', JSON.stringify(payments || []), canceled_by || '', canceled_at || '', req.params.id]
     );
-    client.release();
+    await client.query('COMMIT');
     res.json({ success: true });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    client.release();
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 

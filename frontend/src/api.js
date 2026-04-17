@@ -53,14 +53,21 @@ async function syncQueue() {
   console.log('[SYNC] Iniciando sincronização de', queue.length, 'ações offline...');
 
   let successCount = 0;
+  let authFailed = false;
   for (const item of queue) {
     try {
       const token = getToken();
+      if (!token) {
+        console.warn('[SYNC] Sem token — aguardando login para sincronizar');
+        authFailed = true;
+        break;
+      }
+
       const res = await fetch(`${BASE}${item.path}`, {
         method: item.method,
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
         body: item.body ? JSON.stringify(item.body) : undefined,
       });
@@ -70,12 +77,39 @@ async function syncQueue() {
         removeFromQueue(item.id);
         successCount++;
       } else if (res.status === 401) {
-        // Token expirado — para de sincronizar
-        console.warn('[SYNC] Token expirado, parando sync');
+        // Token expirado — não para tudo, tenta renovar na próxima rodada
+        console.warn('[SYNC] Token expirado — tentando novamente em 30s');
+        authFailed = true;
         break;
+      } else if (res.status >= 400 && res.status < 500) {
+        // Erro do cliente (400, 403, 404, 422...) — erro permanente, remove da fila
+        const errBody = await res.json().catch(() => ({}));
+        console.warn('[SYNC] Erro permanente', res.status, 'em', item.path, ':', errBody.error || 'erro desconhecido', '— removendo da fila');
+        removeFromQueue(item.id);
+        successCount++;
       } else {
-        // Erro do servidor — mantém na fila para tentar depois
-        console.warn('[SYNC] Erro', res.status, 'em', item.path, '— mantendo na fila');
+        // Erro do servidor (500+) — pode ser chave duplicada ou erro temporário
+        const errBody = await res.json().catch(() => ({}));
+        const errMsg = (errBody.error || '').toLowerCase();
+        // Se for erro de duplicata, remove da fila (a venda já existe no banco)
+        if (errMsg.includes('duplicate') || errMsg.includes('unique') || errMsg.includes('already') || errMsg.includes('violates')) {
+          console.warn('[SYNC] Item duplicado em', item.path, '— removendo da fila');
+          removeFromQueue(item.id);
+          successCount++;
+        } else {
+          // Incrementa tentativas — após 5 falhas, remove
+          item._retries = (item._retries || 0) + 1;
+          if (item._retries >= 5) {
+            console.warn('[SYNC] Item falhou 5 vezes em', item.path, '— removendo da fila:', errMsg);
+            removeFromQueue(item.id);
+          } else {
+            console.warn('[SYNC] Erro', res.status, 'em', item.path, '(tentativa', item._retries + '/5) — mantendo na fila');
+            // Atualiza o contador de retries no localStorage
+            const q = getQueue();
+            const idx = q.findIndex(qi => qi.id === item.id);
+            if (idx >= 0) { q[idx]._retries = item._retries; localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+          }
+        }
       }
     } catch (e) {
       // Ainda sem internet — para de tentar
@@ -90,14 +124,28 @@ async function syncQueue() {
 
   // Dispara evento de sync completo
   window.dispatchEvent(new CustomEvent('offlineSyncDone', { detail: { sent: successCount, remaining } }));
+
+  // Se falhou por auth e ainda tem itens, tenta de novo em 30s (o usuário pode re-logar)
+  if (authFailed && remaining > 0) {
+    setTimeout(syncQueue, 30000);
+  }
 }
 
 // Tenta sincronizar quando volta a internet
+// Também roda retry periódico enquanto houver itens na fila
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     console.log('[ONLINE] Internet voltou! Sincronizando...');
-    setTimeout(syncQueue, 1000); // Espera 1s para estabilizar a conexão
+    setTimeout(syncQueue, 1000);
   });
+
+  // Retry periódico: a cada 30s verifica se tem itens na fila e tenta sincronizar
+  setInterval(() => {
+    if (navigator.onLine && getQueue().length > 0) {
+      console.log('[SYNC] Retry periódico — tentando sincronizar fila pendente...');
+      syncQueue();
+    }
+  }, 30000);
 }
 
 // ═══════════════════════════════════════════════════
@@ -124,20 +172,26 @@ async function request(path, options = {}) {
       return;
     }
     if (!res.ok) {
+      // Se é escrita e o servidor deu erro (500, 502, 400...), enfileira pra não perder dados
+      if (isWrite && res.status >= 500) {
+        console.warn('[REQUEST] Erro', res.status, 'em', path, '— enfileirando para retry');
+        addToQueue(path, options);
+        return { _offline: true, _queued: true };
+      }
       const err = await res.json().catch(() => ({ error: 'Erro de rede' }));
       throw new Error(err.error || 'Erro na requisição');
     }
     return res.json();
   } catch (e) {
-    // Se é uma escrita (POST/PUT/DELETE) e falhou por rede, enfileira
-    if (isWrite && (e.name === 'TypeError' || e.message === 'Failed to fetch' || !navigator.onLine)) {
+    // Se é uma escrita (POST/PUT/DELETE) e falhou por qualquer motivo, enfileira
+    if (isWrite) {
       addToQueue(path, options);
       // Retorna resposta fake para o app continuar funcionando
       return { _offline: true, _queued: true };
     }
 
     // Para leituras (GET) offline, retorna null silenciosamente
-    if (!isWrite && !navigator.onLine) {
+    if (!navigator.onLine) {
       console.log('[OFFLINE] Leitura ignorada (sem internet):', path);
       return null;
     }
