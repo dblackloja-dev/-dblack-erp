@@ -3,17 +3,8 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "https://dblack-erp-backend-production.up.railway.app/api/$1"
-    },
-    {
-      "source": "/uploads/(.*)",
-      "destination": "https://dblack-erp-backend-production.up.railway.app/uploads/$1"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/:path*", "destination": "https://dblack-erp-backend-production.up.railway.app/api/:path*" },
+    { "source": "/uploads/:path*", "destination": "https://dblack-erp-backend-production.up.railway.app/uploads/:path*" },
+    { "source": "/health", "destination": "https://dblack-erp-backend-production.up.railway.app/health" }
   ]
 }
