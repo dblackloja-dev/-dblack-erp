@@ -669,7 +669,7 @@ export default function App() {
   const activeStockId = getStockId(activeStore);
   const storeStock = stock[activeStockId] || {};
   const storeExpenses = expenses[activeStore] || [];
-  const cashKey = activeStore + "_" + (loggedUser?.id || "main");
+  const cashKey = activeStore + "_caixa";
   const storeCash = cashState[cashKey] || { open:false, initial:0, history:[] };
   const sharedStockStores = STORES.filter(s=>s.stockId===activeStockId);
   const isSharedStock = sharedStockStores.length > 1;
@@ -3193,7 +3193,7 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
 // ═══  CAIXA MODULE               ═══
 // ═══════════════════════════════════
 function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals,advances,setAdvances,employees}){
-  const cashKey = activeStore + "_" + (loggedUser?.id || "main");
+  const cashKey = activeStore + "_caixa";
   const [caixaTab,setCaixaTab]=useState("operacao"); // operacao, retiradas
   const [openVal,setOpenVal]=useState(()=>storeCash.initial!=null?storeCash.initial:0);
   // Sincroniza openVal quando o caixa fecha ou o saldo muda
@@ -3220,21 +3220,24 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
   const todayStr=new Date().toISOString().split("T")[0];
 
-  // Calcula o esperado por grupo — somente vendas deste operador hoje
-  const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?s.sellerId===loggedUser.id:true));
+  // Calcula o esperado por grupo — TODAS as vendas da loja hoje (não filtra por vendedor)
+  const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada");
 
   // Calcula total de VENDAS por forma de pagamento (sem fundo/movimentações)
   const vendasPorGrupo=Object.fromEntries(PAY_GROUPS.map(g=>{
     let total=0;
     vendas.forEach(v=>{
       const pays=v.payments&&v.payments.length>0?v.payments:[{method:v.payment||"",value:v.total}];
+      // Se soma dos pagamentos difere muito do total da venda, usa o total da venda proporcional
+      const paySum=pays.reduce((s,p)=>s+(+p.value||0),0);
+      const ratio=paySum>0&&Math.abs(paySum-v.total)>1?(v.total/paySum):1;
       pays.forEach(p=>{
-        const matched=PAY_GROUPS.find(x=>x.match(p.method));
+        const matched=PAY_GROUPS.find(x=>x.match(p.method||""));
         const groupKey=matched?matched.key:"outros";
-        if(groupKey===g.key)total+=+p.value||0;
+        if(groupKey===g.key)total+=(+p.value||0)*ratio;
       });
     });
-    return [g.key,total];
+    return [g.key,Math.round(total*100)/100];
   }));
 
   // Movimentações do caixa (suprimentos e sangrias)
