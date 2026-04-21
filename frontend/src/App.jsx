@@ -2232,11 +2232,14 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
   const npPrice=+np.price||0;const npCost=+np.cost||0;
   const npMargin=npCost>0?((npPrice-npCost)/npCost*100):0;
 
+  const [visibleCount,setVisibleCount]=useState(50);
   const filtered=catalog.filter(p=>{
     const matchSearch=p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search)||(p.ref||"").toLowerCase().includes(search.toLowerCase());
     const matchCat=filterCat?p.category===filterCat:true;
     return matchSearch&&matchCat;
   });
+  const visible=filtered.slice(0,visibleCount);
+  const hasMore=filtered.length>visibleCount;
 
   // Save product (add or edit)
   const [saving,setSaving]=useState(false);
@@ -2339,8 +2342,8 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
       </div>
 
       <div style={S.toolbar}>
-        <div style={{...S.searchBar,flex:1}}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU, EAN, referência..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
-        <select style={{...S.sel,minWidth:120}} value={filterCat} onChange={e=>setFilterCat(e.target.value)}>
+        <div style={{...S.searchBar,flex:1}}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU, EAN, referência..." value={search} onChange={e=>{setSearch(e.target.value);setVisibleCount(50);}}/></div>
+        <select style={{...S.sel,minWidth:120}} value={filterCat} onChange={e=>{setFilterCat(e.target.value);setVisibleCount(50);}}>
           <option value="">Todas categorias</option>
           {categories.map(c=><option key={c}>{c}</option>)}
         </select>
@@ -2495,7 +2498,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
       <div style={S.tWrap}><table style={S.table}><thead><tr>
         <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU / EAN</th><th style={S.th}>Cat.</th><th style={S.th}>Marca</th><th style={S.th}>Tam.</th><th style={S.th}>Cor</th><th style={S.th}>Preço</th><th style={S.th}>Custo</th><th style={S.th}>Margem</th><th style={S.th}>Variações</th><th style={S.th}>Ações</th>
       </tr></thead>
-      <tbody>{filtered.map(p=><tr key={p.id} style={{...S.tr,...(!p.active?{opacity:.35}:{})}}>
+      <tbody>{visible.map(p=><tr key={p.id} style={{...S.tr,...(!p.active?{opacity:.35}:{})}}>
         <td style={S.td}>{p.photo
           ? <img src={p.photo} alt={p.name} style={{width:40,height:40,objectFit:"cover",borderRadius:8,display:"block"}}/>
           : <span style={{fontSize:20}}>{p.img}</span>
@@ -2515,7 +2518,10 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
           <button style={{...S.smBtn,color:p.active?C.red:C.grn}} onClick={()=>toggleProduct(p.id)}>{p.active?"Desativar":"Ativar"}</button>
           <button style={{...S.smBtn,color:C.red}} onClick={()=>{if(!confirm("Tem certeza que deseja EXCLUIR este produto? Esta ação não pode ser desfeita."))return;setCatalog(prev=>prev.filter(x=>x.id!==p.id));api.deleteProduct(p.id).catch(console.error);showToast("Produto excluído!");}}>🗑️</button>
         </div></td>
-      </tr>)}</tbody></table></div>
+      </tr>)}</tbody></table>
+      {hasMore&&<div style={{textAlign:"center",padding:12}}><button style={{...S.primBtn,width:"100%",padding:"12px 0",fontSize:14}} onClick={()=>setVisibleCount(prev=>prev+50)}>Carregar mais ({filtered.length-visibleCount} restantes)</button></div>}
+      <div style={{textAlign:"center",padding:"4px 0",fontSize:11,color:C.dim}}>Mostrando {Math.min(visibleCount,filtered.length)} de {filtered.length} produtos {search||filterCat?"(filtrados)":""}</div>
+      </div>
 
       {/* Category breakdown */}
       <div style={{...S.card,marginTop:12}}>
