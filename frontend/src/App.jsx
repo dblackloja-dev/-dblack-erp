@@ -264,7 +264,7 @@ export default function App() {
   const [apiLoaded, setApiLoaded] = useState(false);
 
   // Global data — carregados do localStorage (persistem ao fechar o app)
-  const [catalog, setCatalog] = useState(() => ls('catalog', CATALOG));
+  const [catalog, setCatalog] = useState(() => ls('catalog', []));
   const [stock, setStock] = useState(() => ls('stock', INIT_STOCK));
   const [sales, setSales] = useState(() => ls('sales', INIT_SALES));
   // Ref para manter sempre o estado mais recente das vendas (evita race condition no loadAllData)
@@ -437,7 +437,7 @@ export default function App() {
       setTimeout(() => api.syncNow(), 2000);
     }
     // Auto-refresh a cada 30 segundos (silencioso, sem loading)
-    const interval = setInterval(() => loadAllData(true), 30000);
+    const interval = setInterval(() => loadAllData(true), 300000); // 5 min
     return () => clearInterval(interval);
   }, [loggedUser?.id]);
 
@@ -2253,30 +2253,20 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
     try{
       if(editId){
         const updated = {...np,price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
-        // Atualiza local na hora (otimista)
+        await api.updateProduct(editId, prodToApi(updated));
         setCatalog(prev=>prev.map(p=>p.id===editId?{...p,...updated}:p));
-        setEditId(null);setNp(newEmpty());setShowForm(false);
-        showToast("Produto atualizado!");
-        // Envia ao servidor em background
-        api.updateProduct(editId, prodToApi(updated)).catch(e=>{
-          showToast("Erro ao salvar no servidor: "+e.message,"error");
-        });
+        setEditId(null);showToast("Produto atualizado!");
       } else {
         const newProd={...np,id:genId(),price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
-        // Adiciona local INSTANTANEAMENTE (fica disponível para etiquetas na hora)
+        // Espera o servidor confirmar ANTES de adicionar ao estado
+        await api.createProduct(prodToApi(newProd));
         setCatalog(prev=>[newProd,...prev]);
         setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
-        setNp(newEmpty());setShowForm(false);
         showToast("Produto cadastrado!");
-        // Envia ao servidor em background — se falhar, avisa mas mantém local
-        api.createProduct(prodToApi(newProd)).then(result=>{
-          if(result?._offline) showToast("Sem internet — produto será enviado quando a conexão voltar","error");
-        }).catch(e=>{
-          showToast("Erro ao salvar no servidor: "+e.message+". O produto está salvo localmente e será reenviado.","error");
-        });
       }
+      setNp(newEmpty());setShowForm(false);
     }catch(e){
-      showToast("Erro ao salvar: "+(e.message||"tente novamente"),"error");
+      showToast("ERRO ao salvar: "+(e.message||"tente novamente"),"error");
     }finally{
       setSaving(false);
     }
