@@ -88,7 +88,30 @@ const ls = (key, fallback) => {
   try { const v = localStorage.getItem('dblack_' + key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
 };
 const lsSave = (key, val) => {
-  try { localStorage.setItem('dblack_' + key, JSON.stringify(val)); } catch {}
+  try {
+    // Para vendas: manter apenas últimos 7 dias no localStorage (banco tem tudo)
+    if (key === 'sales' && val && typeof val === 'object') {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 7);
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      const trimmed = {};
+      Object.keys(val).forEach(store => {
+        trimmed[store] = (val[store] || []).filter(s => s.date >= cutoffStr);
+      });
+      localStorage.setItem('dblack_' + key, JSON.stringify(trimmed));
+      return;
+    }
+    localStorage.setItem('dblack_' + key, JSON.stringify(val));
+  } catch (e) {
+    // Se estourou o localStorage, limpa dados antigos e tenta de novo
+    if (e.name === 'QuotaExceededError' || e.code === 22) {
+      console.warn('[STORAGE] Quota excedida — limpando dados antigos...');
+      ['sales','exchanges','payrolls','investments','withdrawals','advances'].forEach(k => {
+        try { localStorage.removeItem('dblack_' + k); } catch {}
+      });
+      try { localStorage.setItem('dblack_' + key, JSON.stringify(val)); } catch {}
+    }
+  }
 };
 
 // ─── MIGRAÇÃO: garante que todos os usuários têm senha ───
@@ -244,6 +267,9 @@ export default function App() {
   const [catalog, setCatalog] = useState(() => ls('catalog', CATALOG));
   const [stock, setStock] = useState(() => ls('stock', INIT_STOCK));
   const [sales, setSales] = useState(() => ls('sales', INIT_SALES));
+  // Ref para manter sempre o estado mais recente das vendas (evita race condition no loadAllData)
+  const salesRef = useRef(sales);
+  useEffect(() => { salesRef.current = sales; }, [sales]);
   const [expenses, setExpenses] = useState(() => ls('expenses', INIT_EXPENSES));
   const [customers, setCustomers] = useState(() => ls('customers', INIT_CUSTOMERS));
   const [cashState, setCashState] = useState(() => ls('cashState', INIT_CASH));
@@ -330,16 +356,33 @@ export default function App() {
       api.getAdvances(),
       api.getExpenseCategories(),
     ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
-      if(prods?.length) setCatalog(prods.map(prodFromApi));
+      if(prods?.length){
+        const apiProds=prods.map(prodFromApi);
+        const apiIds=new Set(prods.map(p=>p.id));
+        // Preserva produtos locais que ainda não existem no servidor (ex: criados recentemente ou offline)
+        setCatalog(prev=>{
+          const localOnly=prev.filter(p=>!apiIds.has(p.id));
+          if(localOnly.length>0){
+            // Re-envia produtos locais que faltam no servidor
+            localOnly.forEach(p=>{
+              api.createProduct(prodToApi(p)).catch(()=>{});
+            });
+            return [...apiProds,...localOnly];
+          }
+          return apiProds;
+        });
+      }
       if(stk&&Object.keys(stk).length) setStock(stk);
       if(sls?.length){
         // Sincroniza vendas locais que não existem no servidor (ex: feitas offline)
         const apiSales=salesFromApi(sls);
-        const localSales=ls('sales',{loja1:[],loja2:[],loja3:[],loja4:[]});
+        // Usa salesRef (React state atual) em vez de localStorage para evitar race condition
+        // O localStorage pode estar desatualizado se uma venda acabou de ser criada
+        const currentSales=salesRef.current||ls('sales',{loja1:[],loja2:[],loja3:[],loja4:[]});
         const apiIds=new Set(sls.map(s=>s.id));
         let synced=0;
-        Object.keys(localSales).forEach(store=>{
-          (localSales[store]||[]).forEach(sale=>{
+        Object.keys(currentSales).forEach(store=>{
+          (currentSales[store]||[]).forEach(sale=>{
             if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"){
               api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',stock_id:''}).catch(console.error);
               if(!apiSales[store])apiSales[store]=[];
@@ -350,6 +393,9 @@ export default function App() {
         });
         if(synced>0) console.log('[SYNC] '+synced+' vendas locais enviadas ao servidor');
         setSales(apiSales);
+      } else {
+        // API retornou vazio — preserva vendas locais que possam existir
+        // (evita perder vendas se o servidor estiver com problemas)
       }
       if(custs?.length) setCustomers(custs.map(custFromApi));
       setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
@@ -1300,7 +1346,11 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const custObj=customers.find(c=>c.name===cartCustomer);
     const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
-    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId }).catch(console.error);
+    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId }).catch(e=>{
+      // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
+      // O loadAllData vai detectar e reenviar na próxima sincronização
+      console.warn('[VENDA] Erro ao enviar para servidor (será reenviada):', e.message);
+    });
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};cart.forEach(c=>{st[c.id]=Math.max(0,(st[c.id]||0)-c.qty);});n[activeStockId]=st;return n;});
     setAutoFlow(true);
     setReceiptSale(newSale);
@@ -2174,24 +2224,44 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
   });
 
   // Save product (add or edit)
-  const saveProduct=()=>{
+  const [saving,setSaving]=useState(false);
+  const saveProduct=async()=>{
     if(!np.name||!np.sku)return showToast("Preencha nome e SKU!","error");
     if(!np.price||!np.cost)return showToast("Preencha preço e custo!","error");
+    if(saving)return;
+    setSaving(true);
     const vars=np.variations?np.variations.split(",").map(v=>v.trim()).filter(Boolean):[];
     const margin=npCost>0?((npPrice-npCost)/npCost*100):0;
-    if(editId){
-      const updated = {...np,price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
-      setCatalog(prev=>prev.map(p=>p.id===editId?{...p,...updated}:p));
-      api.updateProduct(editId, prodToApi(updated)).catch(console.error);
-      setEditId(null);showToast("Produto atualizado!");
-    } else {
-      const newProd={...np,id:genId(),price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
-      setCatalog(prev=>[...prev,newProd]);
-      setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
-      api.createProduct(prodToApi(newProd)).catch(console.error);
-      showToast("Produto cadastrado!");
+    try{
+      if(editId){
+        const updated = {...np,price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
+        // Atualiza local na hora (otimista)
+        setCatalog(prev=>prev.map(p=>p.id===editId?{...p,...updated}:p));
+        setEditId(null);setNp(newEmpty());setShowForm(false);
+        showToast("Produto atualizado!");
+        // Envia ao servidor em background
+        api.updateProduct(editId, prodToApi(updated)).catch(e=>{
+          showToast("Erro ao salvar no servidor: "+e.message,"error");
+        });
+      } else {
+        const newProd={...np,id:genId(),price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
+        // Adiciona local INSTANTANEAMENTE (fica disponível para etiquetas na hora)
+        setCatalog(prev=>[...prev,newProd]);
+        setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
+        setNp(newEmpty());setShowForm(false);
+        showToast("Produto cadastrado!");
+        // Envia ao servidor em background — se falhar, avisa mas mantém local
+        api.createProduct(prodToApi(newProd)).then(result=>{
+          if(result?._offline) showToast("Sem internet — produto será enviado quando a conexão voltar","error");
+        }).catch(e=>{
+          showToast("Erro ao salvar no servidor: "+e.message+". O produto está salvo localmente e será reenviado.","error");
+        });
+      }
+    }catch(e){
+      showToast("Erro ao salvar: "+(e.message||"tente novamente"),"error");
+    }finally{
+      setSaving(false);
     }
-    setNp(newEmpty());setShowForm(false);
   };
 
   // Edit
@@ -2402,7 +2472,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
 
         <div style={{...S.formAct,marginTop:12}}>
           <button style={S.secBtn} onClick={()=>{setShowForm(false);setEditId(null);setNp(newEmpty());setFormTab("essencial");}}>Cancelar</button>
-          <button style={S.primBtn} onClick={saveProduct}>{I.check} {editId?"Salvar Alterações":"Cadastrar Produto"}</button>
+          <button style={{...S.primBtn,opacity:saving?.5:1}} onClick={saveProduct} disabled={saving}>{saving?"⏳ Salvando...":(<>{I.check} {editId?"Salvar Alterações":"Cadastrar Produto"}</>)}</button>
         </div>
       </div>}
 
@@ -3146,7 +3216,9 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
   // Calcula o esperado por grupo — somente vendas deste operador hoje
   const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?s.sellerId===loggedUser.id:true));
-  const esperado=Object.fromEntries(PAY_GROUPS.map(g=>{
+
+  // Calcula total de VENDAS por forma de pagamento (sem fundo/movimentações)
+  const vendasPorGrupo=Object.fromEntries(PAY_GROUPS.map(g=>{
     let total=0;
     vendas.forEach(v=>{
       const pays=v.payments&&v.payments.length>0?v.payments:[{method:v.payment||"",value:v.total}];
@@ -3156,22 +3228,33 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
         if(groupKey===g.key)total+=+p.value||0;
       });
     });
-    // Para dinheiro: soma fundo inicial e suprimentos, desconta sangrias
+    return [g.key,total];
+  }));
+
+  // Movimentações do caixa (suprimentos e sangrias)
+  const suprimentos=storeCash.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).reduce((s,h)=>s+h.value,0);
+  const sangrias=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
+  const fundoCaixa=storeCash.initial||0;
+
+  // Esperado = vendas + fundo/movimentações (para contagem física do dinheiro)
+  const esperado=Object.fromEntries(PAY_GROUPS.map(g=>{
+    let total=vendasPorGrupo[g.key]||0;
     if(g.key==="dinheiro"){
-      total+=storeCash.initial||0;
-      const suprimentos=storeCash.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).reduce((s,h)=>s+h.value,0);
-      const sangrias=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
+      total+=fundoCaixa;
       total+=suprimentos;
       total-=sangrias;
     }
     return [g.key,total];
   }));
 
+  // Total de VENDAS (o que realmente foi faturado)
+  const totalVendasForma=Object.values(vendasPorGrupo).reduce((s,v)=>s+v,0);
+  // Total ESPERADO no caixa (vendas + fundo + movimentações — para contagem física)
   const totalEsperado=Object.values(esperado).reduce((s,v)=>s+v,0);
   const totalContado=PAY_GROUPS.reduce((s,g)=>s+(+counted[g.key]||0),0);
   const diferenca=totalContado-totalEsperado;
 
-  const saidas=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
+  const saidas=sangrias;
   // saldoSistema = dinheiro esperado no caixa físico (inicial + vendas dinheiro + suprimentos - sangrias)
   const saldoSistema=storeCash.open?esperado["dinheiro"]:0;
 
@@ -3414,16 +3497,38 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
             </div>;
           })}
 
+          {/* Detalhamento: fundo + movimentações */}
+          {(fundoCaixa>0||suprimentos>0||sangrias>0)&&<div style={{borderTop:`1px solid ${C.brd}`,marginTop:10,paddingTop:8}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:6}}>COMPOSIÇÃO DO DINHEIRO ESPERADO</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:4,fontSize:12,color:C.dim,padding:"0 8px"}}>
+              <span>Vendas em dinheiro</span><span style={{fontFamily:"monospace",textAlign:"right"}}>{fmt(vendasPorGrupo["dinheiro"]||0)}</span>
+              {fundoCaixa>0&&<><span>+ Fundo de caixa (abertura)</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.blu}}>{fmt(fundoCaixa)}</span></>}
+              {suprimentos>0&&<><span>+ Suprimentos</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.grn}}>{fmt(suprimentos)}</span></>}
+              {sangrias>0&&<><span>- Sangrias/Retiradas</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.red}}>-{fmt(sangrias)}</span></>}
+              <span style={{fontWeight:700,color:C.txt}}>= Dinheiro esperado</span><span style={{fontFamily:"monospace",textAlign:"right",fontWeight:700,color:C.txt}}>{fmt(esperado["dinheiro"])}</span>
+            </div>
+          </div>}
+
           {/* Totais */}
           <div style={{borderTop:`1px solid ${C.brd}`,marginTop:10,paddingTop:12}}>
+            {/* Total de VENDAS */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 110px 110px 90px",gap:8,fontSize:12,color:C.dim,marginBottom:6,padding:"0 0 6px",borderBottom:`1px dashed ${C.brd}`}}>
+              <span style={{fontWeight:600}}>Total vendas</span>
+              <span style={{textAlign:"right",fontFamily:"monospace"}}>{fmt(totalVendasForma)}</span>
+              <span></span><span></span>
+            </div>
+            {/* Total ESPERADO (vendas + fundo + movimentações) */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 110px 110px 90px",gap:8,fontWeight:800,fontSize:14}}>
-              <span>TOTAL</span>
+              <span>TOTAL ESPERADO</span>
               <span style={{textAlign:"right",color:C.dim,fontFamily:"monospace"}}>{fmt(totalEsperado)}</span>
               <span style={{textAlign:"right",fontFamily:"monospace",color:C.gold}}>{fmt(totalContado)}</span>
               <span style={{textAlign:"right",color:diferenca>=0?C.grn:C.red}}>{diferenca>=0?"+":""}{fmt(diferenca)}</span>
             </div>
+            {totalEsperado!==totalVendasForma&&<div style={{fontSize:10,color:C.dim,marginTop:4,padding:"0 4px"}}>
+              Inclui fundo de caixa e movimentações ({fmt(totalEsperado-totalVendasForma)})
+            </div>}
             {diferenca!==0&&<div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:diferenca>0?"rgba(0,230,118,.08)":"rgba(255,82,82,.08)",fontSize:12,color:diferenca>0?C.grn:C.red,fontWeight:600}}>
-              {diferenca>0?`✅ Sobra de ${fmt(diferenca)} — verifique o troco`:`⚠️ Falta de ${fmt(Math.abs(diferenca))} — verifique as movimentações`}
+              {diferenca>0?`Sobra de ${fmt(diferenca)} — verifique o troco`:`Falta de ${fmt(Math.abs(diferenca))} — verifique as movimentações`}
             </div>}
           </div>
 

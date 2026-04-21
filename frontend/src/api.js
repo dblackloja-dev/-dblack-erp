@@ -5,7 +5,18 @@ const BASE = '/api';
 
 // ─── Token JWT ───
 const getToken = () => localStorage.getItem('dblack_token');
-const setToken = (t) => localStorage.setItem('dblack_token', t);
+const setToken = (t) => {
+  try {
+    localStorage.setItem('dblack_token', t);
+  } catch (e) {
+    // Se localStorage estourou, limpa dados antigos e tenta de novo
+    console.warn('[STORAGE] Quota excedida ao salvar token — limpando dados antigos...');
+    ['dblack_sales','dblack_exchanges','dblack_payrolls','dblack_investments','dblack_withdrawals','dblack_advances'].forEach(k => {
+      try { localStorage.removeItem(k); } catch {}
+    });
+    try { localStorage.setItem('dblack_token', t); } catch {}
+  }
+};
 const clearToken = () => localStorage.removeItem('dblack_token');
 
 // ═══════════════════════════════════════════════════
@@ -172,9 +183,15 @@ async function request(path, options = {}) {
       return;
     }
     if (!res.ok) {
-      // Se é escrita e o servidor deu erro (500, 502, 400...), enfileira pra não perder dados
+      // Se é escrita e o servidor deu erro, enfileira para não perder dados
       if (isWrite && res.status >= 500) {
         console.warn('[REQUEST] Erro', res.status, 'em', path, '— enfileirando para retry');
+        addToQueue(path, options);
+        return { _offline: true, _queued: true };
+      }
+      // Para vendas (POST /sales), enfileira mesmo com 400 para não perder a venda
+      if (isWrite && res.status >= 400 && path === '/sales') {
+        console.warn('[REQUEST] Erro', res.status, 'em venda — enfileirando para retry');
         addToQueue(path, options);
         return { _offline: true, _queued: true };
       }
