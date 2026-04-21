@@ -224,7 +224,9 @@ app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/products', async (req, res) => {
   try {
-    const products = await queryAll('SELECT * FROM products ORDER BY created_at DESC');
+    // Não retorna o campo photo na listagem (fotos base64 pesam 161MB!)
+    // Foto só é carregada individualmente quando necessário
+    const products = await queryAll('SELECT id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img, variations, active, created_at, updated_at FROM products ORDER BY created_at DESC');
     products.forEach(p => {
       try { p.variations = JSON.parse(p.variations || '[]'); } catch { p.variations = []; }
     });
@@ -278,6 +280,14 @@ app.delete('/api/products/:id', async (req, res) => {
   try {
     await queryRun('UPDATE products SET active = false WHERE id = $1', [req.params.id]);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Busca foto de um produto específico
+app.get('/api/products/:id/photo', async (req, res) => {
+  try {
+    const p = await queryOne('SELECT photo FROM products WHERE id = $1', [req.params.id]);
+    res.json({ photo: p?.photo || '' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
