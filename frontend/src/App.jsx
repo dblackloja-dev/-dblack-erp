@@ -669,7 +669,7 @@ export default function App() {
   const activeStockId = getStockId(activeStore);
   const storeStock = stock[activeStockId] || {};
   const storeExpenses = expenses[activeStore] || [];
-  const cashKey = activeStore + "_caixa";
+  const cashKey = activeStore + "_" + (loggedUser?.id || "main");
   const storeCash = cashState[cashKey] || { open:false, initial:0, history:[] };
   const sharedStockStores = STORES.filter(s=>s.stockId===activeStockId);
   const isSharedStock = sharedStockStores.length > 1;
@@ -3193,7 +3193,7 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
 // ═══  CAIXA MODULE               ═══
 // ═══════════════════════════════════
 function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals,advances,setAdvances,employees}){
-  const cashKey = activeStore + "_caixa";
+  const cashKey = activeStore + "_" + (loggedUser?.id || "main");
   const [caixaTab,setCaixaTab]=useState("operacao"); // operacao, retiradas
   const [openVal,setOpenVal]=useState(()=>storeCash.initial!=null?storeCash.initial:0);
   // Sincroniza openVal quando o caixa fecha ou o saldo muda
@@ -3220,8 +3220,8 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
   const todayStr=new Date().toISOString().split("T")[0];
 
-  // Calcula o esperado por grupo — TODAS as vendas da loja hoje (não filtra por vendedor)
-  const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada");
+  // Calcula o esperado por grupo — vendas deste operador hoje
+  const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?s.sellerId===loggedUser.id:true));
 
   // Calcula total de VENDAS por forma de pagamento (sem fundo/movimentações)
   const vendasPorGrupo=Object.fromEntries(PAY_GROUPS.map(g=>{
@@ -3240,20 +3240,34 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     return [g.key,Math.round(total*100)/100];
   }));
 
-  // Movimentações do caixa (suprimentos e sangrias)
-  const suprimentos=storeCash.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).reduce((s,h)=>s+h.value,0);
-  const sangrias=storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0);
+  // Movimentações do caixa (suprimentos e sangrias — sem trocas)
+  const suprimentos=storeCash.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")&&!h.desc?.startsWith("Troca ")).reduce((s,h)=>s+h.value,0);
+  const sangrias=storeCash.history.filter(h=>h.type==="saida"&&!h.desc?.startsWith("Estorno troca")).reduce((s,h)=>s+h.value,0);
   const fundoCaixa=storeCash.initial||0;
 
-  // Esperado = vendas + fundo/movimentações (para contagem física do dinheiro)
+  // Trocas por forma de pagamento (desc contém o método: "Troca (PIX) CNF-123")
+  const trocasPorGrupo=Object.fromEntries(PAY_GROUPS.map(g=>[g.key,0]));
+  storeCash.history.filter(h=>h.type==="entrada"&&h.desc?.startsWith("Troca ")).forEach(h=>{
+    // Extrai método do desc: "Troca (PIX) CNF-..." → "PIX"
+    const m=(h.desc.match(/\(([^)]+)\)/)||[])[1]||"";
+    const matched=PAY_GROUPS.find(x=>x.match(m));
+    const key=matched?matched.key:"dinheiro";
+    trocasPorGrupo[key]+=h.value;
+  });
+  // Estornos de trocas canceladas (subtrair do dinheiro)
+  const trocasEstorno=storeCash.history.filter(h=>h.type==="saida"&&h.desc?.startsWith("Estorno troca")).reduce((s,h)=>s+h.value,0);
+
+  // Esperado = vendas + trocas por grupo + fundo/suprimentos/sangrias (só em dinheiro)
   const esperado=Object.fromEntries(PAY_GROUPS.map(g=>{
     let total=vendasPorGrupo[g.key]||0;
+    total+=trocasPorGrupo[g.key]||0;
     if(g.key==="dinheiro"){
       total+=fundoCaixa;
       total+=suprimentos;
       total-=sangrias;
+      total-=trocasEstorno;
     }
-    return [g.key,total];
+    return [g.key,Math.round(total*100)/100];
   }));
 
   // Total de VENDAS (o que realmente foi faturado)
