@@ -178,9 +178,12 @@ async function request(path, options = {}) {
     });
 
     if (res.status === 401) {
+      // Não recarrega a página inteira — apenas limpa o token
+      // O app vai detectar e mostrar a tela de login sem perder a aba atual
       clearToken();
-      window.location.reload();
-      return;
+      // Dispara evento para o app reagir sem reload
+      window.dispatchEvent(new CustomEvent('authExpired'));
+      return null;
     }
     if (!res.ok) {
       // Se é escrita e o servidor deu erro, enfileira para não perder dados

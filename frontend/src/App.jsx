@@ -258,7 +258,7 @@ export default function App() {
 
   // Store selection
   const [activeStore, setActiveStore] = useState("loja1");
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem('dblack_tab') || "dashboard"; } catch { return "dashboard"; } });
   const [sideOpen, setSideOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [apiLoaded, setApiLoaded] = useState(false);
@@ -304,6 +304,7 @@ export default function App() {
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
 
   // ─── AUTO-SAVE no localStorage ───
+  useEffect(() => { try { localStorage.setItem('dblack_tab', tab); } catch {} }, [tab]);
   useEffect(() => { lsSave('users', users); }, [users]);
   useEffect(() => { lsSave('catalog', catalog); }, [catalog]);
   useEffect(() => { lsSave('stock', stock); }, [stock]);
@@ -454,15 +455,22 @@ export default function App() {
       setOfflineQueue(e.detail.remaining);
       if (e.detail.remaining === 0 && loggedUser) loadAllData(true);
     };
+    const authExpired = () => {
+      // Sessão expirou — mostra tela de login sem perder aba/dados locais
+      setLoggedUser(null);
+      showToast("Sessão expirada — faça login novamente","error");
+    };
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
     window.addEventListener('offlineQueueChange', queueChange);
     window.addEventListener('offlineSyncDone', syncDone);
+    window.addEventListener('authExpired', authExpired);
     return () => {
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);
       window.removeEventListener('offlineQueueChange', queueChange);
       window.removeEventListener('offlineSyncDone', syncDone);
+      window.removeEventListener('authExpired', authExpired);
     };
   }, [loggedUser]);
 
@@ -2193,20 +2201,26 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
   const [newCat,setNewCat]=useState("");
   const [showCatManager,setShowCatManager]=useState(false);
 
-  // Auto-generate next SKU and EAN
+  // Auto-generate next SKU and EAN — usa o maior valor entre catálogo atual e último salvo
   const getNextSku=()=>{
     const skuNums=catalog.map(p=>{const m=(p.sku||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
-    const next=Math.max(0,...skuNums)+1;
+    const savedMax=parseInt(localStorage.getItem('dblack_last_sku')||'0')||0;
+    const next=Math.max(savedMax,...skuNums)+1;
+    try{localStorage.setItem('dblack_last_sku',String(next));}catch{}
     return "DBK-"+String(next).padStart(4,"0");
   };
   const getNextEan=()=>{
     const eanNums=catalog.map(p=>{const n=parseInt((p.ean||"0").slice(-5));return isNaN(n)?0:n;});
-    const next=Math.max(0,...eanNums)+1;
+    const savedMax=parseInt(localStorage.getItem('dblack_last_ean')||'0')||0;
+    const next=Math.max(savedMax,...eanNums)+1;
+    try{localStorage.setItem('dblack_last_ean',String(next));}catch{}
     return "789"+String(next).padStart(10,"0");
   };
   const getNextRef=()=>{
     const refNums=catalog.map(p=>{const m=(p.ref||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
-    const next=Math.max(0,...refNums)+1;
+    const savedMax=parseInt(localStorage.getItem('dblack_last_ref')||'0')||0;
+    const next=Math.max(savedMax,...refNums)+1;
+    try{localStorage.setItem('dblack_last_ref',String(next));}catch{}
     return "REF-"+String(next).padStart(3,"0");
   };
 
@@ -2246,7 +2260,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
       } else {
         const newProd={...np,id:genId(),price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
         // Adiciona local INSTANTANEAMENTE (fica disponível para etiquetas na hora)
-        setCatalog(prev=>[...prev,newProd]);
+        setCatalog(prev=>[newProd,...prev]);
         setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
         setNp(newEmpty());setShowForm(false);
         showToast("Produto cadastrado!");
@@ -2293,7 +2307,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
       if(!name||!sku)return;
       const p=+price||0;const c=+cost||0;
       const newProd={id:genId(),name,sku,ean:"",ref:"",category:category||"Camisetas",brand:"D'Black",supplier:"",size:size||"",color:color||"",price:p,cost:c,margin:c>0?((p-c)/c*100):0,minStock:10,img:"👕",variations:[],active:true};
-      setCatalog(prev=>[...prev,newProd]);
+      setCatalog(prev=>[newProd,...prev]);
       setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
       count++;
     });
