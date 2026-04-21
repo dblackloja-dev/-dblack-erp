@@ -264,7 +264,8 @@ export default function App() {
   const [apiLoaded, setApiLoaded] = useState(false);
 
   // Global data — carregados do localStorage (persistem ao fechar o app)
-  const [catalog, setCatalog] = useState(() => ls('catalog', []));
+  const [catalog, setCatalog] = useState(() => ls('catalog', CATALOG));
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [stock, setStock] = useState(() => ls('stock', INIT_STOCK));
   const [sales, setSales] = useState(() => ls('sales', INIT_SALES));
   // Ref para manter sempre o estado mais recente das vendas (evita race condition no loadAllData)
@@ -340,15 +341,8 @@ export default function App() {
   const updateCatalog = useCallback((prods) => {
     if(!prods?.length) return;
     const apiProds=prods.map(prodFromApi);
-    const apiIds=new Set(prods.map(p=>p.id));
-    setCatalog(prev=>{
-      const localOnly=prev.filter(p=>!apiIds.has(p.id));
-      if(localOnly.length>0){
-        localOnly.forEach(p=>{ api.createProduct(prodToApi(p)).catch(()=>{}); });
-        return [...apiProds,...localOnly];
-      }
-      return apiProds;
-    });
+    setCatalog(apiProds);
+    setCatalogLoaded(true);
   }, []);
 
   const loadAllData = useCallback((silent=false) => {
@@ -771,7 +765,7 @@ export default function App() {
           {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale}} />}
 
           {/* PRODUTOS (Cadastro) */}
-          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast}} />}
+          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded}} />}
 
           {/* ESTOQUE */}
           {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores}} />}
@@ -2190,7 +2184,7 @@ function ReceiptComprovante({data,onClose}){
 // ═══════════════════════════════════
 // ═══  PRODUTOS MODULE (Cadastro) ═══
 // ═══════════════════════════════════
-function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
+function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded}){
   const [search,setSearch]=useState("");
   const [filterCat,setFilterCat]=useState("");
   const [showForm,setShowForm]=useState(false);
@@ -2485,6 +2479,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast}){
       </div>}
 
       {/* Product Table */}
+      {!catalogLoaded&&catalog.length===0&&<div style={{textAlign:"center",padding:40,color:C.dim,fontSize:16,fontWeight:700}}>Carregando produtos do servidor...</div>}
       <div style={S.tWrap}><table style={S.table}><thead><tr>
         <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU / EAN</th><th style={S.th}>Cat.</th><th style={S.th}>Marca</th><th style={S.th}>Tam.</th><th style={S.th}>Cor</th><th style={S.th}>Preço</th><th style={S.th}>Custo</th><th style={S.th}>Margem</th><th style={S.th}>Variações</th><th style={S.th}>Ações</th>
       </tr></thead>
