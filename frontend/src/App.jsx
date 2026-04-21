@@ -336,13 +336,36 @@ export default function App() {
   }, []);
 
   // ─── CARREGA DADOS DA API APÓS LOGIN + AUTO-REFRESH 30s ───
+  // Função auxiliar para atualizar catálogo preservando produtos locais
+  const updateCatalog = useCallback((prods) => {
+    if(!prods?.length) return;
+    const apiProds=prods.map(prodFromApi);
+    const apiIds=new Set(prods.map(p=>p.id));
+    setCatalog(prev=>{
+      const localOnly=prev.filter(p=>!apiIds.has(p.id));
+      if(localOnly.length>0){
+        localOnly.forEach(p=>{ api.createProduct(prodToApi(p)).catch(()=>{}); });
+        return [...apiProds,...localOnly];
+      }
+      return apiProds;
+    });
+  }, []);
+
   const loadAllData = useCallback((silent=false) => {
-    // Não tenta carregar do servidor se estiver offline
     if (!navigator.onLine) { if(!silent) setApiLoaded(true); return Promise.resolve(); }
     if(!silent) setApiLoaded(false);
-    return Promise.all([
+
+    // FASE 1: Produtos + Estoque carregam PRIMEIRO (prioridade para cadastro/etiquetas)
+    const fase1 = Promise.all([
       api.getProducts(),
       api.getStock(),
+    ]).then(([prods,stk]) => {
+      updateCatalog(prods);
+      if(stk&&Object.keys(stk).length) setStock(stk);
+    }).catch(e => console.error('[LOAD] Erro fase 1:', e));
+
+    // FASE 2: Todo o resto carrega em paralelo (não bloqueia produtos)
+    const fase2 = Promise.all([
       api.getSales(),
       api.getCustomers(),
       api.getExpenses(),
@@ -356,29 +379,9 @@ export default function App() {
       api.getWithdrawals(),
       api.getAdvances(),
       api.getExpenseCategories(),
-    ]).then(([prods,stk,sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
-      if(prods?.length){
-        const apiProds=prods.map(prodFromApi);
-        const apiIds=new Set(prods.map(p=>p.id));
-        // Preserva produtos locais que ainda não existem no servidor (ex: criados recentemente ou offline)
-        setCatalog(prev=>{
-          const localOnly=prev.filter(p=>!apiIds.has(p.id));
-          if(localOnly.length>0){
-            // Re-envia produtos locais que faltam no servidor
-            localOnly.forEach(p=>{
-              api.createProduct(prodToApi(p)).catch(()=>{});
-            });
-            return [...apiProds,...localOnly];
-          }
-          return apiProds;
-        });
-      }
-      if(stk&&Object.keys(stk).length) setStock(stk);
+    ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
       if(sls?.length){
-        // Sincroniza vendas locais que não existem no servidor (ex: feitas offline)
         const apiSales=salesFromApi(sls);
-        // Usa salesRef (React state atual) em vez de localStorage para evitar race condition
-        // O localStorage pode estar desatualizado se uma venda acabou de ser criada
         const currentSales=salesRef.current||ls('sales',{loja1:[],loja2:[],loja3:[],loja4:[]});
         const apiIds=new Set(sls.map(s=>s.id));
         let synced=0;
@@ -394,9 +397,6 @@ export default function App() {
         });
         if(synced>0) console.log('[SYNC] '+synced+' vendas locais enviadas ao servidor');
         setSales(apiSales);
-      } else {
-        // API retornou vazio — preserva vendas locais que possam existir
-        // (evita perder vendas se o servidor estiver com problemas)
       }
       if(custs?.length) setCustomers(custs.map(custFromApi));
       setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
@@ -424,8 +424,9 @@ export default function App() {
       setWithdrawals(wdrs?.length ? wdrs.map(w=>({...w,storeId:w.store_id,createdAt:w.created_at})) : []);
       setAdvances(advs?.length ? advs.map(a=>({...a,storeId:a.store_id,empId:a.emp_id,empName:a.emp_name,authorizedBy:a.authorized_by,createdAt:a.created_at})) : []);
       if(expCats?.length) setExpenseCategories(expCats.map(c=>c.name));
-    }).catch(e => console.error('Erro ao carregar do servidor:', e))
-      .finally(() => { if(!silent) setApiLoaded(true); });
+    }).catch(e => console.error('[LOAD] Erro fase 2:', e));
+
+    return Promise.all([fase1, fase2]).finally(() => { if(!silent) setApiLoaded(true); });
   }, []);
 
   useEffect(() => {
