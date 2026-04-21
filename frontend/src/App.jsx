@@ -3207,10 +3207,10 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
   // Grupos de formas de pagamento para o fechamento
   const PAY_GROUPS=[
-    {key:"dinheiro", label:"💵 Dinheiro",      color:C.grn,  match:m=>m==="Dinheiro"},
-    {key:"pix",      label:"📱 PIX",            color:C.blu,  match:m=>m.toLowerCase().startsWith("pix")},
-    {key:"credito",  label:"💳 Crédito",        color:C.pur,  match:m=>m.toLowerCase().startsWith("créd")||m.toLowerCase().startsWith("cred")},
-    {key:"debito",   label:"💳 Débito",         color:C.gold, match:m=>m==="Débito"||m==="Debito"},
+    {key:"dinheiro", label:"💵 Dinheiro",      color:C.grn,  match:m=>{const l=(m||"").toLowerCase();return l==="dinheiro"||l.startsWith("dinheiro:");}},
+    {key:"pix",      label:"📱 PIX",            color:C.blu,  match:m=>{const l=(m||"").toLowerCase();return l==="pix"||l.startsWith("pix:");}},
+    {key:"credito",  label:"💳 Crédito",        color:C.pur,  match:m=>{const l=(m||"").toLowerCase();return l.startsWith("créd")||l.startsWith("cred");}},
+    {key:"debito",   label:"💳 Débito",         color:C.gold, match:m=>{const l=(m||"").toLowerCase();return l.startsWith("déb")||l.startsWith("deb");}},
     {key:"outros",   label:"🏷️ Outros",         color:C.dim,  match:()=>false}, // catch-all
   ];
 
@@ -3220,14 +3220,15 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
   const todayStr=new Date().toISOString().split("T")[0];
 
-  // Calcula o esperado por grupo — vendas deste operador hoje
-  const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?s.sellerId===loggedUser.id:true));
+  // Calcula o esperado por grupo — vendas deste operador hoje (inclui vendas sem vendedor atribuído)
+  const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?(s.sellerId===loggedUser.id||!s.sellerId):true));
 
   // Calcula total de VENDAS por forma de pagamento (sem fundo/movimentações)
   const vendasPorGrupo=Object.fromEntries(PAY_GROUPS.map(g=>{
     let total=0;
     vendas.forEach(v=>{
-      const pays=v.payments&&v.payments.length>0?v.payments:[{method:v.payment||"",value:v.total}];
+      // Se não tem payments array, extrai o método do campo payment (ex: "Dinheiro: R$ 100" → "Dinheiro")
+      const pays=v.payments&&v.payments.length>0?v.payments:[{method:(v.payment||"").split(":")[0].trim(),value:v.total}];
       // Se soma dos pagamentos difere muito do total da venda, usa o total da venda proporcional
       const paySum=pays.reduce((s,p)=>s+(+p.value||0),0);
       const ratio=paySum>0&&Math.abs(paySum-v.total)>1?(v.total/paySum):1;
