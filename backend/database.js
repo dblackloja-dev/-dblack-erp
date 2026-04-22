@@ -314,6 +314,12 @@ async function initDB() {
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_type TEXT DEFAULT 'operacional'`).catch(()=>{});
   await pool.query(`ALTER TABLE promos ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE investments ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{});
+  // Caixa por usuário (2 caixas por loja)
+  await pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{});
+  await pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS close_report TEXT`).catch(()=>{});
+  await pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{});
+  await pool.query(`ALTER TABLE cash_state DROP CONSTRAINT IF EXISTS cash_state_store_id_key`).catch(()=>{});
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_state_store_user ON cash_state(store_id, user_id)`).catch(()=>{});
 
   // ─── ÍNDICES para performance em multi-loja ───
   const indexes = [

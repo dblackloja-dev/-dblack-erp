@@ -336,7 +336,7 @@ const api = {
   deleteExpenseCategory: (name) => request(`/expense-categories/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // Cash
-  getCash: (storeId) => request(`/cash/${storeId}`),
+  getCash: (storeId, userId) => request(`/cash/${storeId}${userId ? `?user_id=${userId}` : ''}`),
   cashAction: (storeId, data) => request(`/cash/${storeId}`, { method: 'POST', body: data }),
 
   // Employees

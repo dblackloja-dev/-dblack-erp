@@ -437,6 +437,36 @@ export default function App() {
 
   const showToast = useCallback((msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); },[]);
 
+  // ─── CARREGA CAIXA DO SERVIDOR (por loja + usuário) ───
+  useEffect(() => {
+    if (!loggedUser || !navigator.onLine) return;
+    const userId = loggedUser?.id || 'main';
+    // Carrega caixa de todas as lojas que o usuário tem acesso
+    const stores = loggedUser.store_id === 'all' ? ['loja1','loja2','loja3','loja4'] : [loggedUser.store_id];
+    stores.forEach(storeId => {
+      api.getCash(storeId, userId).then(data => {
+        if (!data || !data.state) return;
+        const cashKey = storeId + "_" + userId;
+        setCashState(prev => {
+          const n = { ...prev };
+          n[cashKey] = {
+            open: data.state.is_open,
+            initial: +(data.state.initial_value) || 0,
+            history: (data.movements || []).map(m => ({
+              type: m.type,
+              value: +m.value,
+              desc: m.description || '',
+              time: new Date(m.created_at).toLocaleTimeString('pt-BR'),
+            })),
+            closedAt: data.state.closed_at,
+            closeReport: data.state.close_report ? JSON.parse(data.state.close_report) : null,
+          };
+          return n;
+        });
+      }).catch(e => console.warn('[CASH] Erro ao carregar caixa:', e));
+    });
+  }, [loggedUser?.id]);
+
   // ─── MODO OFFLINE ───
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [offlineQueue, setOfflineQueue] = useState(api.getQueueCount());
@@ -3279,45 +3309,25 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const diferenca=totalContado-totalEsperado;
 
   const saidas=sangrias;
-  // Auto-detecta caixa aberto: se tem vendas hoje deste operador mas o caixa aparece fechado,
-  // significa que o localStorage perdeu o estado — reabre automaticamente sem zerar histórico
-  useEffect(()=>{
-    if(!storeCash.open&&vendas.length>0){
-      setCashState(prev=>{
-        const n={...prev};
-        const cs=n[cashKey]||{open:false,initial:0,history:[]};
-        if(!cs.open){
-          console.log('[CAIXA] Auto-restaurando caixa — '+vendas.length+' vendas encontradas hoje');
-          n[cashKey]={...cs,open:true,initial:cs.initial||0};
-        }
-        return n;
-      });
-    }
-  },[vendas.length]);
-
-  // Migra dados da chave antiga _caixa (se existir) para a chave correta
-  useEffect(()=>{
-    const oldKey=activeStore+"_caixa";
-    try{
-      const saved=JSON.parse(localStorage.getItem('dblack_cashState')||'{}');
-      if(saved[oldKey]&&saved[oldKey].open&&!saved[cashKey]?.open){
-        setCashState(prev=>{const n={...prev};n[cashKey]=saved[oldKey];delete n[oldKey];return n;});
-        console.log('[CAIXA] Migrado dados de',oldKey,'para',cashKey);
-      }
-    }catch{}
-  },[]);
-
   // saldoSistema = dinheiro esperado no caixa físico (inicial + vendas dinheiro + suprimentos - sangrias)
   const saldoSistema=storeCash.open?esperado["dinheiro"]:0;
 
+  const userId=loggedUser?.id||"main";
   const updateCash=(fn)=>{setCashState(prev=>{const n={...prev};n[cashKey]=fn({...(n[cashKey]||{open:false,initial:0,history:[]})});return n;});};
-  const openCash=()=>{updateCash(cs=>({...cs,open:true,initial:openVal,history:[]}));showToast("Caixa aberto com fundo de "+fmt(openVal)+"!");};
+
+  const openCash=()=>{
+    updateCash(cs=>({...cs,open:true,initial:openVal,history:[]}));
+    showToast("Caixa aberto com fundo de "+fmt(openVal)+"!");
+    api.cashAction(activeStore,{action:'open',value:openVal,user_id:userId}).catch(e=>showToast("Erro ao salvar abertura: "+e.message,"error"));
+  };
+
   const doSangria=()=>{
     if(!sangria||+sangria<=0)return showToast("Valor inválido","error");
     const label=sangriaType==="saida"?"Sangria":"Suprimento";
     const mov={type:sangriaType,value:+sangria,desc:sangriaDesc||label,time:new Date().toLocaleTimeString("pt-BR")};
     updateCash(cs=>({...cs,history:[...cs.history,mov]}));
     setPrintData({type:"sangria",label,movType:sangriaType,value:+sangria,desc:sangriaDesc||label,time:mov.time,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—"});
+    api.cashAction(activeStore,{action:'movement',type:sangriaType,value:+sangria,description:sangriaDesc||label,user_id:userId}).catch(e=>showToast("Erro ao salvar: "+e.message,"error"));
     setSangria("");setSangriaDesc("");showToast(label+" registrado!");
   };
 
@@ -3327,15 +3337,9 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     const totalVendas=vendas.reduce((s,v)=>s+v.total,0);
     const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);
     const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
-    // Salva o valor contado em dinheiro como fundo para a próxima abertura
     const dinheiroContado=+(counted["dinheiro"]||0);
-    updateCash(cs=>({
-      ...cs,
-      open:false,
-      initial:dinheiroContado,
-      closedAt:new Date().toISOString(),
-      closeReport:reportData
-    }));
+    updateCash(cs=>({...cs,open:false,initial:dinheiroContado,closedAt:new Date().toISOString(),closeReport:reportData}));
+    api.cashAction(activeStore,{action:'close',value:dinheiroContado,close_report:reportData,user_id:userId}).catch(e=>showToast("Erro ao salvar fechamento: "+e.message,"error"));
     setPrintData({type:"fechamento",report:reportData,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—",vendas:vendas.length,totalVendas,totalDesc,groups:PAY_GROUPS,sangrias:saidas,history:storeCash.history});
     setShowCloseModal(false);
     setCounted(initCounted());
@@ -3363,7 +3367,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     if(!wdDesc)return showToast("Informe o motivo da retirada!","error");
     const newW={id:genId(),storeId:activeStore,store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp||loggedUser?.name||"",destination:wdDest,createdAt:new Date().toISOString(),created_at:new Date().toISOString()};
     setWithdrawals(prev=>[newW,...prev]);
-    api.createWithdrawal({store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp,destination:wdDest}).catch(console.error);
+    api.createWithdrawal({store_id:activeStore,value:+wdVal,description:wdDesc,responsible:wdResp,destination:wdDest,user_id:loggedUser?.id||"main"}).catch(console.error);
     // Registra saída no caixa para subtrair do saldo (usa cashKey do componente)
     setCashState(prev=>{
       const n={...prev};
@@ -3722,7 +3726,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
                 const emp=storeEmps.find(e=>e.id===empId);
                 const newAdv={id:genId(),storeId:activeStore,store_id:activeStore,empId,emp_id:empId,empName:emp?.name||"",emp_name:emp?.name||"",value:val,description:descEl?.value||"",authorizedBy:authEl?.value||loggedUser?.name||"",authorized_by:authEl?.value||loggedUser?.name||"",month:currentMonth,createdAt:new Date().toISOString(),created_at:new Date().toISOString()};
                 setAdvances(prev=>[newAdv,...prev]);
-                api.createAdvance({store_id:activeStore,emp_id:empId,emp_name:emp?.name||"",value:val,description:descEl?.value||"",authorized_by:authEl?.value||loggedUser?.name||""}).catch(console.error);
+                api.createAdvance({store_id:activeStore,emp_id:empId,emp_name:emp?.name||"",value:val,description:descEl?.value||"",authorized_by:authEl?.value||loggedUser?.name||"",user_id:loggedUser?.id||"main"}).catch(console.error);
                 // Desconta do caixa
                 setCashState(prev=>{
                   const n={...prev};
@@ -4495,12 +4499,12 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
       if(splitMode&&paymentsArr){
         paymentsArr.forEach(p=>{
           if(p.value>0){
-            api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Diferença troca ("+p.method+") - "+foundSale.cupom}).catch(console.error);
+            api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Diferença troca ("+p.method+") - "+foundSale.cupom,user_id:loggedUser?.id||"main"}).catch(console.error);
             setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:p.value,desc:"Troca ("+p.method+") "+foundSale.cupom,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
           }
         });
       } else {
-        api.cashAction(activeStore,{action:"movement",type:"entrada",value:diff,description:"Diferença troca ("+paymentField+") - "+foundSale.cupom}).catch(console.error);
+        api.cashAction(activeStore,{action:"movement",type:"entrada",value:diff,description:"Diferença troca ("+paymentField+") - "+foundSale.cupom,user_id:loggedUser?.id||"main"}).catch(console.error);
         setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:diff,desc:"Troca ("+paymentField+") "+foundSale.cupom,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
       }
     }
@@ -4530,7 +4534,7 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
     // Estorna o valor da diferença no caixa (backend + local)
     if(ex.difference>0){
       const cupomRef=ex.cupomOriginal||ex.cupom_original||"";
-      api.cashAction(activeStore,{action:"movement",type:"saida",value:ex.difference,description:"Estorno troca cancelada - "+cupomRef}).catch(console.error);
+      api.cashAction(activeStore,{action:"movement",type:"saida",value:ex.difference,description:"Estorno troca cancelada - "+cupomRef,user_id:loggedUser?.id||"main"}).catch(console.error);
       const cashKey=activeStore+"_"+(loggedUser?.id||"main");
       setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:ex.difference,desc:"Estorno troca "+cupomRef,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
     }

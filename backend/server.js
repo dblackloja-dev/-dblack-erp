@@ -664,25 +664,48 @@ app.delete('/api/expense-categories/:name', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/cash/:storeId', async (req, res) => {
   try {
-    const state = await queryOne('SELECT * FROM cash_state WHERE store_id = $1', [req.params.storeId]);
-    const movements = await queryAll('SELECT * FROM cash_movements WHERE store_id = $1 ORDER BY created_at DESC', [req.params.storeId]);
-    res.json({ state: state || { store_id: req.params.storeId, is_open: false, initial_value: 500 }, movements });
+    const userId = req.query.user_id || 'main';
+    const state = await queryOne('SELECT * FROM cash_state WHERE store_id = $1 AND user_id = $2', [req.params.storeId, userId]);
+    // Movimentações de hoje deste operador
+    const movements = await queryAll(
+      "SELECT * FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at::date = CURRENT_DATE ORDER BY created_at ASC",
+      [req.params.storeId, userId]
+    );
+    res.json({
+      state: state || { store_id: req.params.storeId, user_id: userId, is_open: false, initial_value: 0 },
+      movements
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/cash/:storeId', async (req, res) => {
   try {
-    const { action, value, description, type } = req.body;
+    const { action, value, description, type, user_id, close_report } = req.body;
     const storeId = req.params.storeId;
+    const userId = user_id || 'main';
 
     if (action === 'open') {
-      await queryRun('UPDATE cash_state SET is_open = true, initial_value = $1, opened_at = NOW() WHERE store_id = $2', [value || 500, storeId]);
+      // UPSERT: cria se não existe, atualiza se existe
+      await queryRun(`
+        INSERT INTO cash_state (store_id, user_id, is_open, initial_value, opened_at)
+        VALUES ($1, $2, true, $3, NOW())
+        ON CONFLICT (store_id, user_id)
+        DO UPDATE SET is_open = true, initial_value = $3, opened_at = NOW()
+      `, [storeId, userId, value || 0]);
+      // Limpa movimentações antigas deste operador (novo dia)
+      await queryRun(
+        "DELETE FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at::date < CURRENT_DATE",
+        [storeId, userId]
+      );
     } else if (action === 'close') {
-      await queryRun('UPDATE cash_state SET is_open = false, closed_at = NOW() WHERE store_id = $1', [storeId]);
+      await queryRun(
+        'UPDATE cash_state SET is_open = false, initial_value = $1, closed_at = NOW(), close_report = $2 WHERE store_id = $3 AND user_id = $4',
+        [value || 0, close_report ? JSON.stringify(close_report) : null, storeId, userId]
+      );
     } else if (action === 'movement') {
       await queryRun(
-        'INSERT INTO cash_movements (id, store_id, type, value, description) VALUES ($1,$2,$3,$4,$5)',
-        [genId(), storeId, type || 'entrada', value, description || '']
+        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
+        [genId(), storeId, userId, type || 'entrada', value, description || '']
       );
     }
 
@@ -714,8 +737,8 @@ app.post('/api/withdrawals', async (req, res) => {
 
     // Registra a saída no caixa para que o saldo seja atualizado
     await queryRun(
-      'INSERT INTO cash_movements (id, store_id, type, value, description) VALUES ($1,$2,$3,$4,$5)',
-      [genId(), w.store_id, 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim()]
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
+      [genId(), w.store_id, w.user_id || 'main', 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim()]
     );
 
     res.json({ id, ...w, created_at: new Date().toISOString() });
@@ -760,8 +783,8 @@ app.post('/api/advances', async (req, res) => {
 
     // Registra saída no caixa
     await queryRun(
-      'INSERT INTO cash_movements (id, store_id, type, value, description) VALUES ($1,$2,$3,$4,$5)',
-      [genId(), a.store_id, 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`]
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
+      [genId(), a.store_id, a.user_id || 'main', 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`]
     );
 
     res.json({ id, ...a, month, created_at: new Date().toISOString() });
