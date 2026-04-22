@@ -3279,6 +3279,34 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const diferenca=totalContado-totalEsperado;
 
   const saidas=sangrias;
+  // Auto-detecta caixa aberto: se tem vendas hoje deste operador mas o caixa aparece fechado,
+  // significa que o localStorage perdeu o estado — reabre automaticamente sem zerar histórico
+  useEffect(()=>{
+    if(!storeCash.open&&vendas.length>0){
+      setCashState(prev=>{
+        const n={...prev};
+        const cs=n[cashKey]||{open:false,initial:0,history:[]};
+        if(!cs.open){
+          console.log('[CAIXA] Auto-restaurando caixa — '+vendas.length+' vendas encontradas hoje');
+          n[cashKey]={...cs,open:true,initial:cs.initial||0};
+        }
+        return n;
+      });
+    }
+  },[vendas.length]);
+
+  // Migra dados da chave antiga _caixa (se existir) para a chave correta
+  useEffect(()=>{
+    const oldKey=activeStore+"_caixa";
+    try{
+      const saved=JSON.parse(localStorage.getItem('dblack_cashState')||'{}');
+      if(saved[oldKey]&&saved[oldKey].open&&!saved[cashKey]?.open){
+        setCashState(prev=>{const n={...prev};n[cashKey]=saved[oldKey];delete n[oldKey];return n;});
+        console.log('[CAIXA] Migrado dados de',oldKey,'para',cashKey);
+      }
+    }catch{}
+  },[]);
+
   // saldoSistema = dinheiro esperado no caixa físico (inicial + vendas dinheiro + suprimentos - sangrias)
   const saldoSistema=storeCash.open?esperado["dinheiro"]:0;
 
