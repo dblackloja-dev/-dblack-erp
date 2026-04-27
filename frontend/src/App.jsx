@@ -1398,7 +1398,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     showToast("Venda "+fmt(cartTotal)+" finalizada!");
   };
 
-  const payMethods=["PIX","Dinheiro","Crédito","Débito"];
+  const payMethods=["PIX","PIX Chave","Dinheiro","Crédito","Débito"];
 
   return(
     <div>
@@ -3238,7 +3238,8 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   // Grupos de formas de pagamento para o fechamento
   const PAY_GROUPS=[
     {key:"dinheiro", label:"💵 Dinheiro",      color:C.grn,  match:m=>{const l=(m||"").toLowerCase();return l==="dinheiro"||l.startsWith("dinheiro:");}},
-    {key:"pix",      label:"📱 PIX",            color:C.blu,  match:m=>{const l=(m||"").toLowerCase();return l==="pix"||l.startsWith("pix:");}},
+    {key:"pix",      label:"📱 PIX",            color:C.blu,  match:m=>{const l=(m||"").toLowerCase();return l==="pix"&&l!=="pix chave";}},
+    {key:"pixchave", label:"🔑 PIX Chave",     color:"#00ACC1", match:m=>{const l=(m||"").toLowerCase();return l==="pix chave";}},
     {key:"credito",  label:"💳 Crédito",        color:C.pur,  match:m=>{const l=(m||"").toLowerCase();return l.startsWith("créd")||l.startsWith("cred");}},
     {key:"debito",   label:"💳 Débito",         color:C.gold, match:m=>{const l=(m||"").toLowerCase();return l.startsWith("déb")||l.startsWith("deb");}},
     {key:"outros",   label:"🏷️ Outros",         color:C.dim,  match:()=>false}, // catch-all
@@ -4766,9 +4767,9 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
 
           {!splitMode&&<>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:6,marginBottom:10}}>
-              {["PIX","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPayMethod(m)}
+              {["PIX","PIX Chave","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPayMethod(m)}
                 style={{padding:"8px 4px",borderRadius:8,border:`2px solid ${payMethod===m?C.org:C.brd}`,background:payMethod===m?"rgba(255,152,0,.15)":"transparent",color:payMethod===m?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>
-                {m==="PIX"?"📱":m==="Dinheiro"?"💵":m==="Crédito"?"💳":"💳"} {m}
+                {m==="PIX"?"📱":m==="PIX Chave"?"🔑":m==="Dinheiro"?"💵":"💳"} {m}
               </button>)}
             </div>
             {payMethod==="Dinheiro"&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
@@ -4784,7 +4785,7 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
             <div style={{background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,borderRadius:10,padding:12,marginBottom:8}}>
               <div style={{fontSize:10,fontWeight:700,color:C.dim,marginBottom:6}}>PAGAMENTO 1</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:4,marginBottom:8}}>
-                {["PIX","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPay1(p=>({...p,method:m}))}
+                {["PIX","PIX Chave","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPay1(p=>({...p,method:m}))}
                   style={{padding:"6px 2px",borderRadius:6,border:`2px solid ${pay1.method===m?C.org:C.brd}`,background:pay1.method===m?"rgba(255,152,0,.15)":"transparent",color:pay1.method===m?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
                   {m}
                 </button>)}
@@ -4800,7 +4801,7 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
             <div style={{background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,borderRadius:10,padding:12,marginBottom:8}}>
               <div style={{fontSize:10,fontWeight:700,color:C.dim,marginBottom:6}}>PAGAMENTO 2</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:4,marginBottom:8}}>
-                {["PIX","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPay2(p=>({...p,method:m}))}
+                {["PIX","PIX Chave","Dinheiro","Crédito","Débito"].map(m=><button key={m} onClick={()=>setPay2(p=>({...p,method:m}))}
                   style={{padding:"6px 2px",borderRadius:6,border:`2px solid ${pay2.method===m?C.org:C.brd}`,background:pay2.method===m?"rgba(255,152,0,.15)":"transparent",color:pay2.method===m?C.org:C.dim,fontWeight:700,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
                   {m}
                 </button>)}
@@ -5320,7 +5321,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   // Change payment modal
   const [payModal,setPayModal]=useState(null);
   const [editPayments,setEditPayments]=useState([]);
-  const payMethods=["PIX","Dinheiro","Crédito","Débito","Pix Parcelado","Crédito 2x","Crédito 3x"];
+  const payMethods=["PIX","PIX Chave","Dinheiro","Crédito","Débito","Pix Parcelado","Crédito 2x","Crédito 3x"];
 
   const allSales=storeSales||[];
   const filtered=allSales.filter(s=>{
@@ -5478,7 +5479,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
         <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:10}}>💳 VENDAS POR FORMA DE PAGAMENTO {isMultiDay?"("+fmtDate(dateFrom)+" a "+fmtDate(dateTo)+")":"— "+fmtDate(dateFrom)}</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
           {Object.entries(paymentSummary).sort((a,b)=>b[1].total-a[1].total).map(([method,data])=>{
-            const colors={"PIX":C.blu,"Dinheiro":C.grn,"Crédito":C.pur,"Débito":C.gold,"Pix Parcelado":"#00ACC1","Crédito 2x":"#AB47BC","Crédito 3x":"#7E57C2"};
+            const colors={"PIX":C.blu,"PIX Chave":"#00ACC1","Dinheiro":C.grn,"Crédito":C.pur,"Débito":C.gold,"Pix Parcelado":"#00897B","Crédito 2x":"#AB47BC","Crédito 3x":"#7E57C2"};
             const color=colors[method]||C.dim;
             const active=payFilter===method;
             return <div key={method} onClick={()=>setPayFilter(active?"":method)} style={{background:active?color+"22":color+"10",border:`2px solid ${active?color:color+"33"}`,borderRadius:10,padding:"10px 16px",minWidth:120,textAlign:"center",cursor:"pointer",transform:active?"scale(1.05)":"",transition:"all .15s"}}>
