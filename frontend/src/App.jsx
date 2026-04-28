@@ -792,7 +792,7 @@ export default function App() {
           {tab==="gestor" && <GestorPanel {...{sales,expenses,stock,catalog,customers,investments,cashState}} />}
 
           {/* PDV */}
-          {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale}} />}
+          {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees}} />}
 
           {/* PRODUTOS (Cadastro) */}
           {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded}} />}
@@ -1102,7 +1102,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 // ═══  PDV MODULE                 ═══
 // ═══════════════════════════════════
-function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale}){
+function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees}){
   // ── MULTI-TAB SALES ──
   const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
@@ -1360,6 +1360,10 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   // Quick single payment (covers total)
   const quickPay=(method)=>{
     if(cart.length===0)return;
+    if(method==="Desc. em Folha"){
+      setShowFolhaSelect(true);
+      return;
+    }
     if(method==="Dinheiro"){
       setCurrentMethod("Dinheiro");
       setCurrentValue(String(cartTotal));
@@ -1370,6 +1374,23 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     setShowPayPanel(true);
   };
 
+  // Confirma compra de colaborador (desconto em folha)
+  const confirmFolhaPay=(empId)=>{
+    const emp=(employees||[]).find(e=>e.id===empId);
+    if(!emp)return showToast("Selecione um colaborador!","error");
+    setFolhaEmpId(empId);
+    if(showPayPanel&&payments.length>0){
+      // Multi-payment: adiciona o restante como desc. em folha
+      const alreadyPaid=payments.reduce((s,p)=>s+p.value,0);
+      const rest=cartTotal-alreadyPaid;
+      if(rest>0) setPayments(prev=>[...prev,{method:"Desc. em Folha ("+emp.name+")",value:rest}]);
+    } else {
+      setPayments([{method:"Desc. em Folha ("+emp.name+")",value:cartTotal}]);
+    }
+    setShowPayPanel(true);
+    setShowFolhaSelect(false);
+  };
+
   const finalizeSale=()=>{
     if(cart.length===0)return showToast("Carrinho vazio!","error");
     if(!storeCash.open)return showToast("Abra o caixa!","error");
@@ -1377,9 +1398,9 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const cupomNum="CNF-"+String(Date.now()).slice(-6);
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
-    const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum};
+    const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:folhaEmpId||""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
-    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId }).catch(e=>{
+    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'' }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
       // O loadAllData vai detectar e reenviar na próxima sincronização
       console.warn('[VENDA] Erro ao enviar para servidor (será reenviada):', e.message);
@@ -1395,10 +1416,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
     }
     setShowDiscountPanel(false);
-    showToast("Venda "+fmt(cartTotal)+" finalizada!");
+    setFolhaEmpId("");
+    setShowFolhaSelect(false);
+    showToast(folhaEmpId?"Compra de colaborador registrada! "+fmt(cartTotal)+" será descontado na folha.":"Venda "+fmt(cartTotal)+" finalizada!");
   };
 
-  const payMethods=["PIX","PIX Chave","Dinheiro","Crédito","Débito"];
+  const payMethods=["PIX","PIX Chave","Dinheiro","Crédito","Débito","Desc. em Folha"];
+  const [folhaEmpId,setFolhaEmpId]=useState("");
+  const [showFolhaSelect,setShowFolhaSelect]=useState(false);
 
   return(
     <div>
@@ -1581,7 +1606,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
             {!isFullyPaid&&<div>
               <div style={{fontSize:11,color:C.txt,fontWeight:600,marginBottom:6}}>{payments.length===0?"💳 Forma de pagamento:":"➕ Segunda forma:"} <span style={{color:C.gold}}>falta {fmt(remaining)}</span></div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,marginBottom:6}}>
-                {payMethods.map(m=><button key={m} style={{...S.payBtn,...(currentMethod===m?S.payAct:{})}} onClick={()=>{setCurrentMethod(m);setCashReceived("");}}>{m}</button>)}
+                {payMethods.map(m=><button key={m} style={{...S.payBtn,...(currentMethod===m?S.payAct:{})}} onClick={()=>{if(m==="Desc. em Folha"){setShowFolhaSelect(true);return;}setCurrentMethod(m);setCashReceived("");}}>{m}</button>)}
               </div>
 
               {currentMethod==="Dinheiro"?(<div>
@@ -1635,6 +1660,25 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
           </div>}
         </div>
       </div>
+
+      {/* ═══ MODAL: Selecionar Colaborador (Desc. em Folha) ═══ */}
+      {showFolhaSelect&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowFolhaSelect(false)}>
+        <div style={{background:C.s2,borderRadius:16,padding:24,width:380,maxHeight:"70vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}} onClick={e=>e.stopPropagation()}>
+          <div style={{fontSize:16,fontWeight:800,color:C.gold,marginBottom:4}}>Compra de Colaborador</div>
+          <div style={{fontSize:11,color:C.dim,marginBottom:16}}>Selecione quem está comprando. O valor será descontado na folha de pagamento.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {(employees||[]).filter(e=>e.active).map(emp=><button key={emp.id} onClick={()=>confirmFolhaPay(emp.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"1px solid "+C.brd,background:C.s1,color:C.txt,cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"all .2s"}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.gold} onMouseLeave={e=>e.currentTarget.style.borderColor=C.brd}>
+              <div style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,"+C.gold+","+C.goldD+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:C.bg}}>{emp.name?.charAt(0)}</div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700}}>{emp.name}</div>
+                <div style={{fontSize:10,color:C.dim}}>{emp.role} • {STORES.find(s=>s.id===emp.storeId)?.name||emp.storeId}</div>
+              </div>
+            </button>)}
+          </div>
+          {(employees||[]).filter(e=>e.active).length===0&&<div style={{textAlign:"center",color:C.dim,padding:20,fontSize:12}}>Nenhum colaborador ativo cadastrado</div>}
+          <button style={{width:"100%",marginTop:12,padding:"8px",borderRadius:8,border:"1px solid "+C.brd,background:"transparent",color:C.dim,cursor:"pointer",fontSize:11,fontFamily:"inherit"}} onClick={()=>setShowFolhaSelect(false)}>Cancelar</button>
+        </div>
+      </div>}
 
       {/* ═══ CUPOM MODAL (Não Fiscal + Troca Presente) ═══ */}
       {receiptSale&&<ReceiptCupom sale={receiptSale} autoFlow={autoFlow} onClose={()=>{setReceiptSale(null);setAutoFlow(false);}} />}
@@ -3793,6 +3837,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
   const [selectedEmp,setSelectedEmp]=useState(null);
   const [filterStore,setFilterStore]=useState("");
   const [receiptData,setReceiptData]=useState(null); // payroll receipt to print
+  const [empPurchaseDetails,setEmpPurchaseDetails]=useState([]); // compras do colaborador no mês
 
   // New employee form
   const [ne,setNe]=useState({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});
@@ -3846,11 +3891,20 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
     showToast("Pagamento excluído!");
   };
 
-  // Select employee for payroll — calcula vales automaticamente
-  const selectEmpForPay=(emp)=>{
+  // Select employee for payroll — calcula vales e compras em loja automaticamente
+  const selectEmpForPay=async(emp)=>{
     const empAdvances=(advances||[]).filter(a=>(a.empId||a.emp_id)===emp.id&&(a.month||"")===pay.month);
     const totalAdvances=empAdvances.reduce((s,a)=>s+(+a.value||0),0);
-    setPay(p=>({...p,empId:emp.id,baseSalary:emp.salary,advances:totalAdvances||""}));
+    // Busca compras do colaborador no mês (desconto em folha)
+    let totalPurchases=0;
+    let purchaseDetails=[];
+    try{
+      const details=await api.getEmployeePurchaseDetails(emp.id,pay.month);
+      purchaseDetails=details||[];
+      totalPurchases=purchaseDetails.reduce((s,p)=>s+(+p.total||0),0);
+    }catch(e){console.warn("Erro ao buscar compras do colaborador:",e.message);}
+    setEmpPurchaseDetails(purchaseDetails);
+    setPay(p=>({...p,empId:emp.id,baseSalary:emp.salary,advances:totalAdvances||"",storeDiscount:totalPurchases||""}));
     setSelectedEmp(emp);
   };
 
@@ -3872,8 +3926,9 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
       paid:true,paidDate:new Date().toISOString().split("T")[0],notes:pay.notes
     };
     setPayrolls(prev=>[newPay,...prev]);
-    setReceiptData(newPay); // Open receipt
+    setReceiptData({...newPay,purchaseDetails:empPurchaseDetails}); // Open receipt com detalhes das compras
     setPay({month:pay.month,empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
+    setEmpPurchaseDetails([]);
     setSelectedEmp(null);setShowPayForm(false);
     showToast("Pagamento de "+fmt(payNet)+" processado para "+emp?.name+"!");
   };
@@ -4017,7 +4072,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
               <div>
                 <div style={{fontSize:13,fontWeight:800,color:C.red,marginBottom:12,letterSpacing:1}}>📉 DESCONTOS</div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Desconto em Loja (compras)</label><input style={{...S.inp,width:"100%"}} type="number" placeholder="0,00" value={pay.storeDiscount} onChange={e=>setPay(p=>({...p,storeDiscount:e.target.value}))}/></div>
+                  <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Desconto em Loja (compras)</label><input style={{...S.inp,width:"100%",borderColor:+pay.storeDiscount>0?C.gold+"66":C.brd}} type="number" placeholder="0,00" value={pay.storeDiscount} onChange={e=>setPay(p=>({...p,storeDiscount:e.target.value}))}/>{+pay.storeDiscount>0&&<div style={{fontSize:9,color:C.gold,marginTop:2}}>🛒 {empPurchaseDetails.length} compra{empPurchaseDetails.length!==1?"s":""} registrada{empPurchaseDetails.length!==1?"s":""} no mês</div>}</div>
                   <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Vale / Adiantamento {+pay.advances>0?"(do caixa)":""}</label><input style={{...S.inp,width:"100%",borderColor:+pay.advances>0?C.gold+"66":C.brd}} type="number" placeholder="0,00" value={pay.advances} onChange={e=>setPay(p=>({...p,advances:e.target.value}))}/>{+pay.advances>0&&<div style={{fontSize:9,color:C.gold,marginTop:2}}>🧾 Preenchido automaticamente com vales registrados no caixa</div>}</div>
                   <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Outros Descontos</label><input style={{...S.inp,width:"100%"}} type="number" placeholder="0,00" value={pay.otherDeductions} onChange={e=>setPay(p=>({...p,otherDeductions:e.target.value}))}/></div>
                 </div>
@@ -4189,6 +4244,27 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
                   {receiptData.advances>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Vale / Adiantamento</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.advances)}</span></div>}
                   {receiptData.otherDeductions>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid #eee"}}><span>Outros Descontos</span><span style={{fontWeight:700,color:"#C62828"}}>-{fmt(receiptData.otherDeductions)}</span></div>}
                   <div style={{display:"flex",justifyContent:"space-between",padding:"6px 8px",fontWeight:800,fontSize:12,background:"#fff5f5",borderRadius:3,marginTop:4}}><span>Total Descontos</span><span style={{color:"#C62828"}}>-{fmt(receiptData.totalDeductions)}</span></div>
+                </div>
+              </>}
+
+              {/* Compras em Loja (detalhes) */}
+              {receiptData.storeDiscount>0&&receiptData.purchaseDetails?.length>0&&<>
+                <div style={{fontSize:9,fontWeight:800,letterSpacing:2,padding:"6px 0",borderTop:"1.5px solid #000",borderBottom:"1px solid #ddd",marginTop:10,marginBottom:4}}>COMPRAS EM LOJA (DESCONTADAS EM FOLHA)</div>
+                <div style={{fontSize:10}}>
+                  {receiptData.purchaseDetails.map((purchase,pi)=>{
+                    const items=typeof purchase.items==="string"?JSON.parse(purchase.items):purchase.items;
+                    return <div key={pi} style={{marginBottom:6,padding:"6px 8px",background:pi%2===0?"#f9f9f9":"#fff",borderRadius:3}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                        <span style={{fontWeight:700,fontSize:9,color:"#666"}}>{fmtDate(purchase.date)} {purchase.cupom?("• "+purchase.cupom):""}</span>
+                        <span style={{fontWeight:800,color:"#C62828"}}>{fmt(purchase.total)}</span>
+                      </div>
+                      {items&&items.map((item,ii)=><div key={ii} style={{display:"flex",justifyContent:"space-between",paddingLeft:8,fontSize:9,color:"#555"}}>
+                        <span>{item.qty}x {item.name}</span>
+                        <span>{fmt(item.price*item.qty)}</span>
+                      </div>)}
+                    </div>;
+                  })}
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"6px 8px",fontWeight:800,fontSize:11,background:"#fff5f5",borderRadius:3,marginTop:4}}><span>Total Compras em Loja</span><span style={{color:"#C62828"}}>-{fmt(receiptData.storeDiscount)}</span></div>
                 </div>
               </>}
 

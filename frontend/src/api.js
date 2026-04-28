@@ -318,6 +318,8 @@ const api = {
   getSales: (storeId) => request(`/sales${storeId ? `?store_id=${storeId}` : ''}`),
   createSale: (data) => request('/sales', { method: 'POST', body: data }),
   updateSale: (id, data) => request(`/sales/${id}`, { method: 'PUT', body: data }),
+  getEmployeePurchases: (month) => request(`/sales/employee-purchases?month=${month}`),
+  getEmployeePurchaseDetails: (empId, month) => request(`/sales/employee-purchases/${empId}?month=${month}`),
 
   // Customers
   getCustomers: () => request('/customers'),

@@ -494,12 +494,12 @@ app.post('/api/sales', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
        s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
        JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
-       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '']
+       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null]
     );
 
     await client.query('COMMIT');
@@ -808,6 +808,40 @@ app.get('/api/advances/summary', async (req, res) => {
       [month]
     );
     res.json(summary);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Compras de colaboradores (desconto em folha) — soma por colaborador/mês
+app.get('/api/sales/employee-purchases', async (req, res) => {
+  try {
+    const month = req.query.month;
+    if (!month) return res.status(400).json({ error: 'Informe o mês (month=YYYY-MM)' });
+    const purchases = await queryAll(
+      `SELECT emp_id, SUM(total) as total, COUNT(*) as count
+       FROM sales
+       WHERE emp_id IS NOT NULL AND emp_id != '' AND status = 'Concluída'
+         AND to_char(created_at, 'YYYY-MM') = $1
+       GROUP BY emp_id`,
+      [month]
+    );
+    res.json(purchases);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Detalhes das compras de um colaborador específico
+app.get('/api/sales/employee-purchases/:empId', async (req, res) => {
+  try {
+    const month = req.query.month;
+    if (!month) return res.status(400).json({ error: 'Informe o mês (month=YYYY-MM)' });
+    const purchases = await queryAll(
+      `SELECT id, date, items, total, store_id, cupom, created_at
+       FROM sales
+       WHERE emp_id = $1 AND status = 'Concluída'
+         AND to_char(created_at, 'YYYY-MM') = $2
+       ORDER BY created_at DESC`,
+      [req.params.empId, month]
+    );
+    res.json(purchases);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -319,6 +319,8 @@ async function initDB() {
   await pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS close_report TEXT`).catch(()=>{});
   await pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{});
   await pool.query(`ALTER TABLE cash_state DROP CONSTRAINT IF EXISTS cash_state_store_id_key`).catch(()=>{});
+  // Compras de colaboradores (desconto em folha)
+  await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS emp_id TEXT`).catch(()=>{});
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_state_store_user ON cash_state(store_id, user_id)`).catch(()=>{});
 
   // ─── ÍNDICES para performance em multi-loja ───
@@ -338,6 +340,7 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_withdrawals_store ON cash_withdrawals(store_id)',
     'CREATE INDEX IF NOT EXISTS idx_advances_store ON cash_advances(store_id)',
     'CREATE INDEX IF NOT EXISTS idx_advances_emp ON cash_advances(emp_id, month)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_emp ON sales(emp_id)',
     'CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)',
     'CREATE INDEX IF NOT EXISTS idx_users_store ON users(store_id)',
     'CREATE INDEX IF NOT EXISTS idx_agent_logs_conv ON agent_logs(conversation_id, created_at)',
