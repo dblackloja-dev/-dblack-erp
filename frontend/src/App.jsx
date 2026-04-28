@@ -1378,6 +1378,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const confirmFolhaPay=(empId)=>{
     const emp=(employees||[]).find(e=>e.id===empId);
     if(!emp)return showToast("Selecione um colaborador!","error");
+    folhaEmpIdRef.current=empId;
     setFolhaEmpId(empId);
     if(showPayPanel&&payments.length>0){
       // Multi-payment: adiciona o restante como desc. em folha
@@ -1398,7 +1399,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const cupomNum="CNF-"+String(Date.now()).slice(-6);
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
-    const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:folhaEmpId||""};
+    const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
+    const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'' }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
@@ -1417,12 +1419,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     }
     setShowDiscountPanel(false);
     setFolhaEmpId("");
+    folhaEmpIdRef.current="";
     setShowFolhaSelect(false);
-    showToast(folhaEmpId?"Compra de colaborador registrada! "+fmt(cartTotal)+" será descontado na folha.":"Venda "+fmt(cartTotal)+" finalizada!");
+    showToast(empIdAtual?"Compra de colaborador registrada! "+fmt(cartTotal)+" será descontado na folha.":"Venda "+fmt(cartTotal)+" finalizada!");
   };
 
   const payMethods=["PIX","PIX Chave","Dinheiro","Crédito","Débito","Desc. em Folha"];
   const [folhaEmpId,setFolhaEmpId]=useState("");
+  const folhaEmpIdRef=useRef("");
   const [showFolhaSelect,setShowFolhaSelect]=useState(false);
 
   return(
