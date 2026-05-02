@@ -356,6 +356,13 @@ export default function App() {
     ]).then(([prods,stk]) => {
       updateCatalog(prods);
       if(stk&&Object.keys(stk).length) setStock(stk);
+    }).then(() => {
+      // FASE 1.5: Carrega fotos dos produtos em segundo plano (separado pra não pesar)
+      api.getProductPhotos().then(photoMap => {
+        if(photoMap && Object.keys(photoMap).length) {
+          setCatalog(prev => prev.map(p => photoMap[p.id] ? {...p, photo: photoMap[p.id]} : p));
+        }
+      }).catch(e => console.error('[LOAD] Erro ao carregar fotos:', e));
     }).catch(e => console.error('[LOAD] Erro fase 1:', e));
 
     // FASE 2: Todo o resto carrega em paralelo (não bloqueia produtos)

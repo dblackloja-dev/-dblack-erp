@@ -283,6 +283,7 @@ const api = {
 
   // Products
   getProducts: () => request('/products'),
+  getProductPhotos: () => request('/products/photos'),
   createProduct: (data) => request('/products', { method: 'POST', body: data }),
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PUT', body: data }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),

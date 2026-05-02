@@ -283,6 +283,16 @@ app.delete('/api/products/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Retorna todas as fotos dos produtos (só id + photo) para carregamento em lote
+app.get('/api/products/photos', async (req, res) => {
+  try {
+    const rows = await queryAll("SELECT id, photo FROM products WHERE photo IS NOT NULL AND photo != ''");
+    const map = {};
+    rows.forEach(r => { map[r.id] = r.photo; });
+    res.json(map);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Busca foto de um produto específico
 app.get('/api/products/:id/photo', async (req, res) => {
   try {
