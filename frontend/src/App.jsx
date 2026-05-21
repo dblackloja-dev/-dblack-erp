@@ -304,6 +304,25 @@ export default function App() {
   const [advances, setAdvances] = useState(() => ls('advances', []));
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
 
+  // ─── LAZY LOADING DE FOTOS (carrega sob demanda) ───
+  const loadedPhotosRef = useRef(new Set());
+  const loadPhotosForProducts = useCallback((productIds) => {
+    if (!navigator.onLine) return;
+    const missing = productIds.filter(id => !loadedPhotosRef.current.has(id));
+    if (!missing.length) return;
+    missing.forEach(id => loadedPhotosRef.current.add(id));
+    // Carrega em lotes de 50
+    for (let i = 0; i < missing.length; i += 50) {
+      const batch = missing.slice(i, i + 50);
+      api.getProductPhotos(batch).then(photoMap => {
+        if (photoMap && Object.keys(photoMap).length) {
+          Object.keys(photoMap).forEach(k => { if (typeof photoMap[k] === 'string') photoMap[k] = photoMap[k].replace(/^http:\/\//, 'https://'); });
+          setCatalog(prev => prev.map(p => photoMap[p.id] ? { ...p, photo: photoMap[p.id] } : p));
+        }
+      }).catch(() => {});
+    }
+  }, []);
+
   // ─── AUTO-SAVE no localStorage ───
   useEffect(() => { try { localStorage.setItem('dblack_tab', tab); } catch {} }, [tab]);
   useEffect(() => { lsSave('users', users); }, [users]);
@@ -356,13 +375,6 @@ export default function App() {
     ]).then(([prods,stk]) => {
       updateCatalog(prods);
       if(stk&&Object.keys(stk).length) setStock(stk);
-    }).then(() => {
-      // FASE 1.5: Carrega fotos dos produtos em segundo plano (separado pra não pesar)
-      api.getProductPhotos().then(photoMap => {
-        if(photoMap && Object.keys(photoMap).length) {
-          setCatalog(prev => prev.map(p => photoMap[p.id] ? {...p, photo: photoMap[p.id]} : p));
-        }
-      }).catch(e => console.error('[LOAD] Erro ao carregar fotos:', e));
     }).catch(e => console.error('[LOAD] Erro fase 1:', e));
 
     // FASE 2: Todo o resto carrega em paralelo (não bloqueia produtos)
@@ -402,7 +414,29 @@ export default function App() {
       if(custs?.length) setCustomers(custs.map(custFromApi));
       setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
       if(emps?.length) setEmployees(emps.map(empFromApi));
-      if(pays?.length) setPayrolls(pays.map(payrollFromApi));
+      // Sync payrolls: envia pagamentos locais que não existem no servidor
+      {
+        const apiPays=(pays||[]).map(payrollFromApi);
+        const localPays=ls('payrolls',[]);
+        const apiPayIds=new Set((pays||[]).map(p=>p.id));
+        let syncedPays=0;
+        localPays.forEach(lp=>{
+          if(lp.id&&!apiPayIds.has(lp.id)){
+            api.createPayroll({
+              month:lp.month,emp_id:lp.empId,emp_name:lp.empName,emp_cpf:lp.empCpf||'',emp_role:lp.empRole||'',emp_pix:lp.empPix||'',
+              store_id:lp.storeId,store_name:lp.storeName||'',
+              base_salary:lp.baseSalary||0,meta_bonus:lp.metaBonus||0,awards:lp.awards||0,overtime:lp.overtime||0,
+              store_discount:lp.storeDiscount||0,advances:lp.advances||0,other_deductions:lp.otherDeductions||0,
+              total_earnings:lp.totalEarnings||0,total_deductions:lp.totalDeductions||0,net_pay:lp.netPay||0,
+              paid:lp.paid||false,paid_date:lp.paidDate||null,notes:lp.notes||''
+            }).catch(console.error);
+            apiPays.unshift(lp);
+            syncedPays++;
+          }
+        });
+        if(syncedPays>0) console.log('[SYNC] '+syncedPays+' pagamentos locais enviados ao servidor');
+        if(apiPays.length) setPayrolls(apiPays);
+      }
       if(sels?.length) setSellers(sels.map(sellerFromApi));
       if(exchs?.length){
         const apiExchs=exchFromApi(exchs);
@@ -799,10 +833,10 @@ export default function App() {
           {tab==="gestor" && <GestorPanel {...{sales,expenses,stock,catalog,customers,investments,cashState}} />}
 
           {/* PDV */}
-          {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees}} />}
+          {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts}} />}
 
           {/* PRODUTOS (Cadastro) */}
-          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded}} />}
+          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts}} />}
 
           {/* ESTOQUE */}
           {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores}} />}
@@ -1109,7 +1143,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 // ═══  PDV MODULE                 ═══
 // ═══════════════════════════════════
-function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees}){
+function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts}){
   // ── MULTI-TAB SALES ──
   const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
@@ -1283,6 +1317,10 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   });
 
   const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase()));
+  useEffect(() => {
+    const needPhoto = filtered.filter(p => !p.photo).map(p => p.id);
+    if (needPhoto.length && loadPhotosForProducts) loadPhotosForProducts(needPhoto);
+  }, [filtered.map(p=>p.id).join(',')]);
   const cartSub=cart.reduce((s,i)=>s+i.price*i.qty,0);
 
   // Discount calculation
@@ -2269,7 +2307,7 @@ function ReceiptComprovante({data,onClose}){
 // ═══════════════════════════════════
 // ═══  PRODUTOS MODULE (Cadastro) ═══
 // ═══════════════════════════════════
-function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded}){
+function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts}){
   const [search,setSearch]=useState("");
   const [filterCat,setFilterCat]=useState("");
   const [showForm,setShowForm]=useState(false);
@@ -2318,6 +2356,11 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
     return matchSearch&&matchCat;
   });
   const visible=filtered.slice(0,visibleCount);
+  useEffect(() => {
+    const needPhoto = visible.filter(p => !p.photo).map(p => p.id);
+    if (needPhoto.length && loadPhotosForProducts) loadPhotosForProducts(needPhoto);
+  }, [visible.map(p=>p.id).join(',')]);
+
   const hasMore=filtered.length>visibleCount;
 
   // Save product (add or edit)
@@ -3139,6 +3182,7 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
       // Se for despesa de caixa, registra como sangria automática
       if(expType==="caixa"){
         const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+        api.cashAction(activeStore,{action:"movement",type:"saida",value:+nd.value,description:"Despesa: "+nd.description,user_id:loggedUser?.id||"main"}).catch(console.error);
         setCashState(prev=>{
           const n={...prev};
           const cs=n[cashKey]||{open:false,initial:0,history:[]};
@@ -3161,7 +3205,20 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
 
   const deleteExp=(id)=>{
     if(!confirm("Excluir esta despesa?"))return;
+    const exp=(storeExpenses||[]).find(e=>e.id===id);
     setExpenses(prev=>{const n={...prev};n[activeStore]=(n[activeStore]||[]).filter(e=>e.id!==id);return n;});
+    // Se for despesa de caixa, reverte o movimento local do caixa
+    if(exp&&(exp.expense_type||exp.expenseType)==="caixa"){
+      const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+      setCashState(prev=>{
+        const n={...prev};
+        const cs=n[cashKey]||{open:false,initial:0,history:[]};
+        if(cs.open){
+          n[cashKey]={...cs,history:cs.history.filter(h=>!(h.type==="saida"&&h.desc===("Despesa: "+exp.description)&&h.value===+exp.value))};
+        }
+        return n;
+      });
+    }
     api.deleteExpense(id).catch(console.error);
     showToast("Despesa excluída!");
   };
@@ -3902,6 +3959,33 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
     showToast("Pagamento excluído!");
   };
 
+  const shareReceiptWhatsApp=(p)=>{
+    const store=STORES.find(s=>s.id===p.storeId);
+    let txt=`📋 *RECIBO DE PAGAMENTO*\n`;
+    txt+=`*D'BLACK${store?" — "+store.name:""}*\n\n`;
+    txt+=`👤 *Colaborador:* ${p.empName}\n`;
+    txt+=`📅 *Mês Referência:* ${p.month}\n`;
+    if(p.paidDate)txt+=`💰 *Data Pagamento:* ${fmtDate(p.paidDate)}\n`;
+    txt+=`\n━━━ *PROVENTOS* ━━━\n`;
+    txt+=`• Salário Base: ${fmt(p.baseSalary)}\n`;
+    if(p.metaBonus>0)txt+=`• Bônus Meta: +${fmt(p.metaBonus)}\n`;
+    if(p.awards>0)txt+=`• Premiações: +${fmt(p.awards)}\n`;
+    if(p.overtime>0)txt+=`• Horas Extras: +${fmt(p.overtime)}\n`;
+    txt+=`*Total Proventos: ${fmt(p.totalEarnings||p.baseSalary+(p.metaBonus||0)+(p.awards||0)+(p.overtime||0))}*\n`;
+    if((p.storeDiscount||0)+(p.advances||0)+(p.otherDeductions||0)>0){
+      txt+=`\n━━━ *DESCONTOS* ━━━\n`;
+      if(p.storeDiscount>0)txt+=`• Desconto em Loja: -${fmt(p.storeDiscount)}\n`;
+      if(p.advances>0)txt+=`• Vales/Adiantamento: -${fmt(p.advances)}\n`;
+      if(p.otherDeductions>0)txt+=`• Outros Descontos: -${fmt(p.otherDeductions)}\n`;
+      txt+=`*Total Descontos: -${fmt(p.totalDeductions||(p.storeDiscount||0)+(p.advances||0)+(p.otherDeductions||0))}*\n`;
+    }
+    txt+=`\n💵 *VALOR LÍQUIDO: ${fmt(p.netPay)}*\n`;
+    if(p.empPix)txt+=`\n🔑 PIX: ${p.empPix}\n`;
+    if(p.notes)txt+=`\n📝 Obs: ${p.notes}\n`;
+    txt+=`\n_Recibo gerado pelo sistema D'Black ERP_`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`,"_blank");
+  };
+
   // Select employee for payroll — calcula vales e compras em loja automaticamente
   const selectEmpForPay=async(emp)=>{
     const empAdvances=(advances||[]).filter(a=>(a.empId||a.emp_id)===emp.id&&(a.month||"")===pay.month);
@@ -3937,6 +4021,14 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
       paid:true,paidDate:new Date().toISOString().split("T")[0],notes:pay.notes
     };
     setPayrolls(prev=>[newPay,...prev]);
+    api.createPayroll({
+      month:newPay.month,emp_id:newPay.empId,emp_name:newPay.empName,emp_cpf:newPay.empCpf,emp_role:newPay.empRole,emp_pix:newPay.empPix,
+      store_id:newPay.storeId,store_name:newPay.storeName,
+      base_salary:newPay.baseSalary,meta_bonus:newPay.metaBonus,awards:newPay.awards,overtime:newPay.overtime,
+      store_discount:newPay.storeDiscount,advances:newPay.advances,other_deductions:newPay.otherDeductions,
+      total_earnings:newPay.totalEarnings,total_deductions:newPay.totalDeductions,net_pay:newPay.netPay,
+      paid:newPay.paid,paid_date:newPay.paidDate,notes:newPay.notes
+    }).catch(e=>console.error('[PAYROLL] Erro ao salvar:',e.message));
     setReceiptData({...newPay,purchaseDetails:empPurchaseDetails}); // Open receipt com detalhes das compras
     setPay({month:pay.month,empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
     setEmpPurchaseDetails([]);
@@ -4162,7 +4254,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
               <td style={{...S.td,color:p.otherDeductions>0?C.red:C.dim}}>{p.otherDeductions>0?"-"+fmt(p.otherDeductions):"-"}</td>
               <td style={{...S.td,fontWeight:800,color:C.gold,fontSize:14}}>{fmt(p.netPay)}</td>
               <td style={{...S.td,fontSize:10,color:C.dim,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}}>{p.notes||"-"}</td>
-              <td style={S.td}><button style={{...S.smBtn,color:C.red}} onClick={()=>deletePayroll(p.id)}>🗑️</button></td>
+              <td style={{...S.td,display:"flex",gap:4}}><button style={{...S.smBtn,color:"#25D366"}} title="Compartilhar recibo via WhatsApp" onClick={()=>shareReceiptWhatsApp(p)}>📱</button><button style={{...S.smBtn,color:C.red}} onClick={()=>deletePayroll(p.id)}>🗑️</button></td>
             </tr>;
           })}</tbody></table></div>
         </div>
@@ -4175,6 +4267,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
           {/* Action buttons (topo) */}
           <div style={{display:"flex",gap:8,padding:"16px 28px",borderBottom:"1px solid #eee",background:"#f5f5f5",borderRadius:"8px 8px 0 0"}}>
             <button onClick={()=>setReceiptData(null)} style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid #ddd",background:"#fff",color:"#666",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
+            <button onClick={()=>shareReceiptWhatsApp(receiptData)} style={{flex:1.5,padding:"10px",borderRadius:8,border:"none",background:"#25D366",color:"#fff",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",letterSpacing:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>📱 WHATSAPP</button>
             <button onClick={()=>{
               const printW=window.open("","_blank","width=800,height=1100");
               const content=document.getElementById("receipt-pdf-content").innerHTML;
@@ -4587,12 +4680,12 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
       if(splitMode&&paymentsArr){
         paymentsArr.forEach(p=>{
           if(p.value>0){
-            api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Diferença troca ("+p.method+") - "+foundSale.cupom,user_id:loggedUser?.id||"main"}).catch(console.error);
+            api.cashAction(activeStore,{action:"movement",type:"entrada",value:p.value,description:"Troca ("+p.method+") "+foundSale.cupom,user_id:loggedUser?.id||"main"}).catch(console.error);
             setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:p.value,desc:"Troca ("+p.method+") "+foundSale.cupom,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
           }
         });
       } else {
-        api.cashAction(activeStore,{action:"movement",type:"entrada",value:diff,description:"Diferença troca ("+paymentField+") - "+foundSale.cupom,user_id:loggedUser?.id||"main"}).catch(console.error);
+        api.cashAction(activeStore,{action:"movement",type:"entrada",value:diff,description:"Troca ("+paymentField+") "+foundSale.cupom,user_id:loggedUser?.id||"main"}).catch(console.error);
         setCashState(prev=>{const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};if(cs.open){n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:diff,desc:"Troca ("+paymentField+") "+foundSale.cupom,time:new Date().toLocaleTimeString("pt-BR")}]};}return n;});
       }
     }
@@ -5475,7 +5568,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
       }
       // Venda cancelada simplesmente para de ser contabilizada no caixa (filtro status !== "Cancelada")
       // Não precisa registrar saída — o valor deixa de existir nos cálculos automaticamente
-      api.updateSale&&api.updateSale(cancelModal.id,{status:"Cancelada",canceledBy:auth.name,canceledAt}).catch(()=>{});
+      api.updateSale&&api.updateSale(cancelModal.id,{status:"Cancelada",canceled_by:auth.name,canceled_at:canceledAt}).catch(()=>{});
       setCancelModal(null);setAuthPass("");setAuthError("");
       showToast("Venda "+cancelModal.cupom+" cancelada por "+auth.name);
     }catch(e){setAuthError("Erro ao verificar senha. Tente novamente.");}
@@ -5491,13 +5584,15 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const salvarPagamento=()=>{
     const totalPago=editPayments.reduce((s,p)=>s+(+p.value||0),0);
     if(Math.abs(totalPago-payModal.total)>0.01){showToast("Total dos pagamentos ("+fmt(totalPago)+") deve ser igual ao total da venda ("+fmt(payModal.total)+")","error");return;}
+    const newPaymentDesc=editPayments.map(p=>p.method+": "+fmt(+p.value)).join(" + ");
     setSales(prev=>{
       const n={...prev};
       n[activeStore]=(n[activeStore]||[]).map(s=>
-        s.id===payModal.id?{...s,payments:editPayments,payment:editPayments.map(p=>p.method+": "+fmt(+p.value)).join(" + ")}:s
+        s.id===payModal.id?{...s,payments:editPayments,payment:newPaymentDesc}:s
       );
       return n;
     });
+    api.updateSale&&api.updateSale(payModal.id,{status:payModal.status,payment:newPaymentDesc,payments:editPayments}).catch(console.error);
     setPayModal(null);
     showToast("Forma de pagamento atualizada!");
   };

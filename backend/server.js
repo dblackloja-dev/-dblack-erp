@@ -224,9 +224,10 @@ app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/products', async (req, res) => {
   try {
-    // Não retorna o campo photo na listagem (fotos base64 pesam 161MB!)
-    // Foto só é carregada individualmente quando necessário
-    const products = await queryAll('SELECT id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img, variations, active, created_at, updated_at FROM products ORDER BY created_at DESC');
+    // Retorna photo apenas quando é URL (leve). Base64 pesados são carregados individualmente via /products/:id/photo
+    const products = await queryAll(`SELECT id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img,
+      CASE WHEN photo LIKE '/uploads/%' OR photo LIKE 'http%' THEN photo ELSE NULL END as photo,
+      variations, active, created_at, updated_at FROM products ORDER BY created_at DESC`);
     products.forEach(p => {
       try { p.variations = JSON.parse(p.variations || '[]'); } catch { p.variations = []; }
     });
@@ -283,10 +284,14 @@ app.delete('/api/products/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Retorna todas as fotos dos produtos (só id + photo) para carregamento em lote
+// Retorna fotos de produtos específicos (por IDs via query string)
 app.get('/api/products/photos', async (req, res) => {
   try {
-    const rows = await queryAll("SELECT id, photo FROM products WHERE photo IS NOT NULL AND photo != ''");
+    const { ids } = req.query;
+    if (!ids) return res.json({});
+    const idList = ids.split(',').slice(0, 50); // máximo 50 por vez
+    const placeholders = idList.map((_, i) => `$${i + 1}`).join(',');
+    const rows = await queryAll(`SELECT id, photo FROM products WHERE id IN (${placeholders}) AND photo IS NOT NULL AND photo != ''`, idList);
     const map = {};
     rows.forEach(r => { map[r.id] = r.photo; });
     res.json(map);
@@ -642,7 +647,16 @@ app.put('/api/expenses/:id', async (req, res) => {
 
 app.delete('/api/expenses/:id', async (req, res) => {
   try {
+    // Busca a despesa para verificar se é do tipo caixa e remover o movimento correspondente
+    const exp = await queryOne('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
     await queryRun('DELETE FROM expenses WHERE id = $1', [req.params.id]);
+    // Se for despesa de caixa, remove o movimento de saída correspondente
+    if (exp && exp.expense_type === 'caixa') {
+      await queryRun(
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = CURRENT_DATE",
+        [exp.store_id, exp.value, `Despesa: ${exp.description}%`]
+      );
+    }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -757,7 +771,16 @@ app.post('/api/withdrawals', async (req, res) => {
 
 app.delete('/api/withdrawals/:id', async (req, res) => {
   try {
+    // Busca a retirada para saber store_id e valor antes de deletar
+    const w = await queryOne('SELECT * FROM cash_withdrawals WHERE id = $1', [req.params.id]);
     await queryRun('DELETE FROM cash_withdrawals WHERE id = $1', [req.params.id]);
+    // Remove o movimento de caixa correspondente (pela descrição)
+    if (w) {
+      await queryRun(
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = CURRENT_DATE",
+        [w.store_id, w.value, `Retirada: ${w.description || 'Sem descrição'}%`]
+      );
+    }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -803,7 +826,16 @@ app.post('/api/advances', async (req, res) => {
 
 app.delete('/api/advances/:id', async (req, res) => {
   try {
+    // Busca o vale para saber store_id e valor antes de deletar
+    const a = await queryOne('SELECT * FROM cash_advances WHERE id = $1', [req.params.id]);
     await queryRun('DELETE FROM cash_advances WHERE id = $1', [req.params.id]);
+    // Remove o movimento de caixa correspondente (pela descrição)
+    if (a) {
+      await queryRun(
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = CURRENT_DATE",
+        [a.store_id, a.value, `Vale: ${a.emp_name}%`]
+      );
+    }
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1039,11 +1071,43 @@ app.post('/api/exchanges', async (req, res) => {
 });
 
 app.put('/api/exchanges/:id/cancel', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { id } = req.params;
-    await queryRun('UPDATE exchanges SET status = $1 WHERE id = $2', ['Cancelada', id]);
+    await client.query('BEGIN');
+
+    // Busca a troca para reverter estoque
+    const exResult = await client.query('SELECT * FROM exchanges WHERE id = $1', [id]);
+    const ex = exResult.rows[0];
+    if (!ex) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Troca não encontrada' }); }
+
+    const storeResult = await client.query('SELECT stock_id FROM stores WHERE id = $1', [ex.store_id]);
+    const stockId = storeResult.rows[0]?.stock_id || ex.store_id;
+
+    // Reverte estoque: itens devolvidos saem de volta, novos itens voltam ao estoque
+    const items = typeof ex.items === 'string' ? JSON.parse(ex.items) : (ex.items || []);
+    const newItems = typeof ex.new_items === 'string' ? JSON.parse(ex.new_items) : (ex.new_items || []);
+
+    for (const item of items) {
+      await client.query('UPDATE stock SET quantity = GREATEST(0, quantity - $1) WHERE stock_id = $2 AND product_id = $3', [item.qty || 1, stockId, item.id]);
+      await client.query('INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [genId(), stockId, item.id, 'cancelamento_troca', item.qty || 1, `Cancelamento troca ${id} - devolvido ao cliente`, '']);
+    }
+    for (const item of newItems) {
+      await client.query('UPDATE stock SET quantity = quantity + $1 WHERE stock_id = $2 AND product_id = $3', [item.qty || 1, stockId, item.id]);
+      await client.query('INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [genId(), stockId, item.id, 'cancelamento_troca', item.qty || 1, `Cancelamento troca ${id} - retornado ao estoque`, '']);
+    }
+
+    await client.query('UPDATE exchanges SET status = $1 WHERE id = $2', ['Cancelada', id]);
+    await client.query('COMMIT');
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ═══════════════════════════════════════════
