@@ -1099,9 +1099,24 @@ app.put('/api/exchanges/:id/cancel', async (req, res) => {
         [genId(), stockId, item.id, 'cancelamento_troca', item.qty || 1, `Cancelamento troca ${id} - retornado ao estoque`, '']);
     }
 
+    // Estorna movimentação do caixa se houve diferença paga
+    const diff = parseFloat(ex.difference) || 0;
+    if (diff !== 0) {
+      const userId = req.body.user_id || req.user?.id || 'main';
+      const cupomRef = ex.cupom_original || '';
+      // Se diff > 0, cliente pagou a mais na troca → estornar como saída
+      // Se diff < 0, loja devolveu dinheiro → estornar como entrada
+      const type = diff > 0 ? 'saida' : 'entrada';
+      const value = Math.abs(diff);
+      await client.query(
+        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
+        [genId(), ex.store_id, userId, type, value, `Estorno troca cancelada - ${cupomRef}`]
+      );
+    }
+
     await client.query('UPDATE exchanges SET status = $1 WHERE id = $2', ['Cancelada', id]);
     await client.query('COMMIT');
-    res.json({ success: true });
+    res.json({ success: true, difference_reversed: diff });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: e.message });
