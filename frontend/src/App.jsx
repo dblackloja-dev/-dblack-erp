@@ -311,16 +311,15 @@ export default function App() {
     const missing = productIds.filter(id => !loadedPhotosRef.current.has(id));
     if (!missing.length) return;
     missing.forEach(id => loadedPhotosRef.current.add(id));
-    // Carrega em lotes de 50
-    for (let i = 0; i < missing.length; i += 50) {
-      const batch = missing.slice(i, i + 50);
-      api.getProductPhotos(batch).then(photoMap => {
-        if (photoMap && Object.keys(photoMap).length) {
-          Object.keys(photoMap).forEach(k => { if (typeof photoMap[k] === 'string') photoMap[k] = photoMap[k].replace(/^http:\/\//, 'https://'); });
-          setCatalog(prev => prev.map(p => photoMap[p.id] ? { ...p, photo: photoMap[p.id] } : p));
+    // Carrega individualmente (fotos base64 são pesadas)
+    missing.forEach(id => {
+      api.getProductPhoto(id).then(res => {
+        if (res?.photo) {
+          const photo = typeof res.photo === 'string' ? res.photo.replace(/^http:\/\//, 'https://') : res.photo;
+          setCatalog(prev => prev.map(p => p.id === id ? { ...p, photo } : p));
         }
       }).catch(() => {});
-    }
+    });
   }, []);
 
   // ─── AUTO-SAVE no localStorage ───

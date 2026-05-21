@@ -284,6 +284,7 @@ const api = {
   // Products
   getProducts: () => request('/products'),
   getProductPhotos: (ids) => ids?.length ? request(`/products/photos?ids=${ids.join(',')}`): Promise.resolve({}),
+  getProductPhoto: (id) => request(`/products/${id}/photo`),
   createProduct: (data) => request('/products', { method: 'POST', body: data }),
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PUT', body: data }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
