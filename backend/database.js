@@ -1,6 +1,10 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
+
+// PostgreSQL retorna NUMERIC como string por padrão — converter para número
+// OID 1700 = NUMERIC/DECIMAL
+types.setTypeParser(1700, (val) => parseFloat(val));
 
 // Conecta ao PostgreSQL via variável de ambiente (Neon, Supabase, Railway, etc.)
 const connString = process.env.NEON_URL || process.env.DB_URL || process.env.DATABASE_URL;
