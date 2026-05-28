@@ -84,8 +84,11 @@ const upload = multer({
 
 // Helpers
 const genId = () => uuidv4().split('-')[0] + Date.now().toString(36).slice(-4);
-const today = () => new Date().toISOString().split('T')[0];
+// Data local Brasil (UTC-3) no formato YYYY-MM-DD — evita bug de fuso com toISOString (UTC)
+const today = () => { const d = new Date(Date.now() - 3 * 60 * 60 * 1000); return d.toISOString().split('T')[0]; };
 const now = () => new Date().toISOString();
+// CURRENT_DATE do PostgreSQL usa timezone do servidor (UTC). Usar timezone Brasil nos queries.
+const CURRENT_DATE_BR = "(NOW() AT TIME ZONE 'America/Sao_Paulo')::date";
 
 // ═══════════════════════════════════════════
 // ═══  STORES                             ═══
@@ -653,7 +656,7 @@ app.delete('/api/expenses/:id', async (req, res) => {
     // Se for despesa de caixa, remove o movimento de saída correspondente
     if (exp && exp.expense_type === 'caixa') {
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = CURRENT_DATE",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
         [exp.store_id, exp.value, `Despesa: ${exp.description}%`]
       );
     }
@@ -692,7 +695,7 @@ app.get('/api/cash/:storeId', async (req, res) => {
     const state = await queryOne('SELECT * FROM cash_state WHERE store_id = $1 AND user_id = $2', [req.params.storeId, userId]);
     // Movimentações de hoje deste operador
     const movements = await queryAll(
-      "SELECT * FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at::date = CURRENT_DATE ORDER BY created_at ASC",
+      "SELECT * FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY created_at ASC",
       [req.params.storeId, userId]
     );
     res.json({
@@ -718,7 +721,7 @@ app.post('/api/cash/:storeId', async (req, res) => {
       `, [storeId, userId, value || 0]);
       // Limpa movimentações antigas deste operador (novo dia)
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at::date < CURRENT_DATE",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at::date < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
         [storeId, userId]
       );
     } else if (action === 'close') {
@@ -777,7 +780,7 @@ app.delete('/api/withdrawals/:id', async (req, res) => {
     // Remove o movimento de caixa correspondente (pela descrição)
     if (w) {
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = CURRENT_DATE",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
         [w.store_id, w.value, `Retirada: ${w.description || 'Sem descrição'}%`]
       );
     }
@@ -832,7 +835,7 @@ app.delete('/api/advances/:id', async (req, res) => {
     // Remove o movimento de caixa correspondente (pela descrição)
     if (a) {
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = CURRENT_DATE",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
         [a.store_id, a.value, `Vale: ${a.emp_name}%`]
       );
     }

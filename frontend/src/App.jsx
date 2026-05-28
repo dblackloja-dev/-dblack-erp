@@ -6,6 +6,8 @@ const fmt = (v) => (parseFloat(v)||0).toLocaleString("pt-BR", { style: "currency
 const fmtDate = (d) => { try { return new Date(d + "T12:00:00").toLocaleDateString("pt-BR"); } catch { return d; } };
 const pct = (v) => (parseFloat(v)||0).toFixed(1)+"%";
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+// Data local (Brasil) no formato YYYY-MM-DD — evita bug de fuso horário com toISOString (que usa UTC)
+const localDateStr = (d) => { const dt = d || new Date(); return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`; };
 
 // ─── IMPRESSÃO SILENCIOSA (QZ Tray) ───
 // Armazena o nome da impressora configurada pelo usuário
@@ -93,7 +95,7 @@ const lsSave = (key, val) => {
     if (key === 'sales' && val && typeof val === 'object') {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - 7);
-      const cutoffStr = cutoff.toISOString().split('T')[0];
+      const cutoffStr = localDateStr(cutoff);
       const trimmed = {};
       Object.keys(val).forEach(store => {
         trimmed[store] = (val[store] || []).filter(s => s.date >= cutoffStr);
@@ -745,7 +747,7 @@ export default function App() {
   const isSharedStock = sharedStockStores.length > 1;
 
   const storeProducts = catalog.map(p => ({...p, stock: storeStock[p.id] || 0}));
-  const _todayStr = new Date().toISOString().split("T")[0];
+  const _todayStr = localDateStr();
   const todaySales = storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada");
   const todayRev = todaySales.reduce((s,v) => s + v.total, 0);
   const totalRev = storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0);
@@ -1048,7 +1050,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
     const ss = sales[store.id] || [];
     const exps = expenses[store.id] || [];
     const st = stock[store.stockId] || {};
-    const _today = new Date().toISOString().split("T")[0];
+    const _today = localDateStr();
     const rev = ss.filter(s=>s.status!=="Cancelada").reduce((s,v) => s + v.total, 0);
     const expCaixa = exps.filter(e=>(e.expense_type||e.expenseType)==="caixa").reduce((s,e) => s + (+e.value||0), 0);
     const expOp = exps.filter(e=>(e.expense_type||e.expenseType)!=="caixa").reduce((s,e) => s + (+e.value||0), 0);
@@ -1444,7 +1446,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const newSale={id:genId(),date:new Date().toISOString().split("T")[0],customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual};
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'' }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
@@ -2740,7 +2742,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     const type=activeTab==="saida"?"saida":"entrada";
     const prod=catalog.find(p=>p.id===movProduct);
     adjustStock(movProduct, type==="entrada"?qty:-qty, activeStockId, {type,reason:movReason||"-"});
-    const mov={id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
+    const mov={id:genId(),date:localDateStr(),time:new Date().toLocaleTimeString("pt-BR"),type,productId:movProduct,productName:prod?.name||"",qty,reason:movReason||"-",store:currentStore.name};
     setMovHistory(prev=>[mov,...prev]);
     showToast((type==="entrada"?"Entrada":"Saída")+" de "+qty+" un. registrada!");
     setMovProduct("");setMovQty("");setMovReason("");
@@ -2755,7 +2757,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     if(!transClientName)return showToast("Informe o nome do cliente!","error");
     if(!transClientPhone)return showToast("Informe o telefone do cliente!","error");
     const destStore=STORES.find(s=>s.id===transTo);
-    const today=new Date().toISOString().split("T")[0];
+    const today=localDateStr();
     const time=new Date().toLocaleTimeString("pt-BR");
 
     transItems.forEach(item=>{
@@ -2791,7 +2793,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     const diffs=countData.filter(c=>c.countedQty!==c.systemQty);
     if(diffs.length===0){showToast("Estoque confere! Sem divergências.");setCountData(null);setCountDone(true);return;}
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};diffs.forEach(d=>{st[d.productId]=d.countedQty;});n[activeStockId]=st;return n;});
-    const today=new Date().toISOString().split("T")[0];
+    const today=localDateStr();
     diffs.forEach(d=>{
       const diff=d.countedQty-d.systemQty;
       const adjustType=diff>0?"ajuste_entrada":"ajuste_saida";
@@ -2847,7 +2849,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           <td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>
           <td style={S.td}><span style={{...S.stBadge,...(p.stock<=p.minStock?S.stLow:S.stOk)}}>{p.stock}</span></td>
           <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(p.cost*p.stock)}</td>
-          <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1,activeStockId,{type:"saida",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1,activeStockId,{type:"entrada",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:new Date().toISOString().split("T")[0],time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
+          <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1,activeStockId,{type:"saida",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:localDateStr(),time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1,activeStockId,{type:"entrada",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:localDateStr(),time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
         </tr>)}</tbody></table></div>
       </div>}
 
@@ -3152,7 +3154,7 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
   const [editId,setEditId]=useState(null);
   const [showCatManager,setShowCatManager]=useState(false);
   const [newCat,setNewCat]=useState("");
-  const todayStr=new Date().toISOString().split("T")[0];
+  const todayStr=localDateStr();
   const [nd,setNd]=useState({date:todayStr,category:expenseCategories[0]||"Outros",description:"",value:"",recurring:false,expense_type:"caixa"});
   const [printExpense,setPrintExpense]=useState(null);
 
@@ -3170,9 +3172,35 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
     if(!nd.description||!nd.value)return showToast("Preencha descrição e valor!","error");
     const expType=activeTab;
     if(editId){
+      const oldExp=(storeExpenses||[]).find(e=>e.id===editId);
       const updated={...nd,value:+nd.value,expense_type:expType,expenseType:expType};
       setExpenses(prev=>{const n={...prev};n[activeStore]=(n[activeStore]||[]).map(e=>e.id===editId?{...e,...updated}:e);return n;});
       api.updateExpense(editId,{date:nd.date,category:nd.category,description:nd.description,value:+nd.value,recurring:nd.recurring,expense_type:expType}).catch(console.error);
+      // Se alterou valor de despesa de caixa, ajusta movimentação
+      if(oldExp&&(oldExp.expense_type||oldExp.expenseType)==="caixa"&&expType==="caixa"){
+        const diff=+nd.value-(+oldExp.value||0);
+        if(diff!==0){
+          const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+          const movType=diff>0?"saida":"entrada";
+          const movVal=Math.abs(diff);
+          const movDesc=diff>0?"Ajuste despesa (aumento): "+nd.description:"Ajuste despesa (redução): "+nd.description;
+          api.cashAction(activeStore,{action:"movement",type:movType,value:movVal,description:movDesc,user_id:loggedUser?.id||"main"}).then(()=>{
+            api.getCash(activeStore,loggedUser?.id||"main").then(data=>{
+              if(!data||!data.state)return;
+              setCashState(prev=>{
+                const n={...prev};
+                n[cashKey]={open:data.state.is_open,initial:+(data.state.initial_value)||0,history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),closedAt:data.state.closed_at,closeReport:data.state.close_report?JSON.parse(data.state.close_report):null};
+                return n;
+              });
+            }).catch(console.error);
+          }).catch(console.error);
+          setCashState(prev=>{
+            const n={...prev};const cs=n[cashKey]||{open:false,initial:0,history:[]};
+            n[cashKey]={...cs,history:[...cs.history,{type:movType,value:movVal,desc:movDesc,time:new Date().toLocaleTimeString("pt-BR")}]};
+            return n;
+          });
+        }
+      }
       showToast("Despesa atualizada!");
     } else {
       const newExp={...nd,id:genId(),value:+nd.value,expense_type:expType,expenseType:expType,store_id:activeStore};
@@ -3181,13 +3209,28 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
       // Se for despesa de caixa, registra como sangria automática
       if(expType==="caixa"){
         const cashKey=activeStore+"_"+(loggedUser?.id||"main");
-        api.cashAction(activeStore,{action:"movement",type:"saida",value:+nd.value,description:"Despesa: "+nd.description,user_id:loggedUser?.id||"main"}).catch(console.error);
+        api.cashAction(activeStore,{action:"movement",type:"saida",value:+nd.value,description:"Despesa: "+nd.description,user_id:loggedUser?.id||"main"}).then(()=>{
+          // Recarrega estado do caixa do servidor para garantir consistência
+          api.getCash(activeStore,loggedUser?.id||"main").then(data=>{
+            if(!data||!data.state)return;
+            setCashState(prev=>{
+              const n={...prev};
+              n[cashKey]={
+                open:data.state.is_open,
+                initial:+(data.state.initial_value)||0,
+                history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),
+                closedAt:data.state.closed_at,
+                closeReport:data.state.close_report?JSON.parse(data.state.close_report):null,
+              };
+              return n;
+            });
+          }).catch(console.error);
+        }).catch(console.error);
+        // Atualiza estado local imediatamente (independente do servidor)
         setCashState(prev=>{
           const n={...prev};
           const cs=n[cashKey]||{open:false,initial:0,history:[]};
-          if(cs.open){
-            n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:+nd.value,desc:"Despesa: "+nd.description,time:new Date().toLocaleTimeString("pt-BR")}]};
-          }
+          n[cashKey]={...cs,history:[...cs.history,{type:"saida",value:+nd.value,desc:"Despesa: "+nd.description,time:new Date().toLocaleTimeString("pt-BR")}]};
           return n;
         });
       }
@@ -3206,15 +3249,32 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
     if(!confirm("Excluir esta despesa?"))return;
     const exp=(storeExpenses||[]).find(e=>e.id===id);
     setExpenses(prev=>{const n={...prev};n[activeStore]=(n[activeStore]||[]).filter(e=>e.id!==id);return n;});
-    // Se for despesa de caixa, reverte o movimento local do caixa
+    // Se for despesa de caixa, reverte o movimento no caixa (local + servidor)
     if(exp&&(exp.expense_type||exp.expenseType)==="caixa"){
       const cashKey=activeStore+"_"+(loggedUser?.id||"main");
+      // Registra entrada (estorno) no servidor para reverter a saída da despesa
+      api.cashAction(activeStore,{action:"movement",type:"entrada",value:+exp.value,description:"Estorno despesa: "+exp.description,user_id:loggedUser?.id||"main"}).then(()=>{
+        // Recarrega estado do caixa do servidor
+        api.getCash(activeStore,loggedUser?.id||"main").then(data=>{
+          if(!data||!data.state)return;
+          setCashState(prev=>{
+            const n={...prev};
+            n[cashKey]={
+              open:data.state.is_open,
+              initial:+(data.state.initial_value)||0,
+              history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),
+              closedAt:data.state.closed_at,
+              closeReport:data.state.close_report?JSON.parse(data.state.close_report):null,
+            };
+            return n;
+          });
+        }).catch(console.error);
+      }).catch(console.error);
+      // Atualiza estado local imediatamente
       setCashState(prev=>{
         const n={...prev};
         const cs=n[cashKey]||{open:false,initial:0,history:[]};
-        if(cs.open){
-          n[cashKey]={...cs,history:cs.history.filter(h=>!(h.type==="saida"&&h.desc===("Despesa: "+exp.description)&&h.value===+exp.value))};
-        }
+        n[cashKey]={...cs,history:[...cs.history,{type:"entrada",value:+exp.value,desc:"Estorno despesa: "+exp.description,time:new Date().toLocaleTimeString("pt-BR")}]};
         return n;
       });
     }
@@ -3360,7 +3420,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const initCounted=()=>Object.fromEntries(PAY_GROUPS.map(g=>[g.key,""]));
   const [counted,setCounted]=useState(initCounted);
 
-  const todayStr=new Date().toISOString().split("T")[0];
+  const todayStr=localDateStr();
 
   // Calcula o esperado por grupo — vendas deste operador hoje (inclui vendas sem vendedor atribuído)
   const vendas=(storeSales||[]).filter(s=>s.date===todayStr&&s.status!=="Cancelada"&&(loggedUser?.id?(s.sellerId===loggedUser.id||!s.sellerId):true));
@@ -3471,7 +3531,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const [printWithdrawal,setPrintWithdrawal]=useState(null);
 
   const storeWithdrawals=(withdrawals||[]).filter(w=>(w.storeId||w.store_id)===activeStore);
-  const filteredWithdrawals=wdFilterDate?storeWithdrawals.filter(w=>{const d=new Date(w.createdAt||w.created_at).toISOString().split("T")[0];return d===wdFilterDate;}):storeWithdrawals;
+  const filteredWithdrawals=wdFilterDate?storeWithdrawals.filter(w=>{const d=localDateStr(new Date(w.createdAt||w.created_at));return d===wdFilterDate;}):storeWithdrawals;
   const totalRetiradas=storeWithdrawals.reduce((s,w)=>s+(+w.value||0),0);
 
   const registerWithdrawal=()=>{
@@ -3907,7 +3967,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
   const [empPurchaseDetails,setEmpPurchaseDetails]=useState([]); // compras do colaborador no mês
 
   // New employee form
-  const [ne,setNe]=useState({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});
+  const [ne,setNe]=useState({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:localDateStr()});
 
   // Payroll form
   const [pay,setPay]=useState({month:new Date().toISOString().slice(0,7),empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
@@ -3927,7 +3987,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
       api.createEmployee({name:ne.name,cpf:ne.cpf,role:ne.role,store_id:ne.storeId,salary:+ne.salary,pix:ne.pix,admission:ne.admission}).catch(console.error);
       setShowEmpForm(false);showToast("Colaborador cadastrado!");
     }
-    setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});
+    setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:localDateStr()});
   };
 
   const startEditEmp=(emp)=>{
@@ -4017,7 +4077,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
       baseSalary:+pay.baseSalary,metaBonus:+pay.metaBonus||0,awards:+pay.awards||0,overtime:+pay.overtime||0,
       storeDiscount:+pay.storeDiscount||0,advances:+pay.advances||0,otherDeductions:+pay.otherDeductions||0,
       totalEarnings:payEarnings,totalDeductions:payDeductions,netPay:payNet,
-      paid:true,paidDate:new Date().toISOString().split("T")[0],notes:pay.notes
+      paid:true,paidDate:localDateStr(),notes:pay.notes
     };
     setPayrolls(prev=>[newPay,...prev]);
     api.createPayroll({
@@ -4070,7 +4130,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
             {STORES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <div style={{flex:1}}/>
-          <button style={S.primBtn} onClick={()=>{setEditEmpId(null);setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:new Date().toISOString().split("T")[0]});setShowEmpForm(!showEmpForm);}}>{I.plus} Novo Colaborador</button>
+          <button style={S.primBtn} onClick={()=>{setEditEmpId(null);setNe({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:localDateStr()});setShowEmpForm(!showEmpForm);}}>{I.plus} Novo Colaborador</button>
         </div>
 
         {showEmpForm&&<div style={S.formCard}><h3 style={S.formTitle}>{editEmpId?"✏️ Editar Colaborador":"Cadastrar Colaborador"}</h3><div style={S.formGrid}>
@@ -4587,7 +4647,7 @@ function TrocasModule({storeExchanges,exchanges,setExchanges,storeSales,storePro
   // Cupom de troca
   const [receiptExchange,setReceiptExchange]=useState(null);
   // Filtro relatório de trocas
-  const todayStr=new Date().toISOString().split("T")[0];
+  const todayStr=localDateStr();
   const [exchFilterFrom,setExchFilterFrom]=useState(todayStr);
   const [exchFilterTo,setExchFilterTo]=useState(todayStr);
 
@@ -5333,14 +5393,14 @@ function WhatsAppModule({customers}){
 // ═══════════════════════════════════
 function InvestimentosModule({investments,setInvestments,showToast}){
   const [showForm,setShowForm]=useState(false);
-  const [ni,setNi]=useState({week:"",date:new Date().toISOString().split("T")[0],value:"",supplier:"",cats:"",notes:""});
+  const [ni,setNi]=useState({week:"",date:localDateStr(),value:"",supplier:"",cats:"",notes:""});
   const addInv=()=>{
     if(!ni.value||!ni.supplier)return showToast("Preencha!","error");
     const wk=ni.week||("Sem. "+fmtDate(ni.date));
     const newInv={id:genId(),week:wk,date:ni.date,value:+ni.value,supplier:ni.supplier,categories:ni.cats?ni.cats.split(",").map(c=>c.trim()):[],notes:ni.notes};
     setInvestments(prev=>[newInv,...prev]);
     api.createInvestment(newInv).catch(console.error);
-    setNi({week:"",date:new Date().toISOString().split('T')[0],value:"",supplier:"",cats:"",notes:""});
+    setNi({week:"",date:localDateStr(),value:"",supplier:"",cats:"",notes:""});
     setShowForm(false);
     showToast("Investimento registrado!");
   };
@@ -5487,7 +5547,7 @@ const S = {
 // ═══  VENDAS MODULE                  ═══
 // ═══════════════════════════════════════
 function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchanges,users,loggedUser,showToast,stock,setStock,getStockId,cashState,setCashState}){
-  const todayStr=new Date().toISOString().split("T")[0];
+  const todayStr=localDateStr();
   const [dateFrom,setDateFrom]=useState(todayStr);
   const [dateTo,setDateTo]=useState(todayStr);
   const [search,setSearch]=useState("");
