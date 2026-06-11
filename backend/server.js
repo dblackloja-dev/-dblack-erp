@@ -9,7 +9,7 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const Anthropic = require('@anthropic-ai/sdk');
 
-const { queryAll, queryOne, queryRun, initDB, pool } = require('./database');
+const { queryAll, queryOne, queryRun, initDB, pool, connectWithTimeout } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const UPLOAD_DIR = path.resolve(__dirname, process.env.UPLOAD_DIR || '../uploads');
@@ -38,6 +38,18 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(UPLOAD_DIR));
+
+// Timeout global: evita requests pendurados (30s para GET, 60s para escritas)
+app.use((req, res, next) => {
+  const timeout = req.method === 'GET' ? 30000 : 60000;
+  res.setTimeout(timeout, () => {
+    if (!res.headersSent) {
+      console.error(`[TIMEOUT] ${req.method} ${req.path} excedeu ${timeout / 1000}s`);
+      res.status(504).json({ error: 'Tempo limite excedido. Tente novamente.' });
+    }
+  });
+  next();
+});
 
 // ─── AUTH MIDDLEWARE ───
 const authMiddleware = (req, res, next) => {
@@ -139,23 +151,37 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Verifica se uma senha pertence a um usuário com permissão de cancelar
+// Otimizado: verifica senhas legadas primeiro (rápido) e limita bcrypt a 3 tentativas por vez
 app.post('/api/auth/verify', async (req, res) => {
   try {
     const { password } = req.body;
     if (!password) return res.json({ authorized: false });
     const users = await queryAll(`SELECT * FROM users WHERE active = true AND role IN ('admin','gestor','gerente')`);
+
+    // Primeiro: verifica senhas legadas (texto puro) — instantâneo
     for (const u of users) {
-      let valid = false;
-      if (u.password?.startsWith('$2')) {
-        valid = await bcrypt.compare(password, u.password);
-      } else {
-        valid = u.password === password || u.pin === password;
+      if (u.password && !u.password.startsWith('$2')) {
+        if (u.password === password || u.pin === password) {
+          // Atualiza para bcrypt em background
+          bcrypt.hash(password, 10).then(hash => {
+            queryRun('UPDATE users SET password = $1 WHERE id = $2', [hash, u.id]).catch(() => {});
+          });
+          const { password: _p, pin: _pin, ...safeUser } = u;
+          return res.json({ authorized: true, user: safeUser });
+        }
       }
+    }
+
+    // Depois: verifica senhas bcrypt (CPU-intensivo) — uma por vez com yield entre elas
+    const bcryptUsers = users.filter(u => u.password?.startsWith('$2'));
+    for (const u of bcryptUsers) {
+      const valid = await bcrypt.compare(password, u.password);
       if (valid) {
         const { password: _p, pin: _pin, ...safeUser } = u;
         return res.json({ authorized: true, user: safeUser });
       }
     }
+
     res.json({ authorized: false });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -367,18 +393,37 @@ app.get('/api/stock/:stockId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Sync em massa — recebe todo o estoque de uma vez
+// Sync em massa — recebe todo o estoque de uma vez (batched para performance)
 app.post('/api/stock/bulk', async (req, res) => {
   try {
     const { stock } = req.body; // { stockId: { productId: qty, ... }, ... }
     let count = 0;
+    const values = [];
+    const params = [];
+    let idx = 1;
     for (const [stockId, products] of Object.entries(stock)) {
       for (const [productId, quantity] of Object.entries(products)) {
-        await queryRun(
-          'INSERT INTO stock (stock_id, product_id, quantity) VALUES ($1,$2,$3) ON CONFLICT (stock_id, product_id) DO UPDATE SET quantity = $3',
-          [stockId, productId, quantity]
-        );
+        values.push(`($${idx},$${idx+1},$${idx+2})`);
+        params.push(stockId, productId, quantity);
+        idx += 3;
         count++;
+      }
+    }
+    if (values.length > 0) {
+      // Batch em grupos de 200 para evitar query muito grande
+      const BATCH_SIZE = 200;
+      for (let i = 0; i < values.length; i += BATCH_SIZE) {
+        const batchValues = values.slice(i, i + BATCH_SIZE);
+        const batchParams = params.slice(i * 3, (i + BATCH_SIZE) * 3);
+        // Recalcula placeholders para o batch
+        const batchPlaceholders = [];
+        for (let j = 0; j < batchValues.length; j++) {
+          batchPlaceholders.push(`($${j*3+1},$${j*3+2},$${j*3+3})`);
+        }
+        await queryRun(
+          `INSERT INTO stock (stock_id, product_id, quantity) VALUES ${batchPlaceholders.join(',')} ON CONFLICT (stock_id, product_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+          batchParams
+        );
       }
     }
     res.json({ success: true, count });
@@ -415,7 +460,7 @@ app.put('/api/stock/:stockId/:productId', async (req, res) => {
 });
 
 app.post('/api/stock/transfer', async (req, res) => {
-  const client = await pool.connect();
+  const client = await connectWithTimeout();
   try {
     const { fromStockId, toStockId, productId, quantity, user_name } = req.body;
 
@@ -427,7 +472,7 @@ app.post('/api/stock/transfer', async (req, res) => {
       [fromStockId, productId]
     );
     if (!rows[0] || rows[0].quantity < quantity) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch(() => {});
       return res.status(400).json({ error: 'Estoque insuficiente' });
     }
 
@@ -449,7 +494,7 @@ app.post('/api/stock/transfer', async (req, res) => {
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (e) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
@@ -471,10 +516,12 @@ app.get('/api/stock/movements/:stockId', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/sales', async (req, res) => {
   try {
-    const { store_id } = req.query;
+    const { store_id, limit, offset } = req.query;
+    const lim = Math.min(parseInt(limit) || 500, 2000);
+    const off = parseInt(offset) || 0;
     const sales = store_id
-      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 ORDER BY created_at DESC', [store_id])
-      : await queryAll('SELECT * FROM sales ORDER BY created_at DESC');
+      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3', [store_id, lim, off])
+      : await queryAll('SELECT * FROM sales ORDER BY created_at DESC LIMIT $1 OFFSET $2', [lim, off]);
     sales.forEach(s => {
       try { s.items = JSON.parse(s.items); } catch { s.items = []; }
       try { s.payments = JSON.parse(s.payments || '[]'); } catch { s.payments = []; }
@@ -484,7 +531,7 @@ app.get('/api/sales', async (req, res) => {
 });
 
 app.post('/api/sales', async (req, res) => {
-  const client = await pool.connect();
+  const client = await connectWithTimeout();
   try {
     const s = req.body;
     const id = s.id || genId();
@@ -499,7 +546,7 @@ app.post('/api/sales', async (req, res) => {
           [s.stock_id, item.id]
         );
         if (rows[0] && rows[0].quantity < item.qty) {
-          await client.query('ROLLBACK');
+          await client.query('ROLLBACK').catch(() => {});
           return res.status(400).json({ error: `Estoque insuficiente para "${item.name || item.id}". Disponível: ${rows[0].quantity}, Solicitado: ${item.qty}` });
         }
       }
@@ -523,7 +570,7 @@ app.post('/api/sales', async (req, res) => {
     await client.query('COMMIT');
     res.json({ id, ...s });
   } catch (e) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
@@ -531,7 +578,7 @@ app.post('/api/sales', async (req, res) => {
 });
 
 app.put('/api/sales/:id', async (req, res) => {
-  const client = await pool.connect();
+  const client = await connectWithTimeout();
   try {
     const { status, payment, payments, canceled_by, canceled_at } = req.body;
 
@@ -578,7 +625,9 @@ app.put('/api/sales/:id', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/customers', async (req, res) => {
   try {
-    const customers = await queryAll('SELECT * FROM customers ORDER BY name');
+    const { limit } = req.query;
+    const lim = Math.min(parseInt(limit) || 1000, 5000);
+    const customers = await queryAll('SELECT * FROM customers ORDER BY name LIMIT $1', [lim]);
     customers.forEach(c => {
       try { c.tags = JSON.parse(c.tags || '[]'); } catch { c.tags = []; }
     });
@@ -617,10 +666,11 @@ app.put('/api/customers/:id', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/expenses', async (req, res) => {
   try {
-    const { store_id } = req.query;
+    const { store_id, limit } = req.query;
+    const lim = Math.min(parseInt(limit) || 500, 2000);
     const expenses = store_id
-      ? await queryAll('SELECT * FROM expenses WHERE store_id = $1 ORDER BY date DESC', [store_id])
-      : await queryAll('SELECT * FROM expenses ORDER BY date DESC');
+      ? await queryAll('SELECT * FROM expenses WHERE store_id = $1 ORDER BY date DESC LIMIT $2', [store_id, lim])
+      : await queryAll('SELECT * FROM expenses ORDER BY date DESC LIMIT $1', [lim]);
     res.json(expenses);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -747,8 +797,8 @@ app.get('/api/withdrawals', async (req, res) => {
   try {
     const storeId = req.query.store_id;
     const withdrawals = storeId
-      ? await queryAll('SELECT * FROM cash_withdrawals WHERE store_id = $1 ORDER BY created_at DESC', [storeId])
-      : await queryAll('SELECT * FROM cash_withdrawals ORDER BY created_at DESC');
+      ? await queryAll('SELECT * FROM cash_withdrawals WHERE store_id = $1 ORDER BY created_at DESC LIMIT 200', [storeId])
+      : await queryAll('SELECT * FROM cash_withdrawals ORDER BY created_at DESC LIMIT 500');
     res.json(withdrawals);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -935,7 +985,7 @@ app.delete('/api/employees/:id', requireRole('admin', 'gestor'), async (req, res
 // ═══════════════════════════════════════════
 app.get('/api/payrolls', async (req, res) => {
   try {
-    const payrolls = await queryAll('SELECT * FROM payrolls ORDER BY created_at DESC');
+    const payrolls = await queryAll('SELECT * FROM payrolls ORDER BY created_at DESC LIMIT 500');
     res.json(payrolls);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1006,8 +1056,8 @@ app.get('/api/exchanges', async (req, res) => {
   try {
     const { store_id } = req.query;
     const exchanges = store_id
-      ? await queryAll('SELECT * FROM exchanges WHERE store_id = $1 ORDER BY created_at DESC', [store_id])
-      : await queryAll('SELECT * FROM exchanges ORDER BY created_at DESC');
+      ? await queryAll('SELECT * FROM exchanges WHERE store_id = $1 ORDER BY created_at DESC LIMIT 500', [store_id])
+      : await queryAll('SELECT * FROM exchanges ORDER BY created_at DESC LIMIT 1000');
     exchanges.forEach(e => {
       try { e.items = JSON.parse(e.items || '[]'); } catch { e.items = []; }
       try { e.new_items = JSON.parse(e.new_items || '[]'); } catch { e.new_items = []; }
@@ -1017,7 +1067,7 @@ app.get('/api/exchanges', async (req, res) => {
 });
 
 app.post('/api/exchanges', async (req, res) => {
-  const client = await pool.connect();
+  const client = await connectWithTimeout();
   try {
     const e = req.body;
     const id = genId();
@@ -1074,7 +1124,7 @@ app.post('/api/exchanges', async (req, res) => {
 });
 
 app.put('/api/exchanges/:id/cancel', async (req, res) => {
-  const client = await pool.connect();
+  const client = await connectWithTimeout();
   try {
     const { id } = req.params;
     await client.query('BEGIN');
@@ -1082,7 +1132,7 @@ app.put('/api/exchanges/:id/cancel', async (req, res) => {
     // Busca a troca para reverter estoque
     const exResult = await client.query('SELECT * FROM exchanges WHERE id = $1', [id]);
     const ex = exResult.rows[0];
-    if (!ex) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Troca não encontrada' }); }
+    if (!ex) { await client.query('ROLLBACK').catch(() => {}); return res.status(404).json({ error: 'Troca não encontrada' }); }
 
     const storeResult = await client.query('SELECT stock_id FROM stores WHERE id = $1', [ex.store_id]);
     const stockId = storeResult.rows[0]?.stock_id || ex.store_id;
@@ -1162,7 +1212,7 @@ app.put('/api/promos/:id', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/investments', async (req, res) => {
   try {
-    const investments = await queryAll('SELECT * FROM investments ORDER BY date DESC');
+    const investments = await queryAll('SELECT * FROM investments ORDER BY date DESC LIMIT 500');
     investments.forEach(i => {
       try { i.categories = JSON.parse(i.categories || '[]'); } catch { i.categories = []; }
     });
@@ -1188,26 +1238,26 @@ app.post('/api/investments', async (req, res) => {
 // Health check (sem autenticação)
 // ── QZ Tray: chave privada e certificado lidos dos arquivos .pem ──
 
+// Cache de certificado e chave privada (leitura única ao invés de a cada request)
+let _qzPrivateKey = process.env.QZ_PRIVATE_KEY || null;
+let _qzCert = null;
+try { if (!_qzPrivateKey) _qzPrivateKey = fs.readFileSync(path.join(__dirname, 'qz-private.pem'), 'utf8'); } catch {}
+try { _qzCert = fs.readFileSync(path.join(__dirname, 'qz-certificate.pem'), 'utf8'); } catch {}
+
 app.post('/api/qz-sign', (req, res) => {
   try {
     const { data } = req.body;
-    // Tenta variável de ambiente primeiro (produção), fallback para arquivo (local)
-    let privateKey = process.env.QZ_PRIVATE_KEY;
-    if (!privateKey) {
-      privateKey = fs.readFileSync(path.join(__dirname, 'qz-private.pem'), 'utf8');
-    }
+    if (!_qzPrivateKey) return res.status(500).json({ error: 'Chave privada não configurada' });
     const sign = require('crypto').createSign('SHA1');
     sign.update(data);
-    const signature = sign.sign(privateKey, 'base64');
+    const signature = sign.sign(_qzPrivateKey, 'base64');
     res.json({ signature });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/qz-cert', (req, res) => {
-  try {
-    const cert = fs.readFileSync(path.join(__dirname, 'qz-certificate.pem'), 'utf8');
-    res.type('text/plain').send(cert);
-  } catch(e) { res.status(500).json({ error: 'Certificado não encontrado' }); }
+  if (!_qzCert) return res.status(500).json({ error: 'Certificado não encontrado' });
+  res.type('text/plain').send(_qzCert);
 });
 
 // ═══════════════════════════════════════════
@@ -1218,7 +1268,7 @@ const anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
 
-// Rate limiter simples (em memória)
+// Rate limiter simples (em memória) — com limpeza periódica para evitar memory leak
 const agentLimits = {};
 function checkAgentLimit(userId) {
   const now = Date.now();
@@ -1228,6 +1278,13 @@ function checkAgentLimit(userId) {
   agentLimits[userId].count++;
   return agentLimits[userId].count <= 20; // máx 20 msgs/min
 }
+// Limpa entradas expiradas a cada 5 minutos
+setInterval(() => {
+  const now = Date.now();
+  for (const key of Object.keys(agentLimits)) {
+    if (agentLimits[key].resetAt < now) delete agentLimits[key];
+  }
+}, 300000);
 
 // ─── Definição das ferramentas do agente ───
 const AGENT_TOOLS = [
@@ -1395,7 +1452,7 @@ async function executeTool(toolName, input, user) {
       if (!venda) return { erro: 'Venda não encontrada' };
       if (venda.status === 'Cancelada') return { erro: 'Esta venda já foi cancelada' };
       // Cancela e devolve estoque
-      const client = await pool.connect();
+      const client = await connectWithTimeout();
       try {
         await client.query('BEGIN');
         await client.query('UPDATE sales SET status=$1, canceled_by=$2, canceled_at=$3 WHERE id=$4', ['Cancelada', user.name, new Date().toISOString(), input.venda_id]);
@@ -1408,7 +1465,7 @@ async function executeTool(toolName, input, user) {
         }
         await client.query('COMMIT');
       } catch (err) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         throw err;
       } finally {
         client.release();
@@ -1416,18 +1473,20 @@ async function executeTool(toolName, input, user) {
       return { sucesso: true, mensagem: `Venda ${input.venda_id} cancelada. ${JSON.parse(venda.items || '[]').length} item(ns) devolvidos ao estoque.` };
     }
     case 'consultar_estoque': {
+      if (!input.busca) return { erro: 'Informe o nome ou SKU do produto' };
       const produtos = await queryAll("SELECT id, name, sku, price FROM products WHERE active=true AND (LOWER(name) LIKE $1 OR LOWER(sku) LIKE $1) LIMIT 5", ['%' + input.busca.toLowerCase() + '%']);
       if (produtos.length === 0) return { erro: 'Nenhum produto encontrado' };
-      const resultado = [];
-      for (const p of produtos) {
-        const estoques = input.stock_id
-          ? await queryAll('SELECT stock_id, quantity FROM stock WHERE product_id=$1 AND stock_id=$2', [p.id, input.stock_id])
-          : await queryAll('SELECT stock_id, quantity FROM stock WHERE product_id=$1', [p.id]);
-        resultado.push({ produto: p.name, sku: p.sku, preco: p.price, estoques: estoques.map(e => ({ loja: e.stock_id, quantidade: e.quantity })) });
-      }
-      return resultado;
+      const prodIds = produtos.map(p => p.id);
+      const placeholders = prodIds.map((_, i) => `$${i + 1}`).join(',');
+      const stockQuery = input.stock_id
+        ? await queryAll(`SELECT stock_id, product_id, quantity FROM stock WHERE product_id IN (${placeholders}) AND stock_id = $${prodIds.length + 1}`, [...prodIds, input.stock_id])
+        : await queryAll(`SELECT stock_id, product_id, quantity FROM stock WHERE product_id IN (${placeholders})`, prodIds);
+      const stockMap = {};
+      stockQuery.forEach(e => { if (!stockMap[e.product_id]) stockMap[e.product_id] = []; stockMap[e.product_id].push({ loja: e.stock_id, quantidade: e.quantity }); });
+      return produtos.map(p => ({ produto: p.name, sku: p.sku, preco: p.price, estoques: stockMap[p.id] || [] }));
     }
     case 'buscar_cliente': {
+      if (!input.busca) return { erro: 'Informe o nome, telefone ou CPF' };
       const clientes = await queryAll("SELECT id, name, phone, email, cpf, whatsapp, points, total_spent, visits FROM customers WHERE LOWER(name) LIKE $1 OR phone LIKE $1 OR cpf LIKE $1 LIMIT 5", ['%' + input.busca.toLowerCase() + '%']);
       return clientes.length > 0 ? clientes : { erro: 'Nenhum cliente encontrado' };
     }

@@ -30,7 +30,16 @@ function getQueue() {
 }
 
 function saveQueue(queue) {
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  try {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  } catch (e) {
+    // Se estourou o localStorage, limpa dados antigos e tenta de novo
+    console.warn('[QUEUE] Quota excedida — limpando dados antigos...');
+    ['dblack_sales','dblack_exchanges','dblack_payrolls','dblack_investments','dblack_catalog'].forEach(k => {
+      try { localStorage.removeItem(k); } catch {}
+    });
+    try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); } catch {}
+  }
   // Dispara evento para o App.jsx atualizar o contador
   window.dispatchEvent(new CustomEvent('offlineQueueChange', { detail: { count: queue.length } }));
 }
@@ -55,12 +64,22 @@ function removeFromQueue(id) {
 
 // Sincroniza a fila quando volta a internet
 let syncing = false;
+let syncStartedAt = 0;
 async function syncQueue() {
-  if (syncing) return;
+  // Se já está sincronizando, verifica se travou (mais de 2 min = reset)
+  if (syncing) {
+    if (Date.now() - syncStartedAt > 120000) {
+      console.warn('[SYNC] Flag de sincronização travada — resetando');
+      syncing = false;
+    } else {
+      return;
+    }
+  }
   const queue = getQueue();
   if (queue.length === 0) return;
 
   syncing = true;
+  syncStartedAt = Date.now();
   console.log('[SYNC] Iniciando sincronização de', queue.length, 'ações offline...');
 
   let successCount = 0;
@@ -166,6 +185,11 @@ async function request(path, options = {}) {
   const token = getToken();
   const isWrite = options.method && options.method !== 'GET';
 
+  // Timeout para evitar travamento: 15s para leituras, 30s para escritas
+  const timeout = options.timeout || (isWrite ? 30000 : 15000);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
   try {
     const res = await fetch(`${BASE}${path}`, {
       headers: {
@@ -175,7 +199,9 @@ async function request(path, options = {}) {
       },
       ...options,
       body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (res.status === 401) {
       // Não recarrega a página inteira — apenas limpa o token
@@ -203,6 +229,7 @@ async function request(path, options = {}) {
     }
     return res.json();
   } catch (e) {
+    clearTimeout(timeoutId);
     // Se é uma escrita (POST/PUT/DELETE) e falhou por qualquer motivo, enfileira
     if (isWrite) {
       addToQueue(path, options);
@@ -210,9 +237,9 @@ async function request(path, options = {}) {
       return { _offline: true, _queued: true };
     }
 
-    // Para leituras (GET) offline, retorna null silenciosamente
-    if (!navigator.onLine) {
-      console.log('[OFFLINE] Leitura ignorada (sem internet):', path);
+    // Para leituras (GET) offline ou timeout, retorna null silenciosamente
+    if (!navigator.onLine || e.name === 'AbortError') {
+      console.log('[OFFLINE] Leitura ignorada:', path, e.name === 'AbortError' ? '(timeout)' : '(sem internet)');
       return null;
     }
 

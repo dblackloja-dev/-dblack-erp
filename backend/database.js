@@ -22,6 +22,22 @@ pool.on('error', (err) => {
   console.error('[POOL] Erro inesperado:', err.message);
 });
 
+// pool.connect() com timeout — evita travar quando todas as conexões estão em uso
+const connectWithTimeout = async (timeoutMs = 10000) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Timeout ao obter conexão do pool (todas em uso)')), timeoutMs);
+  });
+  try {
+    const client = await Promise.race([pool.connect(), timeout]);
+    clearTimeout(timer);
+    return client;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
+};
+
 // Helpers para facilitar as queries
 const queryAll = async (text, params = []) => (await pool.query(text, params)).rows;
 const queryOne = async (text, params = []) => ((await pool.query(text, params)).rows)[0] || null;
@@ -350,6 +366,11 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_agent_logs_conv ON agent_logs(conversation_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_agent_logs_user ON agent_logs(user_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_agent_conv_user ON agent_conversations(user_id, status)',
+    // Índices adicionais para performance
+    'CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status)',
+    'CREATE INDEX IF NOT EXISTS idx_stock_product ON stock(product_id)',
+    'CREATE INDEX IF NOT EXISTS idx_products_active ON products(active)',
+    'CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)',
   ];
   for (const idx of indexes) {
     await pool.query(idx).catch(() => {});
@@ -461,4 +482,4 @@ async function seedIfEmpty() {
   console.log('✅ Banco populado!');
 }
 
-module.exports = { queryAll, queryOne, queryRun, initDB, pool };
+module.exports = { queryAll, queryOne, queryRun, initDB, pool, connectWithTimeout };
