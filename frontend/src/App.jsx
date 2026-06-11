@@ -103,12 +103,18 @@ const lsSave = (key, val) => {
       localStorage.setItem('dblack_' + key, JSON.stringify(trimmed));
       return;
     }
+    // Para catálogo: remover campo photo antes de salvar (fotos são lazy-loaded da API)
+    if (key === 'catalog' && Array.isArray(val)) {
+      const light = val.map(({ photo, ...rest }) => rest);
+      localStorage.setItem('dblack_' + key, JSON.stringify(light));
+      return;
+    }
     localStorage.setItem('dblack_' + key, JSON.stringify(val));
   } catch (e) {
     // Se estourou o localStorage, limpa dados antigos e tenta de novo
     if (e.name === 'QuotaExceededError' || e.code === 22) {
       console.warn('[STORAGE] Quota excedida — limpando dados antigos...');
-      ['sales','exchanges','payrolls','investments','withdrawals','advances'].forEach(k => {
+      ['sales','exchanges','payrolls','investments','withdrawals','advances','catalog'].forEach(k => {
         try { localStorage.removeItem('dblack_' + k); } catch {}
       });
       try { localStorage.setItem('dblack_' + key, JSON.stringify(val)); } catch {}
@@ -306,42 +312,56 @@ export default function App() {
   const [advances, setAdvances] = useState(() => ls('advances', []));
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
 
-  // ─── LAZY LOADING DE FOTOS (carrega sob demanda) ───
+  // ─── LAZY LOADING DE FOTOS (carrega em lote para evitar N requests + N re-renders) ───
   const loadedPhotosRef = useRef(new Set());
+  const photoLoadTimer = useRef(null);
+  const pendingPhotoIds = useRef([]);
   const loadPhotosForProducts = useCallback((productIds) => {
     if (!navigator.onLine) return;
     const missing = productIds.filter(id => !loadedPhotosRef.current.has(id));
     if (!missing.length) return;
-    missing.forEach(id => loadedPhotosRef.current.add(id));
-    // Carrega individualmente (fotos base64 são pesadas)
-    missing.forEach(id => {
-      api.getProductPhoto(id).then(res => {
-        if (res?.photo) {
-          const photo = typeof res.photo === 'string' ? res.photo.replace(/^http:\/\//, 'https://') : res.photo;
-          setCatalog(prev => prev.map(p => p.id === id ? { ...p, photo } : p));
-        }
+    missing.forEach(id => { loadedPhotosRef.current.add(id); pendingPhotoIds.current.push(id); });
+    // Debounce: agrupa IDs e faz 1 request em lote (máx 50 por vez)
+    if (photoLoadTimer.current) clearTimeout(photoLoadTimer.current);
+    photoLoadTimer.current = setTimeout(() => {
+      const batch = pendingPhotoIds.current.splice(0, 50);
+      if (!batch.length) return;
+      api.getProductPhotos(batch).then(map => {
+        if (!map || typeof map !== 'object') return;
+        setCatalog(prev => prev.map(p => {
+          if (map[p.id]) {
+            const photo = typeof map[p.id] === 'string' ? map[p.id].replace(/^http:\/\//, 'https://') : map[p.id];
+            return { ...p, photo };
+          }
+          return p;
+        }));
       }).catch(() => {});
-    });
+    }, 100);
   }, []);
 
-  // ─── AUTO-SAVE no localStorage ───
+  // ─── AUTO-SAVE no localStorage (debounced para evitar serialização excessiva) ───
+  const saveTimers = useRef({});
+  const debouncedSave = useCallback((key, val, delay = 1000) => {
+    if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => lsSave(key, val), delay);
+  }, []);
   useEffect(() => { try { localStorage.setItem('dblack_tab', tab); } catch {} }, [tab]);
-  useEffect(() => { lsSave('users', users); }, [users]);
-  useEffect(() => { lsSave('catalog', catalog); }, [catalog]);
-  useEffect(() => { lsSave('stock', stock); }, [stock]);
-  useEffect(() => { lsSave('sales', sales); }, [sales]);
-  useEffect(() => { lsSave('expenses', expenses); }, [expenses]);
-  useEffect(() => { lsSave('customers', customers); }, [customers]);
-  useEffect(() => { lsSave('cashState', cashState); }, [cashState]);
-  useEffect(() => { lsSave('investments', investments); }, [investments]);
-  useEffect(() => { lsSave('promos', promos); }, [promos]);
-  useEffect(() => { lsSave('exchanges', exchanges); }, [exchanges]);
-  useEffect(() => { lsSave('sellers', sellers); }, [sellers]);
-  useEffect(() => { lsSave('employees', employees); }, [employees]);
-  useEffect(() => { lsSave('payrolls', payrolls); }, [payrolls]);
-  useEffect(() => { lsSave('withdrawals', withdrawals); }, [withdrawals]);
-  useEffect(() => { lsSave('advances', advances); }, [advances]);
-  useEffect(() => { lsSave('expenseCategories', expenseCategories); }, [expenseCategories]);
+  useEffect(() => { debouncedSave('users', users); }, [users]);
+  useEffect(() => { debouncedSave('catalog', catalog, 2000); }, [catalog]);
+  useEffect(() => { debouncedSave('stock', stock); }, [stock]);
+  useEffect(() => { debouncedSave('sales', sales, 2000); }, [sales]);
+  useEffect(() => { debouncedSave('expenses', expenses); }, [expenses]);
+  useEffect(() => { debouncedSave('customers', customers, 2000); }, [customers]);
+  useEffect(() => { debouncedSave('cashState', cashState); }, [cashState]);
+  useEffect(() => { debouncedSave('investments', investments); }, [investments]);
+  useEffect(() => { debouncedSave('promos', promos); }, [promos]);
+  useEffect(() => { debouncedSave('exchanges', exchanges); }, [exchanges]);
+  useEffect(() => { debouncedSave('sellers', sellers); }, [sellers]);
+  useEffect(() => { debouncedSave('employees', employees); }, [employees]);
+  useEffect(() => { debouncedSave('payrolls', payrolls); }, [payrolls]);
+  useEffect(() => { debouncedSave('withdrawals', withdrawals); }, [withdrawals]);
+  useEffect(() => { debouncedSave('advances', advances); }, [advances]);
+  useEffect(() => { debouncedSave('expenseCategories', expenseCategories); }, [expenseCategories]);
 
   // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
 
@@ -746,18 +766,18 @@ export default function App() {
   const sharedStockStores = STORES.filter(s=>s.stockId===activeStockId);
   const isSharedStock = sharedStockStores.length > 1;
 
-  const storeProducts = catalog.map(p => ({...p, stock: storeStock[p.id] || 0}));
-  const _todayStr = localDateStr();
-  const todaySales = storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada");
-  const todayRev = todaySales.reduce((s,v) => s + v.total, 0);
-  const totalRev = storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0);
-  const lowStock = storeProducts.filter(p => p.stock <= p.minStock);
+  const _todayStr = useMemo(() => localDateStr(), []);
+  const storeProducts = useMemo(() => catalog.map(p => ({...p, stock: storeStock[p.id] || 0})), [catalog, storeStock]);
+  const todaySales = useMemo(() => storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada"), [storeSales, _todayStr]);
+  const todayRev = useMemo(() => todaySales.reduce((s,v) => s + v.total, 0), [todaySales]);
+  const totalRev = useMemo(() => storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0), [storeSales]);
+  const lowStock = useMemo(() => storeProducts.filter(p => p.stock <= p.minStock), [storeProducts]);
   const storeExchanges = exchanges[activeStore] || [];
-  const storeSellers = sellers.filter(s => s.storeId === activeStore);
+  const storeSellers = useMemo(() => sellers.filter(s => s.storeId === activeStore), [sellers, activeStore]);
 
   // All stores aggregated (for gestor)
-  const allSales = Object.values(sales).flat();
-  const allExpenses = Object.values(expenses).flat();
+  const allSales = useMemo(() => Object.values(sales).flat(), [sales]);
+  const allExpenses = useMemo(() => Object.values(expenses).flat(), [expenses]);
 
   return (
     <div style={S.app}>
@@ -1315,13 +1335,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     };
     window.addEventListener("keydown",handler);
     return ()=>window.removeEventListener("keydown",handler);
-  });
+  }); // eslint-disable-line — deps mudam a cada keystroke; cleanup garante que só 1 listener fica ativo
 
-  const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase()));
+  const filtered=useMemo(()=>storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())),[storeProducts,search]);
+  const filteredIds=useMemo(()=>filtered.map(p=>p.id).join(','),[filtered]);
   useEffect(() => {
     const needPhoto = filtered.filter(p => !p.photo).map(p => p.id);
     if (needPhoto.length && loadPhotosForProducts) loadPhotosForProducts(needPhoto);
-  }, [filtered.map(p=>p.id).join(',')]);
+  }, [filteredIds]); // eslint-disable-line
   const cartSub=cart.reduce((s,i)=>s+i.price*i.qty,0);
 
   // Discount calculation
