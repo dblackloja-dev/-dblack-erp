@@ -538,18 +538,8 @@ app.post('/api/sales', async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Verifica e baixa estoque dentro da transação
+    // Baixa estoque dentro da transação (permite negativo — a validação é feita no PDV local)
     if (s.items && s.stock_id) {
-      for (const item of s.items) {
-        const { rows } = await client.query(
-          'SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2 FOR UPDATE',
-          [s.stock_id, item.id]
-        );
-        if (rows[0] && rows[0].quantity < item.qty) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(400).json({ error: `Estoque insuficiente para "${item.name || item.id}". Disponível: ${rows[0].quantity}, Solicitado: ${item.qty}` });
-        }
-      }
       for (const item of s.items) {
         await client.query(
           'UPDATE stock SET quantity = quantity - $1 WHERE stock_id = $2 AND product_id = $3',
