@@ -725,18 +725,18 @@ export default function App() {
   const sharedStockStores = STORES.filter(s=>s.stockId===activeStockId);
   const isSharedStock = sharedStockStores.length > 1;
 
-  const _todayStr = useMemo(() => localDateStr(), []);
-  const storeProducts = useMemo(() => catalog.map(p => ({...p, stock: storeStock[p.id] || 0})), [catalog, storeStock]);
-  const todaySales = useMemo(() => storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada"), [storeSales, _todayStr]);
-  const todayRev = useMemo(() => todaySales.reduce((s,v) => s + v.total, 0), [todaySales]);
-  const totalRev = useMemo(() => storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0), [storeSales]);
-  const lowStock = useMemo(() => storeProducts.filter(p => p.stock <= p.minStock), [storeProducts]);
+  const storeProducts = catalog.map(p => ({...p, stock: storeStock[p.id] || 0}));
+  const _todayStr = localDateStr();
+  const todaySales = storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada");
+  const todayRev = todaySales.reduce((s,v) => s + v.total, 0);
+  const totalRev = storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0);
+  const lowStock = storeProducts.filter(p => p.stock <= p.minStock);
   const storeExchanges = exchanges[activeStore] || [];
-  const storeSellers = useMemo(() => sellers.filter(s => s.storeId === activeStore), [sellers, activeStore]);
+  const storeSellers = sellers.filter(s => s.storeId === activeStore);
 
   // All stores aggregated (for gestor)
-  const allSales = useMemo(() => Object.values(sales).flat(), [sales]);
-  const allExpenses = useMemo(() => Object.values(expenses).flat(), [expenses]);
+  const allSales = Object.values(sales).flat();
+  const allExpenses = Object.values(expenses).flat();
 
   return (
     <div style={S.app}>
@@ -1296,12 +1296,11 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     return ()=>window.removeEventListener("keydown",handler);
   }); // eslint-disable-line — deps mudam a cada keystroke; cleanup garante que só 1 listener fica ativo
 
-  const filtered=useMemo(()=>storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())),[storeProducts,search]);
-  const filteredIds=useMemo(()=>filtered.map(p=>p.id).join(','),[filtered]);
+  const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase()));
   useEffect(() => {
     const needPhoto = filtered.filter(p => !p.photo).map(p => p.id);
     if (needPhoto.length && loadPhotosForProducts) loadPhotosForProducts(needPhoto);
-  }, [filteredIds]); // eslint-disable-line
+  }, [filtered.map(p=>p.id).join(',')]); // eslint-disable-line
   const cartSub=cart.reduce((s,i)=>s+i.price*i.qty,0);
 
   // Discount calculation
