@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════
 // ═══  D'Black ERP — Service Worker (Offline)     ═══
 // ═══════════════════════════════════════════════════
-const CACHE_NAME = 'dblack-erp-v3'; // v3: fix sync loop + network-first para JS/CSS
+const CACHE_NAME = 'dblack-erp-v4'; // v4: auto-reload on deploy
 
 // Arquivos essenciais para o app funcionar offline
 const PRECACHE_URLS = [
