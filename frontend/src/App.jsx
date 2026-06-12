@@ -381,7 +381,12 @@ export default function App() {
   const updateCatalog = useCallback((prods) => {
     if(!prods?.length) return;
     const apiProds=prods.map(prodFromApi);
-    setCatalog(apiProds);
+    // Preserva fotos já carregadas (lazy-loaded) para não ter que recarregar
+    setCatalog(prev => {
+      const photoMap = {};
+      prev.forEach(p => { if (p.photo) photoMap[p.id] = p.photo; });
+      return apiProds.map(p => photoMap[p.id] ? { ...p, photo: photoMap[p.id] } : p);
+    });
     setCatalogLoaded(true);
   }, []);
 
