@@ -516,12 +516,11 @@ app.get('/api/stock/movements/:stockId', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/sales', async (req, res) => {
   try {
-    const { store_id, limit, offset } = req.query;
-    const lim = Math.min(parseInt(limit) || 500, 2000);
-    const off = parseInt(offset) || 0;
+    const { store_id } = req.query;
+    // Sem LIMIT — o frontend precisa de todas as vendas para calcular totais e sincronizar
     const sales = store_id
-      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3', [store_id, lim, off])
-      : await queryAll('SELECT * FROM sales ORDER BY created_at DESC LIMIT $1 OFFSET $2', [lim, off]);
+      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 ORDER BY created_at DESC', [store_id])
+      : await queryAll('SELECT * FROM sales ORDER BY created_at DESC');
     sales.forEach(s => {
       try { s.items = JSON.parse(s.items); } catch { s.items = []; }
       try { s.payments = JSON.parse(s.payments || '[]'); } catch { s.payments = []; }
