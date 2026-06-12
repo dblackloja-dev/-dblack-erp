@@ -416,62 +416,21 @@ export default function App() {
     ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
       if(sls?.length){
         const apiSales=salesFromApi(sls);
-        const currentSales=salesRef.current||ls('sales',{loja1:[],loja2:[],loja3:[],loja4:[]});
-        const apiIds=new Set(sls.map(s=>s.id));
-        let synced=0;
-        Object.keys(currentSales).forEach(store=>{
-          (currentSales[store]||[]).forEach(sale=>{
-            if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"){
-              api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',stock_id:''}).catch(console.error);
-              if(!apiSales[store])apiSales[store]=[];
-              apiSales[store].unshift(sale);
-              synced++;
-            }
-          });
-        });
-        if(synced>0) console.log('[SYNC] '+synced+' vendas locais enviadas ao servidor');
+        // Vendas locais que falharam são reenviadas pela fila offline (api.js), não aqui
         setSales(apiSales);
       }
       if(custs?.length) setCustomers(custs.map(custFromApi));
       setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
       if(emps?.length) setEmployees(emps.map(empFromApi));
-      // Sync payrolls: envia pagamentos locais que não existem no servidor
       {
         const apiPays=(pays||[]).map(payrollFromApi);
-        const localPays=ls('payrolls',[]);
-        const apiPayIds=new Set((pays||[]).map(p=>p.id));
-        let syncedPays=0;
-        localPays.forEach(lp=>{
-          if(lp.id&&!apiPayIds.has(lp.id)){
-            api.createPayroll({
-              month:lp.month,emp_id:lp.empId,emp_name:lp.empName,emp_cpf:lp.empCpf||'',emp_role:lp.empRole||'',emp_pix:lp.empPix||'',
-              store_id:lp.storeId,store_name:lp.storeName||'',
-              base_salary:lp.baseSalary||0,meta_bonus:lp.metaBonus||0,awards:lp.awards||0,overtime:lp.overtime||0,
-              store_discount:lp.storeDiscount||0,advances:lp.advances||0,other_deductions:lp.otherDeductions||0,
-              total_earnings:lp.totalEarnings||0,total_deductions:lp.totalDeductions||0,net_pay:lp.netPay||0,
-              paid:lp.paid||false,paid_date:lp.paidDate||null,notes:lp.notes||''
-            }).catch(console.error);
-            apiPays.unshift(lp);
-            syncedPays++;
-          }
-        });
-        if(syncedPays>0) console.log('[SYNC] '+syncedPays+' pagamentos locais enviados ao servidor');
+        // Pagamentos locais que falharam são reenviados pela fila offline (api.js), não aqui
         if(apiPays.length) setPayrolls(apiPays);
       }
       if(sels?.length) setSellers(sels.map(sellerFromApi));
       if(exchs?.length){
         const apiExchs=exchFromApi(exchs);
-        const localExchs=ls('exchanges',{loja1:[],loja2:[],loja3:[],loja4:[]});
-        const apiExchIds=new Set(exchs.map(e=>e.id));
-        Object.keys(localExchs).forEach(store=>{
-          (localExchs[store]||[]).forEach(ex=>{
-            if(ex.id&&!apiExchIds.has(ex.id)&&ex.status!=="Cancelada"){
-              api.createExchange({...ex,store_id:store,cupom_original:ex.cupomOriginal||ex.cupom_original||'',new_items:ex.newItems||[]}).catch(console.error);
-              if(!apiExchs[store])apiExchs[store]=[];
-              apiExchs[store].unshift(ex);
-            }
-          });
-        });
+        // Trocas locais que falharam são reenviadas pela fila offline (api.js), não aqui
         setExchanges(apiExchs);
       }
       if(proms?.length) setPromos(proms.map(promoFromApi));
@@ -540,7 +499,7 @@ export default function App() {
     const syncDone = (e) => {
       if (e.detail.sent > 0) showToast(e.detail.sent + " ações sincronizadas com o servidor!");
       setOfflineQueue(e.detail.remaining);
-      if (e.detail.remaining === 0 && loggedUser) loadAllData(true);
+      // NÃO chama loadAllData aqui — evita loop infinito (sync → load → sync → load...)
     };
     const authExpired = () => {
       // Sessão expirou — mostra tela de login sem perder aba/dados locais

@@ -93,6 +93,8 @@ async function syncQueue() {
         break;
       }
 
+      const syncController = new AbortController();
+      const syncTimeout = setTimeout(() => syncController.abort(), 20000);
       const res = await fetch(`${BASE}${item.path}`, {
         method: item.method,
         headers: {
@@ -100,7 +102,9 @@ async function syncQueue() {
           Authorization: `Bearer ${token}`,
         },
         body: item.body ? JSON.stringify(item.body) : undefined,
+        signal: syncController.signal,
       });
+      clearTimeout(syncTimeout);
 
       if (res.ok || res.status === 409) {
         // 409 = conflito (já existe), considera como sucesso
@@ -142,8 +146,8 @@ async function syncQueue() {
         }
       }
     } catch (e) {
-      // Ainda sem internet — para de tentar
-      console.log('[SYNC] Ainda sem internet, tentando depois');
+      // Sem internet ou timeout — para de tentar
+      console.log('[SYNC] Erro de rede/timeout, tentando depois:', e.name);
       break;
     }
   }
@@ -169,13 +173,13 @@ if (typeof window !== 'undefined') {
     setTimeout(syncQueue, 1000);
   });
 
-  // Retry periódico: a cada 30s verifica se tem itens na fila e tenta sincronizar
+  // Retry periódico: a cada 2 min verifica se tem itens na fila e tenta sincronizar
   setInterval(() => {
     if (navigator.onLine && getQueue().length > 0) {
       console.log('[SYNC] Retry periódico — tentando sincronizar fila pendente...');
       syncQueue();
     }
-  }, 30000);
+  }, 120000);
 }
 
 // ═══════════════════════════════════════════════════
@@ -212,32 +216,26 @@ async function request(path, options = {}) {
       return null;
     }
     if (!res.ok) {
-      // Se é escrita e o servidor deu erro, enfileira para não perder dados
+      // Erro 500+ em escrita: enfileira para retry (erro do servidor, pode ser temporário)
       if (isWrite && res.status >= 500) {
         console.warn('[REQUEST] Erro', res.status, 'em', path, '— enfileirando para retry');
         addToQueue(path, options);
         return { _offline: true, _queued: true };
       }
-      // Para vendas (POST /sales), enfileira mesmo com 400 para não perder a venda
-      if (isWrite && res.status >= 400 && path === '/sales') {
-        console.warn('[REQUEST] Erro', res.status, 'em venda — enfileirando para retry');
-        addToQueue(path, options);
-        return { _offline: true, _queued: true };
-      }
+      // Erros 4xx são erros reais (estoque insuficiente, dados inválidos) — NÃO enfileira
       const err = await res.json().catch(() => ({ error: 'Erro de rede' }));
       throw new Error(err.error || 'Erro na requisição');
     }
     return res.json();
   } catch (e) {
     clearTimeout(timeoutId);
-    // Se é uma escrita (POST/PUT/DELETE) e falhou por qualquer motivo, enfileira
-    if (isWrite) {
+    // Sem internet ou timeout: enfileira escritas para não perder dados
+    if (isWrite && (!navigator.onLine || e.name === 'AbortError')) {
       addToQueue(path, options);
-      // Retorna resposta fake para o app continuar funcionando
       return { _offline: true, _queued: true };
     }
 
-    // Para leituras (GET) offline ou timeout, retorna null silenciosamente
+    // Para leituras offline ou timeout, retorna null silenciosamente
     if (!navigator.onLine || e.name === 'AbortError') {
       console.log('[OFFLINE] Leitura ignorada:', path, e.name === 'AbortError' ? '(timeout)' : '(sem internet)');
       return null;
