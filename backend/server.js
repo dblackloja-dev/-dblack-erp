@@ -550,7 +550,8 @@ app.post('/api/sales', async (req, res) => {
 
     await client.query(
       `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       ON CONFLICT (id) DO NOTHING`,
       [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
        s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
        JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
