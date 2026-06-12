@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════
 // ═══  D'Black ERP — Service Worker (Offline)     ═══
 // ═══════════════════════════════════════════════════
-const CACHE_NAME = 'dblack-erp-v2'; // v2: fix QZ Tray
+const CACHE_NAME = 'dblack-erp-v3'; // v3: fix sync loop + network-first para JS/CSS
 
 // Arquivos essenciais para o app funcionar offline
 const PRECACHE_URLS = [
@@ -93,21 +93,31 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Arquivos estáticos (HTML, JS, CSS, imagens): cache first, fallback rede
+  // JS/CSS: network first (garante que deploys chegam rápido), fallback cache
+  const ext = url.pathname.split('.').pop();
+  if (['js', 'css'].includes(ext)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request) || new Response('', { status: 408 }))
+    );
+    return;
+  }
+
+  // Outros arquivos estáticos (imagens, fontes, HTML): cache first, fallback rede
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      // Retorna do cache imediatamente se disponível
       const fetchPromise = fetch(event.request)
         .then((response) => {
-          // Atualiza o cache com a versão nova (stale-while-revalidate)
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, clone);
-          });
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           return response;
         })
         .catch(() => {
-          // Sem internet e sem cache: retorna o index.html (SPA fallback)
           if (event.request.mode === 'navigate') {
             return caches.match('/index.html');
           }
