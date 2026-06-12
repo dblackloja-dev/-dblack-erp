@@ -421,7 +421,21 @@ export default function App() {
     ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
       if(sls?.length){
         const apiSales=salesFromApi(sls);
-        // Vendas locais que falharam são reenviadas pela fila offline (api.js), não aqui
+        // Reenvia vendas locais que não existem no servidor (vendas feitas offline ou que falharam)
+        const apiIds=new Set(sls.map(s=>s.id));
+        const currentSales=salesRef.current||{};
+        let synced=0;
+        Object.keys(currentSales).forEach(store=>{
+          (currentSales[store]||[]).forEach(sale=>{
+            if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"){
+              api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',stock_id:''}).catch(()=>{});
+              if(!apiSales[store])apiSales[store]=[];
+              apiSales[store].unshift(sale);
+              synced++;
+            }
+          });
+        });
+        if(synced>0) console.log('[SYNC] '+synced+' vendas locais enviadas ao servidor');
         setSales(apiSales);
       }
       if(custs?.length) setCustomers(custs.map(custFromApi));
