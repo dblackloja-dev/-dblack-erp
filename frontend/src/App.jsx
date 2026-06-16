@@ -481,30 +481,43 @@ export default function App() {
   useEffect(() => {
     if (!loggedUser || !navigator.onLine) return;
     const userId = loggedUser?.id || 'main';
-    // Carrega caixa de todas as lojas que o usuário tem acesso
     const stores = loggedUser.store_id === 'all' ? ['loja1','loja2','loja3','loja4'] : [loggedUser.store_id];
-    stores.forEach(storeId => {
-      api.getCash(storeId, userId).then(data => {
-        if (!data || !data.state) return;
-        const cashKey = storeId + "_" + userId;
-        setCashState(prev => {
-          const n = { ...prev };
-          n[cashKey] = {
-            open: data.state.is_open,
-            initial: +(data.state.initial_value) || 0,
-            history: (data.movements || []).map(m => ({
-              type: m.type,
-              value: +m.value,
-              desc: m.description || '',
-              time: new Date(m.created_at).toLocaleTimeString('pt-BR'),
-            })),
-            closedAt: data.state.closed_at,
-            closeReport: data.state.close_report ? JSON.parse(data.state.close_report) : null,
-          };
-          return n;
-        });
-      }).catch(e => console.warn('[CASH] Erro ao carregar caixa:', e));
-    });
+    const loadCash = () => {
+      stores.forEach(storeId => {
+        api.getCash(storeId, userId).then(data => {
+          if (!data || !data.state) return;
+          const cashKey = storeId + "_" + userId;
+          // Verifica se tem valor de abertura salvo localmente (sobrevive ao F5)
+          const savedKey = 'dblack_cash_open_' + cashKey;
+          const saved = localStorage.getItem(savedKey);
+          const savedCash = saved ? JSON.parse(saved) : null;
+          setCashState(prev => {
+            const n = { ...prev };
+            // Se tem abertura local salva, preserva o initial do operador
+            const useLocal = savedCash && (data.state.is_open || !data.state.is_open);
+            n[cashKey] = {
+              open: useLocal ? true : data.state.is_open,
+              initial: useLocal ? savedCash.initial : (+(data.state.initial_value) || 0),
+              history: (data.movements || []).map(m => ({
+                type: m.type,
+                value: +m.value,
+                desc: m.description || '',
+                time: new Date(m.created_at).toLocaleTimeString('pt-BR'),
+              })),
+              closedAt: data.state.closed_at,
+              closeReport: data.state.close_report ? JSON.parse(data.state.close_report) : null,
+            };
+            return n;
+          });
+        }).catch(e => console.warn('[CASH] Erro ao carregar caixa:', e));
+      });
+    };
+    // Sincroniza fila offline ANTES de carregar caixa (evita dados desatualizados)
+    if (api.getQueueCount() > 0) {
+      api.syncNow().then(loadCash).catch(loadCash);
+    } else {
+      loadCash();
+    }
   }, [loggedUser?.id]);
 
   // ─── MODO OFFLINE ───
@@ -3487,6 +3500,8 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
 
   const openCash=()=>{
     updateCash(cs=>({...cs,open:true,initial:openVal,history:[]}));
+    // Salva abertura no localStorage para sobreviver ao F5
+    localStorage.setItem('dblack_cash_open_'+cashKey,JSON.stringify({initial:openVal,openedAt:Date.now()}));
     showToast("Caixa aberto com fundo de "+fmt(openVal)+"!");
     api.cashAction(activeStore,{action:'open',value:openVal,user_id:userId}).catch(e=>showToast("Erro ao salvar abertura: "+e.message,"error"));
   };
@@ -3509,6 +3524,8 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
     const dinheiroContado=+(counted["dinheiro"]||0);
     updateCash(cs=>({...cs,open:false,initial:dinheiroContado,closedAt:new Date().toISOString(),closeReport:reportData}));
+    // Limpa abertura salva no localStorage (caixa fechou)
+    localStorage.removeItem('dblack_cash_open_'+cashKey);
     api.cashAction(activeStore,{action:'close',value:dinheiroContado,close_report:reportData,user_id:userId}).catch(e=>showToast("Erro ao salvar fechamento: "+e.message,"error"));
     setPrintData({type:"fechamento",report:reportData,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—",vendas:vendas.length,totalVendas,totalDesc,groups:PAY_GROUPS,sangrias:saidas,history:storeCash.history});
     setShowCloseModal(false);

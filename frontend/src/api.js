@@ -173,6 +173,12 @@ if (typeof window !== 'undefined') {
     setTimeout(syncQueue, 1000);
   });
 
+  // Sincroniza fila pendente imediatamente ao carregar a página
+  if (navigator.onLine && getQueue().length > 0) {
+    console.log('[SYNC] Sincronizando fila pendente ao carregar...');
+    setTimeout(syncQueue, 500);
+  }
+
   // Retry periódico: a cada 2 min verifica se tem itens na fila e tenta sincronizar
   setInterval(() => {
     if (navigator.onLine && getQueue().length > 0) {
