@@ -3186,8 +3186,8 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
             api.getCash(activeStore,loggedUser?.id||"main").then(data=>{
               if(!data||!data.state)return;
               setCashState(prev=>{
-                const n={...prev};
-                n[cashKey]={open:data.state.is_open,initial:+(data.state.initial_value)||0,history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),closedAt:data.state.closed_at,closeReport:data.state.close_report?JSON.parse(data.state.close_report):null};
+                const n={...prev};const existing=n[cashKey];
+                n[cashKey]={open:existing?.open||data.state.is_open,initial:existing?.open?existing.initial:(+(data.state.initial_value)||0),history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),closedAt:data.state.closed_at,closeReport:data.state.close_report?JSON.parse(data.state.close_report):null};
                 return n;
               });
             }).catch(console.error);
@@ -3212,10 +3212,10 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
           api.getCash(activeStore,loggedUser?.id||"main").then(data=>{
             if(!data||!data.state)return;
             setCashState(prev=>{
-              const n={...prev};
+              const n={...prev};const existing=n[cashKey];
               n[cashKey]={
-                open:data.state.is_open,
-                initial:+(data.state.initial_value)||0,
+                open:existing?.open||data.state.is_open,
+                initial:existing?.open?existing.initial:(+(data.state.initial_value)||0),
                 history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),
                 closedAt:data.state.closed_at,
                 closeReport:data.state.close_report?JSON.parse(data.state.close_report):null,
@@ -3256,10 +3256,10 @@ function DespesasModule({storeExpenses,activeStore,expenses,setExpenses,currentS
         api.getCash(activeStore,loggedUser?.id||"main").then(data=>{
           if(!data||!data.state)return;
           setCashState(prev=>{
-            const n={...prev};
+            const n={...prev};const existing=n[cashKey];
             n[cashKey]={
-              open:data.state.is_open,
-              initial:+(data.state.initial_value)||0,
+              open:existing?.open||data.state.is_open,
+              initial:existing?.open?existing.initial:(+(data.state.initial_value)||0),
               history:(data.movements||[]).map(m=>({type:m.type,value:+m.value,desc:m.description||'',time:new Date(m.created_at).toLocaleTimeString('pt-BR')})),
               closedAt:data.state.closed_at,
               closeReport:data.state.close_report?JSON.parse(data.state.close_report):null,
