@@ -366,7 +366,13 @@ const api = {
 
   // Cash
   getCash: (storeId, userId) => request(`/cash/${storeId}${userId ? `?user_id=${userId}` : ''}`),
-  cashAction: (storeId, data) => request(`/cash/${storeId}`, { method: 'POST', body: data }),
+  cashAction: (storeId, data) => {
+    // Gera ID único no cliente para movimentos — evita duplicatas quando timeout + retry
+    if (data.action === 'movement' && !data.mov_id) {
+      data.mov_id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    }
+    return request(`/cash/${storeId}`, { method: 'POST', body: data });
+  },
 
   // Employees
   getEmployees: () => request('/employees'),
@@ -382,12 +388,20 @@ const api = {
 
   // Cash Withdrawals (Retiradas)
   getWithdrawals: (storeId) => request(`/withdrawals${storeId ? `?store_id=${storeId}` : ''}`),
-  createWithdrawal: (data) => request('/withdrawals', { method: 'POST', body: data }),
+  createWithdrawal: (data) => {
+    if (!data.id) data.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    if (!data.mov_id) data.mov_id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    return request('/withdrawals', { method: 'POST', body: data });
+  },
   deleteWithdrawal: (id) => request(`/withdrawals/${id}`, { method: 'DELETE' }),
 
   // Cash Advances (Vales)
   getAdvances: (storeId) => request(`/advances${storeId ? `?store_id=${storeId}` : ''}`),
-  createAdvance: (data) => request('/advances', { method: 'POST', body: data }),
+  createAdvance: (data) => {
+    if (!data.id) data.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    if (!data.mov_id) data.mov_id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    return request('/advances', { method: 'POST', body: data });
+  },
   deleteAdvance: (id) => request(`/advances/${id}`, { method: 'DELETE' }),
   getAdvancesSummary: (month) => request(`/advances/summary?month=${month}`),
 

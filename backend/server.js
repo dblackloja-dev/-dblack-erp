@@ -747,7 +747,7 @@ app.get('/api/cash/:storeId', async (req, res) => {
 
 app.post('/api/cash/:storeId', async (req, res) => {
   try {
-    const { action, value, description, type, user_id, close_report } = req.body;
+    const { action, value, description, type, user_id, close_report, mov_id } = req.body;
     const storeId = req.params.storeId;
     const userId = user_id || 'main';
 
@@ -770,9 +770,11 @@ app.post('/api/cash/:storeId', async (req, res) => {
         [value || 0, close_report ? JSON.stringify(close_report) : null, storeId, userId]
       );
     } else if (action === 'movement') {
+      // Usa mov_id do cliente (se enviado) para evitar duplicatas em timeout+retry
+      const movId = mov_id || genId();
       await queryRun(
-        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
-        [genId(), storeId, userId, type || 'entrada', value, description || '']
+        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
+        [movId, storeId, userId, type || 'entrada', value, description || '']
       );
     }
 
@@ -796,16 +798,17 @@ app.get('/api/withdrawals', async (req, res) => {
 app.post('/api/withdrawals', async (req, res) => {
   try {
     const w = req.body;
-    const id = genId();
+    const id = w.id || genId();
     await queryRun(
-      'INSERT INTO cash_withdrawals (id, store_id, value, description, responsible, destination) VALUES ($1,$2,$3,$4,$5,$6)',
+      'INSERT INTO cash_withdrawals (id, store_id, value, description, responsible, destination) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
       [id, w.store_id, w.value, w.description || '', w.responsible || '', w.destination || '']
     );
 
     // Registra a saída no caixa para que o saldo seja atualizado
+    const movId = w.mov_id || genId();
     await queryRun(
-      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
-      [genId(), w.store_id, w.user_id || 'main', 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim()]
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
+      [movId, w.store_id, w.user_id || 'main', 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim()]
     );
 
     res.json({ id, ...w, created_at: new Date().toISOString() });
@@ -850,17 +853,18 @@ app.get('/api/advances', async (req, res) => {
 app.post('/api/advances', async (req, res) => {
   try {
     const a = req.body;
-    const id = genId();
+    const id = a.id || genId();
     const month = a.month || new Date().toISOString().slice(0, 7);
     await queryRun(
-      'INSERT INTO cash_advances (id, store_id, emp_id, emp_name, value, description, authorized_by, month) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      'INSERT INTO cash_advances (id, store_id, emp_id, emp_name, value, description, authorized_by, month) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING',
       [id, a.store_id, a.emp_id, a.emp_name, a.value, a.description || '', a.authorized_by || '', month]
     );
 
     // Registra saída no caixa
+    const movId = a.mov_id || genId();
     await queryRun(
-      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
-      [genId(), a.store_id, a.user_id || 'main', 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`]
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
+      [movId, a.store_id, a.user_id || 'main', 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`]
     );
 
     res.json({ id, ...a, month, created_at: new Date().toISOString() });

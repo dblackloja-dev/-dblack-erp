@@ -2193,9 +2193,9 @@ function ReceiptComprovante({data,onClose}){
             <Row l="Total descontos" r={fmt(data.totalDesc)}/>
             <HR/>
             {data.history.filter(h=>h.type==="saida").length>0&&<>
-              <div style={{fontWeight:700,fontSize:10,letterSpacing:1}}>SANGRIAS</div>
+              <div style={{fontWeight:700,fontSize:10,letterSpacing:1}}>SAÍDAS</div>
               {data.history.filter(h=>h.type==="saida").map((h,i)=><Row key={i} l={h.time+" - "+h.desc} r={"-"+fmt(h.value)}/>)}
-              <Row l="Total sangrias" r={"-"+fmt(data.sangrias)}/>
+              <Row l="Total saídas" r={"-"+fmt(data.sangrias)}/>
               <HR/>
             </>}
             {data.history.filter(h=>h.type==="entrada"&&!h.desc?.startsWith("Venda ")).length>0&&<>
@@ -3602,7 +3602,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
         <KPI icon={storeCash.open?I.unlock:I.lock} label="Status" value={storeCash.open?"ABERTO":"FECHADO"} sub="" color={storeCash.open?C.grn:C.red}/>
         <KPI icon={I.money} label="Saldo Sistema" value={fmt(saldoSistema)} sub={"Fundo: "+fmt(storeCash.initial)} color={C.gold}/>
         <KPI icon={I.check} label="Vendas Hoje" value={vendas.length+""} sub={fmt(vendas.reduce((s,v)=>s+v.total,0))} color={C.grn}/>
-        <KPI icon={I.alert} label="Sangrias" value={fmt(saidas)} sub={storeCash.history.filter(h=>h.type==="saida").length+" movim."} color={C.red}/>
+        <KPI icon={I.alert} label="Saídas" value={fmt(saidas)} sub={storeCash.history.filter(h=>h.type==="saida").length+" movim."} color={C.red}/>
       </div>
 
       {/* CAIXA FECHADO */}
@@ -3672,12 +3672,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
             ?<div style={{opacity:.4,fontSize:12,textAlign:"center",padding:16}}>Nenhuma movimentação registrada</div>
             :<div style={S.tWrap}><table style={S.table}>
               <thead><tr><th style={S.th}>Hora</th><th style={S.th}>Tipo</th><th style={S.th}>Descrição</th><th style={S.th}>Valor</th></tr></thead>
-              <tbody>{storeCash.history.map((h,i)=><tr key={i} style={S.tr}>
+              <tbody>{storeCash.history.map((h,i)=>{const saidaLabel=h.desc?.startsWith("Despesa:")?"↓ Despesa":h.desc?.startsWith("Retirada:")?"↓ Retirada":h.desc?.startsWith("Vale:")?"↓ Vale":h.desc?.startsWith("Estorno")?"↓ Estorno":"↓ Sangria";return <tr key={i} style={S.tr}>
                 <td style={{...S.td,fontFamily:"monospace",fontSize:11}}>{h.time}</td>
-                <td style={S.td}><span style={{...S.stBadge,...(h.type==="entrada"?S.stOk:S.stLow)}}>{h.type==="entrada"?"↑ Entrada":"↓ Saída"}</span></td>
+                <td style={S.td}><span style={{...S.stBadge,...(h.type==="entrada"?S.stOk:S.stLow)}}>{h.type==="entrada"?"↑ Entrada":saidaLabel}</span></td>
                 <td style={S.td}>{h.desc}</td>
                 <td style={{...S.td,fontWeight:700,color:h.type==="entrada"?C.grn:C.red}}>{h.type==="entrada"?"+":"-"}{fmt(h.value)}</td>
-              </tr>)}</tbody>
+              </tr>})}</tbody>
             </table></div>
           }
         </div>
