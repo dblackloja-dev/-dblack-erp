@@ -76,11 +76,13 @@ async function triggerPrint(contentRef, callback) {
       return;
     } catch (err) {
       console.warn('[QZ] Falhou:', err.message || err);
-      // Não mostra erro — cai silenciosamente pro Windows
+      if (_globalToast) _globalToast('QZ Tray: '+( err.message || 'não conectado' )+' — usando impressão do sistema', 'error');
     }
+  } else if (!qz && el) {
+    if (_globalToast) _globalToast('QZ Tray não carregou — verifique se está aberto no computador', 'error');
   }
 
-  // Fallback: impressão pelo Windows (sem mensagem de erro)
+  // Fallback: impressão pelo Windows
   window.print();
   callback && callback();
 }
@@ -604,6 +606,7 @@ export default function App() {
               console.log('[QZ] Conectado via wss://');
             } catch(e2) {
               console.warn('[QZ] wss:// também falhou:', e2.message||e2);
+              if (_globalToast) _globalToast('QZ Tray não conectou — verifique se está aberto', 'error');
             }
           }
         } else {
