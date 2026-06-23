@@ -376,7 +376,7 @@ app.delete('/api/categories/:name', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/stock', async (req, res) => {
   try {
-    const rows = await queryAll('SELECT * FROM stock');
+    const rows = await queryAll('SELECT stock_id, product_id, quantity FROM stock');
     const result = {};
     rows.forEach(r => {
       if (!result[r.stock_id]) result[r.stock_id] = {};
@@ -700,7 +700,7 @@ app.delete('/api/expenses/:id', async (req, res) => {
     // Se for despesa de caixa, remove o movimento de saída correspondente
     if (exp && exp.expense_type === 'caixa') {
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AT TIME ZONE 'America/Sao_Paulo'",
         [exp.store_id, exp.value, `Despesa: ${exp.description}%`]
       );
     }
@@ -739,7 +739,7 @@ app.get('/api/cash/:storeId', async (req, res) => {
     const state = await queryOne('SELECT * FROM cash_state WHERE store_id = $1 AND user_id = $2', [req.params.storeId, userId]);
     // Movimentações de hoje deste operador
     const movements = await queryAll(
-      "SELECT * FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY created_at ASC",
+      "SELECT * FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AT TIME ZONE 'America/Sao_Paulo' ORDER BY created_at ASC",
       [req.params.storeId, userId]
     );
     res.json({
@@ -765,7 +765,7 @@ app.post('/api/cash/:storeId', async (req, res) => {
       `, [storeId, userId, value || 0]);
       // Limpa movimentações antigas deste operador (novo dia)
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AT TIME ZONE 'America/Sao_Paulo'",
         [storeId, userId]
       );
     } else if (action === 'close') {
@@ -827,7 +827,7 @@ app.delete('/api/withdrawals/:id', async (req, res) => {
     // Remove o movimento de caixa correspondente (pela descrição)
     if (w) {
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AT TIME ZONE 'America/Sao_Paulo'",
         [w.store_id, w.value, `Retirada: ${w.description || 'Sem descrição'}%`]
       );
     }
@@ -883,7 +883,7 @@ app.delete('/api/advances/:id', async (req, res) => {
     // Remove o movimento de caixa correspondente (pela descrição)
     if (a) {
       await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date",
+        "DELETE FROM cash_movements WHERE store_id = $1 AND type = 'saida' AND value = $2 AND description LIKE $3 AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AT TIME ZONE 'America/Sao_Paulo'",
         [a.store_id, a.value, `Vale: ${a.emp_name}%`]
       );
     }
@@ -913,7 +913,7 @@ app.get('/api/sales/employee-purchases', async (req, res) => {
       `SELECT emp_id, SUM(total) as total, COUNT(*) as count
        FROM sales
        WHERE emp_id IS NOT NULL AND emp_id != '' AND status = 'Concluída'
-         AND to_char(created_at, 'YYYY-MM') = $1
+         AND created_at >= ($1 || '-01')::date AND created_at < (($1 || '-01')::date + interval '1 month')
        GROUP BY emp_id`,
       [month]
     );
@@ -930,7 +930,7 @@ app.get('/api/sales/employee-purchases/:empId', async (req, res) => {
       `SELECT id, date, items, total, store_id, cupom, created_at
        FROM sales
        WHERE emp_id = $1 AND status = 'Concluída'
-         AND to_char(created_at, 'YYYY-MM') = $2
+         AND created_at >= ($2 || '-01')::date AND created_at < (($2 || '-01')::date + interval '1 month')
        ORDER BY created_at DESC`,
       [req.params.empId, month]
     );

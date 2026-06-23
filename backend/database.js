@@ -13,8 +13,8 @@ const pool = new Pool({
   ssl: connString && !connString.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
-  max: 20,
-  idleTimeoutMillis: 30000,
+  max: 5,
+  idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
 });
 
@@ -371,6 +371,7 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_stock_product ON stock(product_id)',
     'CREATE INDEX IF NOT EXISTS idx_products_active ON products(active)',
     'CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_cupom ON sales(cupom)',
   ];
   for (const idx of indexes) {
     await pool.query(idx).catch(() => {});
