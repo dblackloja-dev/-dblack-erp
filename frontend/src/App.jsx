@@ -493,10 +493,13 @@ export default function App() {
           const savedKey = 'dblack_cash_open_' + cashKey;
           const saved = localStorage.getItem(savedKey);
           const savedCash = saved ? JSON.parse(saved) : null;
+          // Limpa abertura local se for de mais de 24h atrás (evita puxar valor de dias anteriores)
+          const localStale = savedCash && savedCash.openedAt && (Date.now() - savedCash.openedAt > 24 * 60 * 60 * 1000);
+          if (localStale) { localStorage.removeItem(savedKey); }
           setCashState(prev => {
             const n = { ...prev };
-            // Se tem abertura local salva, preserva o initial do operador
-            const useLocal = savedCash && (data.state.is_open || !data.state.is_open);
+            // Só usa valor local se o caixa está aberto no servidor E o local não está vencido
+            const useLocal = savedCash && !localStale && data.state.is_open;
             n[cashKey] = {
               open: useLocal ? true : data.state.is_open,
               initial: useLocal ? savedCash.initial : (+(data.state.initial_value) || 0),
