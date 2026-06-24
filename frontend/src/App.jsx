@@ -489,20 +489,32 @@ export default function App() {
         api.getCash(storeId, userId).then(data => {
           if (!data || !data.state) return;
           const cashKey = storeId + "_" + userId;
-          // Verifica se tem valor de abertura salvo localmente (sobrevive ao F5)
           const savedKey = 'dblack_cash_open_' + cashKey;
           const saved = localStorage.getItem(savedKey);
           const savedCash = saved ? JSON.parse(saved) : null;
-          // Limpa abertura local se for de mais de 24h atrás (evita puxar valor de dias anteriores)
           const localStale = savedCash && savedCash.openedAt && (Date.now() - savedCash.openedAt > 24 * 60 * 60 * 1000);
           if (localStale) { localStorage.removeItem(savedKey); }
+          // Detecta caixa "zumbi": servidor diz aberto mas opened_at é de ontem ou antes
+          // Isso acontece quando o fechamento não salvou no servidor (rede caiu, timeout, etc.)
+          let serverOpen = data.state.is_open;
+          let serverInitial = +(data.state.initial_value) || 0;
+          if (serverOpen && data.state.opened_at) {
+            const openedDate = new Date(data.state.opened_at).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+            const todayDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+            if (openedDate < todayDate && !savedCash) {
+              // Caixa aberto ontem mas sem localStorage = fechamento não salvou no servidor
+              // Força fechamento automático no servidor com o valor que estava
+              console.warn('[CASH] Caixa zumbi detectado em', storeId, '- aberto em', openedDate, 'forçando fechamento');
+              serverOpen = false;
+              api.cashAction(storeId, { action: 'close', value: serverInitial, user_id: userId }).catch(() => {});
+            }
+          }
+          const useLocal = savedCash && !localStale && serverOpen;
           setCashState(prev => {
             const n = { ...prev };
-            // Só usa valor local se o caixa está aberto no servidor E o local não está vencido
-            const useLocal = savedCash && !localStale && data.state.is_open;
             n[cashKey] = {
-              open: useLocal ? true : data.state.is_open,
-              initial: useLocal ? savedCash.initial : (+(data.state.initial_value) || 0),
+              open: useLocal ? true : serverOpen,
+              initial: useLocal ? savedCash.initial : serverInitial,
               history: (data.movements || []).map(m => ({
                 type: m.type,
                 value: +m.value,
@@ -3504,12 +3516,14 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const userId=loggedUser?.id||"main";
   const updateCash=(fn)=>{setCashState(prev=>{const n={...prev};n[cashKey]=fn({...(n[cashKey]||{open:false,initial:0,history:[]})});return n;});};
 
-  const openCash=()=>{
+  const openCash=async()=>{
     updateCash(cs=>({...cs,open:true,initial:openVal,history:[]}));
-    // Salva abertura no localStorage para sobreviver ao F5
     localStorage.setItem('dblack_cash_open_'+cashKey,JSON.stringify({initial:openVal,openedAt:Date.now()}));
     showToast("Caixa aberto com fundo de "+fmt(openVal)+"!");
-    api.cashAction(activeStore,{action:'open',value:openVal,user_id:userId}).catch(e=>showToast("Erro ao salvar abertura: "+e.message,"error"));
+    for(let i=0;i<3;i++){
+      try{ await api.cashAction(activeStore,{action:'open',value:openVal,user_id:userId}); return; }
+      catch(e){ if(i===2) showToast("Erro ao salvar abertura no servidor — tente recarregar a página","error"); else await new Promise(r=>setTimeout(r,1000*(i+1))); }
+    }
   };
 
   const doSangria=()=>{
@@ -3522,7 +3536,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     setSangria("");setSangriaDesc("");showToast(label+" registrado!");
   };
 
-  const confirmarFechamento=()=>{
+  const confirmarFechamento=async()=>{
     const faltando=PAY_GROUPS.filter(g=>esperado[g.key]>0&&counted[g.key]==="");
     if(faltando.length>0)return showToast("Preencha: "+faltando.map(g=>g.label).join(", "),"error");
     const totalVendas=vendas.reduce((s,v)=>s+v.total,0);
@@ -3530,14 +3544,22 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
     const dinheiroContado=+(counted["dinheiro"]||0);
     updateCash(cs=>({...cs,open:false,initial:dinheiroContado,closedAt:new Date().toISOString(),closeReport:reportData}));
-    // Limpa abertura salva no localStorage (caixa fechou)
-    localStorage.removeItem('dblack_cash_open_'+cashKey);
-    api.cashAction(activeStore,{action:'close',value:dinheiroContado,close_report:reportData,user_id:userId}).catch(e=>showToast("Erro ao salvar fechamento: "+e.message,"error"));
     setPrintData({type:"fechamento",report:reportData,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—",vendas:vendas.length,totalVendas,totalDesc,groups:PAY_GROUPS,sangrias:saidas,history:storeCash.history});
     setShowCloseModal(false);
     setCounted(initCounted());
     setCloseObs("");
     showToast(`Caixa fechado! ${diferenca>=0?"Sobra":"Falta"}: ${fmt(Math.abs(diferenca))}`);
+    // Salva no servidor COM retry — só limpa localStorage após confirmar
+    for(let i=0;i<3;i++){
+      try{
+        await api.cashAction(activeStore,{action:'close',value:dinheiroContado,close_report:reportData,user_id:userId});
+        localStorage.removeItem('dblack_cash_open_'+cashKey);
+        return;
+      }catch(e){
+        if(i<2) await new Promise(r=>setTimeout(r,1500*(i+1)));
+        else{ showToast("ATENÇÃO: Fechamento não salvou no servidor! Recarregue e feche novamente.","error"); }
+      }
+    }
   };
 
   // Último relatório de fechamento
