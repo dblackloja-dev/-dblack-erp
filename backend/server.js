@@ -10,6 +10,10 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const Anthropic = require('@anthropic-ai/sdk');
 
+// Evita que erros não capturados derrubem o processo
+process.on('uncaughtException', (err) => { console.error('[UNCAUGHT]', err.message); });
+process.on('unhandledRejection', (err) => { console.error('[UNHANDLED]', err?.message || err); });
+
 const { queryAll, queryOne, queryRun, initDB, pool, connectWithTimeout } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -111,7 +115,7 @@ app.get('/api/stores', async (req, res) => {
   try {
     const stores = await queryAll('SELECT * FROM stores');
     res.json(stores);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -149,7 +153,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     const { password: _p, pin: _pin, ...safeUser } = user;
     res.json({ ...safeUser, token });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Verifica se uma senha pertence a um usuário com permissão de cancelar
@@ -185,7 +189,7 @@ app.post('/api/auth/verify', async (req, res) => {
     }
 
     res.json({ authorized: false });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Retorna o usuário autenticado pelo token
@@ -195,14 +199,14 @@ app.get('/api/auth/me', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
     const { password: _p, pin: _pin, ...safeUser } = user;
     res.json(safeUser);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/users', async (req, res) => {
   try {
     const users = await queryAll('SELECT id, name, email, role, store_id, active, avatar, created_at FROM users ORDER BY name');
     res.json(users);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/users', requireRole('admin', 'gestor'), async (req, res) => {
@@ -216,7 +220,7 @@ app.post('/api/users', requireRole('admin', 'gestor'), async (req, res) => {
       [id, name, email || '', hash, role || 'vendedor', store_id || 'all', avatar || name.slice(0, 2).toUpperCase()]
     );
     res.json({ id, name, email, role, store_id, active: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/users/:id', requireRole('admin', 'gestor'), async (req, res) => {
@@ -239,7 +243,7 @@ app.put('/api/users/:id', requireRole('admin', 'gestor'), async (req, res) => {
       );
     }
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
@@ -247,7 +251,7 @@ app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
     if (req.params.id === req.user.id) return res.status(400).json({ error: 'Você não pode excluir seu próprio usuário' });
     await queryRun('DELETE FROM users WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -263,7 +267,7 @@ app.get('/api/products', async (req, res) => {
       try { p.variations = JSON.parse(p.variations || '[]'); } catch { p.variations = []; }
     });
     res.json(products);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/products', async (req, res) => {
@@ -290,7 +294,7 @@ app.post('/api/products', async (req, res) => {
     }
 
     res.json({ id, ...p, margin, variations: p.variations || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/products/:id', async (req, res) => {
@@ -305,14 +309,14 @@ app.put('/api/products/:id', async (req, res) => {
        p.color || '', p.price, p.cost, margin, p.min_stock || 10, p.img || '👕', p.photo || '', vars, p.active !== false, req.params.id]
     );
     res.json({ success: true, margin });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/products/:id', async (req, res) => {
   try {
     await queryRun('UPDATE products SET active = false WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Retorna fotos de produtos específicos (por IDs via query string)
@@ -326,7 +330,7 @@ app.get('/api/products/photos', async (req, res) => {
     const map = {};
     rows.forEach(r => { map[r.id] = r.photo; });
     res.json(map);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Busca foto de um produto específico
@@ -334,7 +338,7 @@ app.get('/api/products/:id/photo', async (req, res) => {
   try {
     const p = await queryOne('SELECT photo FROM products WHERE id = $1', [req.params.id]);
     res.json({ photo: p?.photo || '' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Upload de foto
@@ -344,7 +348,7 @@ app.post('/api/products/:id/photo', upload.single('photo'), async (req, res) => 
     const photoUrl = `/uploads/${req.file.filename}`;
     await queryRun('UPDATE products SET photo = $1 WHERE id = $2', [photoUrl, req.params.id]);
     res.json({ photo: photoUrl });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -354,7 +358,7 @@ app.get('/api/categories', async (req, res) => {
   try {
     const rows = await queryAll('SELECT name FROM categories ORDER BY name');
     res.json(rows.map(c => c.name));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/categories', async (req, res) => {
@@ -368,7 +372,7 @@ app.delete('/api/categories/:name', async (req, res) => {
   try {
     await queryRun('DELETE FROM categories WHERE name = $1', [req.params.name]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -383,7 +387,7 @@ app.get('/api/stock', async (req, res) => {
       result[r.stock_id][r.product_id] = r.quantity;
     });
     res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/stock/:stockId', async (req, res) => {
@@ -392,7 +396,7 @@ app.get('/api/stock/:stockId', async (req, res) => {
     const result = {};
     rows.forEach(r => { result[r.product_id] = r.quantity; });
     res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Sync em massa — recebe todo o estoque de uma vez (batched para performance)
@@ -429,7 +433,7 @@ app.post('/api/stock/bulk', async (req, res) => {
       }
     }
     res.json({ success: true, count });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/stock/:stockId/:productId', async (req, res) => {
@@ -458,7 +462,7 @@ app.put('/api/stock/:stockId/:productId', async (req, res) => {
 
     const current = await queryOne('SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2', [stockId, productId]);
     res.json({ quantity: current?.quantity || 0 });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/stock/transfer', async (req, res) => {
@@ -510,7 +514,7 @@ app.get('/api/stock/movements/:stockId', async (req, res) => {
       [req.params.stockId]
     );
     res.json(movements);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -530,7 +534,7 @@ app.get('/api/sales', async (req, res) => {
       try { s.payments = JSON.parse(s.payments || '[]'); } catch { s.payments = []; }
     });
     res.json(sales);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/sales', async (req, res) => {
@@ -626,7 +630,7 @@ app.get('/api/customers', async (req, res) => {
       try { c.tags = JSON.parse(c.tags || '[]'); } catch { c.tags = []; }
     });
     res.json(customers);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/customers', async (req, res) => {
@@ -640,7 +644,7 @@ app.post('/api/customers', async (req, res) => {
        c.notes || '', JSON.stringify(c.tags || ['Novo']), c.points || 0, c.total_spent || 0, c.visits || 0]
     );
     res.json({ id, ...c, tags: c.tags || ['Novo'] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/customers/:id', async (req, res) => {
@@ -652,7 +656,7 @@ app.put('/api/customers/:id', async (req, res) => {
        c.notes || '', JSON.stringify(c.tags || []), c.points || 0, c.total_spent || 0, c.visits || 0, req.params.id]
     );
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -666,7 +670,7 @@ app.get('/api/expenses', async (req, res) => {
       ? await queryAll('SELECT * FROM expenses WHERE store_id = $1 ORDER BY date DESC LIMIT $2', [store_id, lim])
       : await queryAll('SELECT * FROM expenses ORDER BY date DESC LIMIT $1', [lim]);
     res.json(expenses);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/expenses', async (req, res) => {
@@ -678,7 +682,7 @@ app.post('/api/expenses', async (req, res) => {
       [id, e.store_id, e.date || today(), e.category || '', e.description || '', e.value, e.recurring || false, e.expense_type || 'operacional']
     );
     res.json({ id, ...e });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/expenses/:id', async (req, res) => {
@@ -689,7 +693,7 @@ app.put('/api/expenses/:id', async (req, res) => {
       [e.date, e.category || '', e.description || '', e.value, e.recurring || false, e.expense_type || 'operacional', req.params.id]
     );
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/expenses/:id', async (req, res) => {
@@ -705,7 +709,7 @@ app.delete('/api/expenses/:id', async (req, res) => {
       );
     }
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ── Expense Categories ──
@@ -713,21 +717,21 @@ app.get('/api/expense-categories', async (req, res) => {
   try {
     const cats = await queryAll('SELECT * FROM expense_categories ORDER BY name');
     res.json(cats);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/expense-categories', async (req, res) => {
   try {
     await queryRun('INSERT INTO expense_categories (name) VALUES ($1)', [req.body.name]);
     res.json({ success: true, name: req.body.name });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/expense-categories/:name', async (req, res) => {
   try {
     await queryRun('DELETE FROM expense_categories WHERE name = $1', [decodeURIComponent(req.params.name)]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -746,7 +750,7 @@ app.get('/api/cash/:storeId', async (req, res) => {
       state: state || { store_id: req.params.storeId, user_id: userId, is_open: false, initial_value: 0 },
       movements
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/cash/:storeId', async (req, res) => {
@@ -783,7 +787,7 @@ app.post('/api/cash/:storeId', async (req, res) => {
     }
 
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -796,7 +800,7 @@ app.get('/api/withdrawals', async (req, res) => {
       ? await queryAll('SELECT * FROM cash_withdrawals WHERE store_id = $1 ORDER BY created_at DESC LIMIT 200', [storeId])
       : await queryAll('SELECT * FROM cash_withdrawals ORDER BY created_at DESC LIMIT 500');
     res.json(withdrawals);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/withdrawals', async (req, res) => {
@@ -816,7 +820,7 @@ app.post('/api/withdrawals', async (req, res) => {
     );
 
     res.json({ id, ...w, created_at: new Date().toISOString() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/withdrawals/:id', async (req, res) => {
@@ -832,7 +836,7 @@ app.delete('/api/withdrawals/:id', async (req, res) => {
       );
     }
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -851,7 +855,7 @@ app.get('/api/advances', async (req, res) => {
     q += ' ORDER BY created_at DESC';
     const advances = await queryAll(q, params);
     res.json(advances);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/advances', async (req, res) => {
@@ -872,7 +876,7 @@ app.post('/api/advances', async (req, res) => {
     );
 
     res.json({ id, ...a, month, created_at: new Date().toISOString() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/advances/:id', async (req, res) => {
@@ -888,7 +892,7 @@ app.delete('/api/advances/:id', async (req, res) => {
       );
     }
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Soma de vales por colaborador/mês (para folha de pagamento)
@@ -901,7 +905,7 @@ app.get('/api/advances/summary', async (req, res) => {
       [month]
     );
     res.json(summary);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Compras de colaboradores (desconto em folha) — soma por colaborador/mês
@@ -918,7 +922,7 @@ app.get('/api/sales/employee-purchases', async (req, res) => {
       [month]
     );
     res.json(purchases);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // Detalhes das compras de um colaborador específico
@@ -935,7 +939,7 @@ app.get('/api/sales/employee-purchases/:empId', async (req, res) => {
       [req.params.empId, month]
     );
     res.json(purchases);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -945,7 +949,7 @@ app.get('/api/employees', async (req, res) => {
   try {
     const employees = await queryAll('SELECT * FROM employees ORDER BY name');
     res.json(employees);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/employees', requireRole('admin', 'gestor', 'gerente'), async (req, res) => {
@@ -957,7 +961,7 @@ app.post('/api/employees', requireRole('admin', 'gestor', 'gerente'), async (req
       [id, e.name, e.cpf || '', e.role || 'Vendedor', e.store_id, e.salary || 0, e.pix || '', e.admission || today()]
     );
     res.json({ id, ...e, active: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/employees/:id', async (req, res) => {
@@ -968,14 +972,14 @@ app.put('/api/employees/:id', async (req, res) => {
       [e.name, e.cpf || '', e.role, e.store_id, e.salary || 0, e.pix || '', e.admission || '', e.active !== false, req.params.id]
     );
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/employees/:id', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     await queryRun('DELETE FROM employees WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -985,7 +989,7 @@ app.get('/api/payrolls', async (req, res) => {
   try {
     const payrolls = await queryAll('SELECT * FROM payrolls ORDER BY created_at DESC LIMIT 500');
     res.json(payrolls);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/payrolls', requireRole('admin', 'gestor'), async (req, res) => {
@@ -1003,7 +1007,7 @@ app.post('/api/payrolls', requireRole('admin', 'gestor'), async (req, res) => {
        p.total_earnings || 0, p.total_deductions || 0, p.net_pay || 0, p.paid || false, p.paid_date || null, p.notes || '']
     );
     res.json({ id, ...p });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/payrolls/:id', async (req, res) => {
@@ -1020,14 +1024,14 @@ app.put('/api/payrolls/:id', async (req, res) => {
        p.total_earnings || 0, p.total_deductions || 0, p.net_pay || 0, p.notes || '', req.params.id]
     );
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/payrolls/:id', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     await queryRun('DELETE FROM payrolls WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -1037,14 +1041,14 @@ app.get('/api/sellers', async (req, res) => {
   try {
     const sellers = await queryAll('SELECT * FROM sellers ORDER BY total_sold DESC');
     res.json(sellers);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/sellers/:id', async (req, res) => {
   try {
     await queryRun('UPDATE sellers SET commission = $1 WHERE id = $2', [req.body.commission, req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -1061,7 +1065,7 @@ app.get('/api/exchanges', async (req, res) => {
       try { e.new_items = JSON.parse(e.new_items || '[]'); } catch { e.new_items = []; }
     });
     res.json(exchanges);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/exchanges', async (req, res) => {
@@ -1183,7 +1187,7 @@ app.get('/api/promos', async (req, res) => {
   try {
     const promos = await queryAll('SELECT * FROM promos ORDER BY created_at DESC');
     res.json(promos);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/promos', async (req, res) => {
@@ -1195,14 +1199,14 @@ app.post('/api/promos', async (req, res) => {
       [id, p.name, p.type || 'percent', p.value, p.min_purchase || 0, p.valid_until || '']
     );
     res.json({ id, ...p, active: true, usage_count: 0 });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/promos/:id', async (req, res) => {
   try {
     await queryRun('UPDATE promos SET active = $1 WHERE id = $2', [req.body.active !== false, req.params.id]);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -1215,7 +1219,7 @@ app.get('/api/investments', async (req, res) => {
       try { i.categories = JSON.parse(i.categories || '[]'); } catch { i.categories = []; }
     });
     res.json(investments);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/investments', async (req, res) => {
@@ -1227,7 +1231,7 @@ app.post('/api/investments', async (req, res) => {
       [id, i.week || '', i.date || today(), i.value, i.supplier || '', JSON.stringify(i.categories || []), i.notes || '']
     );
     res.json({ id, ...i });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ═══════════════════════════════════════════
@@ -1250,7 +1254,7 @@ app.post('/api/qz-sign', (req, res) => {
     sign.update(data);
     const signature = sign.sign(_qzPrivateKey, 'base64');
     res.json({ signature });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/qz-cert', (req, res) => {
@@ -1640,14 +1644,14 @@ app.get('/api/agent/conversations', requireRole('admin', 'gestor'), async (req, 
   try {
     const convs = await queryAll('SELECT * FROM agent_conversations ORDER BY last_message_at DESC LIMIT 50');
     res.json(convs);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/agent/conversations/:id/logs', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     const logs = await queryAll('SELECT * FROM agent_logs WHERE conversation_id=$1 ORDER BY created_at ASC', [req.params.id]);
     res.json(logs);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 // ─── Alertas pendentes (admin) ───
@@ -1655,7 +1659,7 @@ app.get('/api/agent/alerts', requireRole('admin', 'gestor'), async (req, res) =>
   try {
     const alerts = await queryAll("SELECT * FROM agent_logs WHERE tool_name='notificar_denilson' ORDER BY created_at DESC LIMIT 20");
     res.json(alerts);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.get('/health', async (req, res) => {
