@@ -773,6 +773,18 @@ app.post('/api/cash/:storeId', async (req, res) => {
         [storeId, userId]
       );
     } else if (action === 'close') {
+      // Validação: valor contado não pode ser absurdamente diferente do esperado
+      if (close_report && close_report.esperado) {
+        const esperadoDinheiro = +(close_report.esperado.dinheiro || 0);
+        const contadoDinheiro = +(value || 0);
+        const diff = Math.abs(contadoDinheiro - esperadoDinheiro);
+        const MAX_DIFF = 1000;
+        if (diff > MAX_DIFF && esperadoDinheiro > 0) {
+          return res.status(400).json({
+            error: `Valor em dinheiro contado (R$ ${contadoDinheiro.toFixed(2)}) está R$ ${diff.toFixed(2)} diferente do esperado (R$ ${esperadoDinheiro.toFixed(2)}). Verifique se digitou corretamente. Se estiver certo, fale com o gestor.`
+          });
+        }
+      }
       await queryRun(
         'UPDATE cash_state SET is_open = false, initial_value = $1, closed_at = NOW(), close_report = $2 WHERE store_id = $3 AND user_id = $4',
         [value || 0, close_report ? JSON.stringify(close_report) : null, storeId, userId]

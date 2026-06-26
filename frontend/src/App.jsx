@@ -3539,6 +3539,12 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   const confirmarFechamento=async()=>{
     const faltando=PAY_GROUPS.filter(g=>esperado[g.key]>0&&counted[g.key]==="");
     if(faltando.length>0)return showToast("Preencha: "+faltando.map(g=>g.label).join(", "),"error");
+    // Validação: dinheiro contado não pode diferir mais de R$1000 do esperado
+    const _dinCont=+(counted["dinheiro"]||0);
+    const _dinEsp=+(esperado["dinheiro"]||0);
+    if(_dinEsp>0&&Math.abs(_dinCont-_dinEsp)>1000){
+      return showToast(`Dinheiro contado (R$ ${_dinCont.toFixed(2)}) está muito diferente do esperado (R$ ${_dinEsp.toFixed(2)}). Verifique se digitou o valor corretamente.`,"error");
+    }
     const totalVendas=vendas.reduce((s,v)=>s+v.total,0);
     const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);
     const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
