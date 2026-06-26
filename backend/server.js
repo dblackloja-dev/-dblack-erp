@@ -10,8 +10,12 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const Anthropic = require('@anthropic-ai/sdk');
 
-// Evita que erros não capturados derrubem o processo
-process.on('uncaughtException', (err) => { console.error('[UNCAUGHT]', err.message); });
+// uncaughtException: loga e reinicia limpo (Railway/PM2 restartam o processo)
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT FATAL]', err.stack || err.message);
+  setTimeout(() => process.exit(1), 1000); // dá tempo pro log flush
+});
+// unhandledRejection: loga mas não derruba (promises rejeitadas geralmente não corrompem estado)
 process.on('unhandledRejection', (err) => { console.error('[UNHANDLED]', err?.message || err); });
 
 const { queryAll, queryOne, queryRun, initDB, pool, connectWithTimeout } = require('./database');
@@ -178,12 +182,13 @@ app.post('/api/auth/verify', async (req, res) => {
       }
     }
 
-    // Depois: verifica senhas bcrypt (CPU-intensivo) — uma por vez com yield entre elas
+    // Depois: verifica senhas bcrypt em paralelo (evita bloquear event loop ~600ms)
     const bcryptUsers = users.filter(u => u.password?.startsWith('$2'));
-    for (const u of bcryptUsers) {
-      const valid = await bcrypt.compare(password, u.password);
-      if (valid) {
-        const { password: _p, pin: _pin, ...safeUser } = u;
+    if (bcryptUsers.length > 0) {
+      const results = await Promise.all(bcryptUsers.map(u => bcrypt.compare(password, u.password)));
+      const idx = results.findIndex(v => v);
+      if (idx !== -1) {
+        const { password: _p, pin: _pin, ...safeUser } = bcryptUsers[idx];
         return res.json({ authorized: true, user: safeUser });
       }
     }
@@ -527,8 +532,8 @@ app.get('/api/sales', async (req, res) => {
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     const sales = store_id
-      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 AND date >= $2 ORDER BY created_at DESC', [store_id, cutoffStr])
-      : await queryAll('SELECT * FROM sales WHERE date >= $1 ORDER BY created_at DESC', [cutoffStr]);
+      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 AND date >= $2 ORDER BY created_at DESC LIMIT 500', [store_id, cutoffStr])
+      : await queryAll('SELECT * FROM sales WHERE date >= $1 ORDER BY created_at DESC LIMIT 2000', [cutoffStr]);
     sales.forEach(s => {
       try { s.items = JSON.parse(s.items); } catch { s.items = []; }
       try { s.payments = JSON.parse(s.payments || '[]'); } catch { s.payments = []; }
@@ -545,9 +550,13 @@ app.post('/api/sales', async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Baixa estoque dentro da transação (permite negativo — a validação é feita no PDV local)
+    // Baixa estoque com lock (FOR UPDATE) para evitar race condition em vendas simultâneas
     if (s.items && s.stock_id) {
       for (const item of s.items) {
+        await client.query(
+          'SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2 FOR UPDATE',
+          [s.stock_id, item.id]
+        );
         await client.query(
           'UPDATE stock SET quantity = quantity - $1 WHERE stock_id = $2 AND product_id = $3',
           [item.qty, s.stock_id, item.id]
@@ -1575,8 +1584,9 @@ app.post('/api/agent/chat', async (req, res) => {
     // Loga mensagem do usuário
     await queryRun('INSERT INTO agent_logs (id, conversation_id, user_id, user_name, store_id, role, content) VALUES ($1,$2,$3,$4,$5,$6,$7)', [uuidv4().split('-')[0] + Date.now().toString(36).slice(-4), convId, req.user.id, req.user.name, req.user.store_id, 'user', message]);
 
-    // Carrega histórico da conversa (últimas 20 mensagens)
-    const history = await queryAll("SELECT role, content, tool_name, tool_input, tool_output FROM agent_logs WHERE conversation_id=$1 AND role IN ('user','assistant','tool_call','tool_result') ORDER BY created_at ASC", [convId]);
+    // Carrega histórico da conversa (últimas 20 mensagens — limita para não estourar contexto)
+    const history = await queryAll("SELECT role, content, tool_name, tool_input, tool_output FROM agent_logs WHERE conversation_id=$1 AND role IN ('user','assistant','tool_call','tool_result') ORDER BY created_at DESC LIMIT 20", [convId]);
+    history.reverse(); // volta à ordem cronológica
 
     // Monta mensagens para a API Claude
     const messages = [];

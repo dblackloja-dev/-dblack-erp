@@ -13,9 +13,9 @@ const pool = new Pool({
   ssl: connString && !connString.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
-  max: 5,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 5000,
+  max: 15,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {
@@ -330,21 +330,21 @@ async function initDB() {
     );
   `);
 
-  // Migrações: adicionar colunas novas se não existirem
-  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_type TEXT DEFAULT 'operacional'`).catch(()=>{});
-  await pool.query(`ALTER TABLE promos ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{});
-  await pool.query(`ALTER TABLE investments ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{});
-  // Caixa por usuário (2 caixas por loja)
-  await pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{});
-  await pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS close_report TEXT`).catch(()=>{});
-  await pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{});
-  await pool.query(`ALTER TABLE cash_state DROP CONSTRAINT IF EXISTS cash_state_store_id_key`).catch(()=>{});
-  // Compras de colaboradores (desconto em folha)
-  await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS emp_id TEXT`).catch(()=>{});
+  // Migrações em paralelo — cada uma é independente
+  await Promise.all([
+    pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_type TEXT DEFAULT 'operacional'`).catch(()=>{}),
+    pool.query(`ALTER TABLE promos ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{}),
+    pool.query(`ALTER TABLE investments ADD COLUMN IF NOT EXISTS store_id TEXT`).catch(()=>{}),
+    pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{}),
+    pool.query(`ALTER TABLE cash_state ADD COLUMN IF NOT EXISTS close_report TEXT`).catch(()=>{}),
+    pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{}),
+    pool.query(`ALTER TABLE cash_state DROP CONSTRAINT IF EXISTS cash_state_store_id_key`).catch(()=>{}),
+    pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS emp_id TEXT`).catch(()=>{}),
+  ]);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_state_store_user ON cash_state(store_id, user_id)`).catch(()=>{});
 
-  // ─── ÍNDICES para performance em multi-loja ───
-  const indexes = [
+  // ─── ÍNDICES em paralelo para performance ───
+  await Promise.all([
     'CREATE INDEX IF NOT EXISTS idx_sales_store_date ON sales(store_id, date)',
     'CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)',
     'CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at DESC)',
@@ -366,16 +366,12 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_agent_logs_conv ON agent_logs(conversation_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_agent_logs_user ON agent_logs(user_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_agent_conv_user ON agent_conversations(user_id, status)',
-    // Índices adicionais para performance
     'CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status)',
     'CREATE INDEX IF NOT EXISTS idx_stock_product ON stock(product_id)',
     'CREATE INDEX IF NOT EXISTS idx_products_active ON products(active)',
     'CREATE INDEX IF NOT EXISTS idx_products_category ON products(category)',
     'CREATE INDEX IF NOT EXISTS idx_sales_cupom ON sales(cupom)',
-  ];
-  for (const idx of indexes) {
-    await pool.query(idx).catch(() => {});
-  }
+  ].map(idx => pool.query(idx).catch(() => {})));
 
   // Seed categorias de despesas padrão
   const defExpCats = ['Aluguel','Energia','Água','Internet','Funcionários','Marketing','Manutenção','Material','Impostos','Transporte','Alimentação','Fornecedor','Outros'];
