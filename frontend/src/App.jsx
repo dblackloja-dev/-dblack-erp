@@ -93,16 +93,9 @@ const ls = (key, fallback) => {
 };
 const lsSave = (key, val) => {
   try {
-    // Para vendas: manter apenas últimos 7 dias no localStorage (banco tem tudo)
+    // Vendas: salvar tudo no localStorage (banco é a fonte principal)
     if (key === 'sales' && val && typeof val === 'object') {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - 7);
-      const cutoffStr = localDateStr(cutoff);
-      const trimmed = {};
-      Object.keys(val).forEach(store => {
-        trimmed[store] = (val[store] || []).filter(s => s.date >= cutoffStr);
-      });
-      localStorage.setItem('dblack_' + key, JSON.stringify(trimmed));
+      localStorage.setItem('dblack_' + key, JSON.stringify(val));
       return;
     }
     // Para catálogo: remover campo photo antes de salvar (fotos são lazy-loaded da API)

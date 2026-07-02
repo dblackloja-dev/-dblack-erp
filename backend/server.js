@@ -528,12 +528,9 @@ app.get('/api/stock/movements/:stockId', async (req, res) => {
 app.get('/api/sales', async (req, res) => {
   try {
     const { store_id } = req.query;
-    // Limita a 90 dias para evitar lentidão — vendas antigas raramente são necessárias
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 90);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
     const sales = store_id
-      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 AND date >= $2 ORDER BY created_at DESC LIMIT 500', [store_id, cutoffStr])
-      : await queryAll('SELECT * FROM sales WHERE date >= $1 ORDER BY created_at DESC LIMIT 2000', [cutoffStr]);
+      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 ORDER BY created_at DESC', [store_id])
+      : await queryAll('SELECT * FROM sales ORDER BY created_at DESC');
     sales.forEach(s => {
       try { s.items = JSON.parse(s.items); } catch { s.items = []; }
       try { s.payments = JSON.parse(s.payments || '[]'); } catch { s.payments = []; }
