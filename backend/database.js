@@ -303,6 +303,24 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     );
 
+    -- Sessões de caixa: cada abertura→fechamento vira um registro com histórico completo
+    CREATE TABLE IF NOT EXISTS cash_sessions (
+      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL,
+      user_id TEXT NOT NULL DEFAULT 'main',
+      status TEXT NOT NULL DEFAULT 'aberto', -- aberto | fechado | auto_fechado | reaberto
+      initial_value NUMERIC DEFAULT 0,
+      opened_at TIMESTAMP DEFAULT NOW(),
+      closed_at TIMESTAMP,
+      close_report TEXT,
+      opened_by TEXT,
+      closed_by TEXT,
+      reopened_by TEXT,
+      reopened_at TIMESTAMP,
+      report_history TEXT DEFAULT '[]',
+      admin_notes TEXT
+    );
+
     -- Conversas do agente de suporte Black IA
     CREATE TABLE IF NOT EXISTS agent_conversations (
       id TEXT PRIMARY KEY,
@@ -340,6 +358,8 @@ async function initDB() {
     pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'main'`).catch(()=>{}),
     pool.query(`ALTER TABLE cash_state DROP CONSTRAINT IF EXISTS cash_state_store_id_key`).catch(()=>{}),
     pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS emp_id TEXT`).catch(()=>{}),
+    pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS session_id TEXT`).catch(()=>{}),
+    pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS created_by TEXT`).catch(()=>{}),
   ]);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_state_store_user ON cash_state(store_id, user_id)`).catch(()=>{});
 
@@ -356,6 +376,9 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_payrolls_month ON payrolls(month)',
     'CREATE INDEX IF NOT EXISTS idx_payrolls_emp ON payrolls(emp_id)',
     'CREATE INDEX IF NOT EXISTS idx_cash_movements_store ON cash_movements(store_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_cash_movements_session ON cash_movements(session_id)',
+    'CREATE INDEX IF NOT EXISTS idx_cash_sessions_store ON cash_sessions(store_id, opened_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions(store_id, user_id, status)',
     'CREATE INDEX IF NOT EXISTS idx_exchanges_store ON exchanges(store_id, date)',
     'CREATE INDEX IF NOT EXISTS idx_withdrawals_store ON cash_withdrawals(store_id)',
     'CREATE INDEX IF NOT EXISTS idx_advances_store ON cash_advances(store_id)',

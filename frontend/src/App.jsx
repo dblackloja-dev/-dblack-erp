@@ -306,6 +306,8 @@ export default function App() {
   const [withdrawals, setWithdrawals] = useState(() => ls('withdrawals', []));
   const [advances, setAdvances] = useState(() => ls('advances', []));
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
+  // Totais all-time por loja calculados no servidor (as vendas detalhadas carregam só os últimos 120 dias)
+  const [salesStats, setSalesStats] = useState(() => ls('salesStats', []));
 
   // ─── LAZY LOADING DE FOTOS (carrega em lote para evitar N requests + N re-renders) ───
   const loadedPhotosRef = useRef(new Set());
@@ -357,6 +359,7 @@ export default function App() {
   useEffect(() => { debouncedSave('withdrawals', withdrawals); }, [withdrawals]);
   useEffect(() => { debouncedSave('advances', advances); }, [advances]);
   useEffect(() => { debouncedSave('expenseCategories', expenseCategories); }, [expenseCategories]);
+  useEffect(() => { debouncedSave('salesStats', salesStats); }, [salesStats]);
 
   // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
 
@@ -400,7 +403,8 @@ export default function App() {
 
     // FASE 2: Todo o resto carrega em paralelo (não bloqueia produtos)
     const fase2 = Promise.all([
-      api.getSales(),
+      // Últimos 120 dias — carregar TODAS as vendas da história travava o app conforme o volume crescia
+      api.getSales(undefined, 120),
       api.getCustomers(),
       api.getExpenses(),
       api.getEmployees(),
@@ -413,16 +417,21 @@ export default function App() {
       api.getWithdrawals(),
       api.getAdvances(),
       api.getExpenseCategories(),
-    ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats]) => {
+      api.getSalesStats(),
+    ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats,stats]) => {
+      if(stats?.length) setSalesStats(stats);
       if(sls?.length){
         const apiSales=salesFromApi(sls);
         // Reenvia vendas locais que não existem no servidor (vendas feitas offline ou que falharam)
         const apiIds=new Set(sls.map(s=>s.id));
         const currentSales=salesRef.current||{};
         let synced=0;
+        // Só reenvia vendas recentes (últimos 7 dias) — a API agora retorna janela de 120 dias,
+        // então vendas antigas fora da janela não podem ser tratadas como "faltando no servidor"
+        const cutoff=localDateStr(new Date(Date.now()-7*24*60*60*1000));
         Object.keys(currentSales).forEach(store=>{
           (currentSales[store]||[]).forEach(sale=>{
-            if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"){
+            if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"&&sale.date&&sale.date>=cutoff){
               api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',stock_id:''}).catch(()=>{});
               if(!apiSales[store])apiSales[store]=[];
               apiSales[store].unshift(sale);
@@ -482,40 +491,25 @@ export default function App() {
         api.getCash(storeId, userId).then(data => {
           if (!data || !data.state) return;
           const cashKey = storeId + "_" + userId;
-          const savedKey = 'dblack_cash_open_' + cashKey;
-          const saved = localStorage.getItem(savedKey);
-          const savedCash = saved ? JSON.parse(saved) : null;
-          const localStale = savedCash && savedCash.openedAt && (Date.now() - savedCash.openedAt > 24 * 60 * 60 * 1000);
-          if (localStale) { localStorage.removeItem(savedKey); }
-          // Detecta caixa "zumbi": servidor diz aberto mas opened_at é de ontem ou antes
-          // Isso acontece quando o fechamento não salvou no servidor (rede caiu, timeout, etc.)
-          let serverOpen = data.state.is_open;
-          let serverInitial = +(data.state.initial_value) || 0;
-          if (serverOpen && data.state.opened_at) {
-            const openedDate = new Date(data.state.opened_at).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
-            const todayDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
-            if (openedDate < todayDate && !savedCash) {
-              // Caixa aberto ontem mas sem localStorage = fechamento não salvou no servidor
-              // Força fechamento automático no servidor com o valor que estava
-              console.warn('[CASH] Caixa zumbi detectado em', storeId, '- aberto em', openedDate, 'forçando fechamento');
-              serverOpen = false;
-              api.cashAction(storeId, { action: 'close', value: serverInitial, user_id: userId }).catch(() => {});
-            }
-          }
-          const useLocal = savedCash && !localStale && serverOpen;
+          // O servidor agora é a fonte da verdade: sessões de caixa resolvem abertura/fechamento.
+          // Sessão esquecida aberta é fechada automaticamente pelo servidor na próxima abertura,
+          // e o admin pode reabrir/corrigir pelo painel Gestão de Caixas.
           setCashState(prev => {
             const n = { ...prev };
             n[cashKey] = {
-              open: useLocal ? true : serverOpen,
-              initial: useLocal ? savedCash.initial : serverInitial,
+              open: !!data.state.is_open,
+              initial: +(data.state.initial_value) || 0,
+              sessionId: data.session?.id || null,
+              openedAt: data.state.opened_at || null,
               history: (data.movements || []).map(m => ({
+                id: m.id,
                 type: m.type,
                 value: +m.value,
                 desc: m.description || '',
                 time: new Date(m.created_at).toLocaleTimeString('pt-BR'),
               })),
               closedAt: data.state.closed_at,
-              closeReport: data.state.close_report ? JSON.parse(data.state.close_report) : null,
+              closeReport: data.state.close_report ? (typeof data.state.close_report === 'string' ? JSON.parse(data.state.close_report) : data.state.close_report) : null,
             };
             return n;
           });
@@ -746,6 +740,7 @@ export default function App() {
     { id:"despesas", label:"Despesas", icon:I.money, perm:"despesas" },
     { id:"comissoes", label:"Comissões", icon:I.award, perm:"comissoes" },
     { id:"caixa", label:"Caixa", icon:I.store, perm:"caixa" },
+    { id:"caixas-admin", label:"Gestão de Caixas", icon:I.key, perm:"caixa_admin" },
     { id:"trocas", label:"Trocas", icon:I.cart, perm:"trocas" },
     { id:"etiquetas", label:"Etiquetas", icon:I.printer, perm:"etiquetas" },
     { id:"fidelidade", label:"Fidelidade", icon:I.star, perm:"fidelidade" },
@@ -772,7 +767,10 @@ export default function App() {
   const _todayStr = localDateStr();
   const todaySales = storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada");
   const todayRev = todaySales.reduce((s,v) => s + v.total, 0);
-  const totalRev = storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0);
+  // Receita total all-time vem das stats do servidor (as vendas locais são só a janela recente)
+  const _localRev = storeSales.filter(s => s.status !== "Cancelada").reduce((s,v) => s + v.total, 0);
+  const _storeStat = (salesStats||[]).find(st => st.store_id === activeStore);
+  const totalRev = _storeStat ? Math.max(+_storeStat.total || 0, _localRev) : _localRev;
   const lowStock = storeProducts.filter(p => p.stock <= p.minStock);
   const storeExchanges = exchanges[activeStore] || [];
   const storeSellers = sellers.filter(s => s.storeId === activeStore);
@@ -853,7 +851,7 @@ export default function App() {
           {tab==="dashboard" && <StoreDashboard {...{storeProducts,storeSales,todaySales,todayRev,totalRev,lowStock,storeExpenses,currentStore,storeCash,customers,isSharedStock,sharedStockStores}} />}
 
           {/* PAINEL GESTOR (todas as lojas) */}
-          {tab==="gestor" && <GestorPanel {...{sales,expenses,stock,catalog,customers,investments,cashState}} />}
+          {tab==="gestor" && <GestorPanel {...{sales,expenses,stock,catalog,customers,investments,cashState,salesStats}} />}
 
           {/* PDV */}
           {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts}} />}
@@ -872,6 +870,9 @@ export default function App() {
 
           {/* CAIXA */}
           {tab==="caixa" && <CaixaModule {...{storeCash,activeStore,cashState,setCashState,storeSales,showToast,loggedUser,withdrawals,setWithdrawals,advances,setAdvances,employees}} />}
+
+          {/* GESTÃO DE CAIXAS (admin) */}
+          {tab==="caixas-admin" && <CaixaGestaoModule {...{showToast,loggedUser,users}} />}
 
           {/* RH / FOLHA */}
           {tab==="rh" && <RHModule {...{employees,setEmployees,payrolls,setPayrolls,advances,showToast}} />}
@@ -1067,13 +1068,16 @@ function StoreDashboard({storeProducts,storeSales,todaySales,todayRev,totalRev,l
 // ═══════════════════════════════════
 // ═══  GESTOR PANEL (ALL STORES)  ═══
 // ═══════════════════════════════════
-function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashState}){
+function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashState,salesStats}){
   const storeData = STORES.map(store => {
     const ss = sales[store.id] || [];
     const exps = expenses[store.id] || [];
     const st = stock[store.stockId] || {};
     const _today = localDateStr();
-    const rev = ss.filter(s=>s.status!=="Cancelada").reduce((s,v) => s + v.total, 0);
+    // Receita all-time das stats do servidor; local (janela recente) como fallback
+    const _localRev = ss.filter(s=>s.status!=="Cancelada").reduce((s,v) => s + v.total, 0);
+    const _stat = (salesStats||[]).find(x => x.store_id === store.id);
+    const rev = _stat ? Math.max(+_stat.total || 0, _localRev) : _localRev;
     const expCaixa = exps.filter(e=>(e.expense_type||e.expenseType)==="caixa").reduce((s,e) => s + (+e.value||0), 0);
     const expOp = exps.filter(e=>(e.expense_type||e.expenseType)!=="caixa").reduce((s,e) => s + (+e.value||0), 0);
     const exp = exps.reduce((s,e) => s + (+e.value||0), 0);
@@ -3482,8 +3486,9 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
   // Estornos de trocas canceladas (subtrair do dinheiro)
   const trocasEstorno=storeCash.history.filter(h=>h.type==="saida"&&h.desc?.startsWith("Estorno troca")).reduce((s,h)=>s+h.value,0);
 
-  // Esperado = vendas + trocas por grupo + fundo/suprimentos/sangrias (só em dinheiro)
-  const esperado=Object.fromEntries(PAY_GROUPS.map(g=>{
+  // Esperado LOCAL = vendas + trocas por grupo + fundo/suprimentos/sangrias (só em dinheiro)
+  // Usado como fallback offline — quando online, o esperado vem do SERVIDOR (fonte da verdade)
+  const esperadoLocal=Object.fromEntries(PAY_GROUPS.map(g=>{
     let total=vendasPorGrupo[g.key]||0;
     total+=trocasPorGrupo[g.key]||0;
     if(g.key==="dinheiro"){
@@ -3494,6 +3499,10 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     }
     return [g.key,Math.round(total*100)/100];
   }));
+
+  // Resumo calculado pelo servidor (carregado ao abrir o modal de fechamento)
+  const [serverSummary,setServerSummary]=useState(null);
+  const esperado=serverSummary?.esperado?{...esperadoLocal,...serverSummary.esperado}:esperadoLocal;
 
   // Total de VENDAS (o que realmente foi faturado)
   const totalVendasForma=Object.values(vendasPorGrupo).reduce((s,v)=>s+v,0);
@@ -3529,6 +3538,17 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     setSangria("");setSangriaDesc("");showToast(label+" registrado!");
   };
 
+  // Abre o modal de fechamento e busca o resumo calculado no servidor
+  const iniciarFechamento=async()=>{
+    setCounted(initCounted());
+    setServerSummary(null);
+    setShowCloseModal(true);
+    try{
+      const s=await api.getCashSummary(activeStore,userId);
+      if(s&&s.esperado)setServerSummary(s);
+    }catch(e){console.warn('[CAIXA] Resumo do servidor indisponível, usando cálculo local:',e?.message);}
+  };
+
   const confirmarFechamento=async()=>{
     const faltando=PAY_GROUPS.filter(g=>esperado[g.key]>0&&counted[g.key]==="");
     if(faltando.length>0)return showToast("Preencha: "+faltando.map(g=>g.label).join(", "),"error");
@@ -3538,14 +3558,15 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
     if(_dinEsp>0&&Math.abs(_dinCont-_dinEsp)>1000){
       return showToast(`Dinheiro contado (R$ ${_dinCont.toFixed(2)}) está muito diferente do esperado (R$ ${_dinEsp.toFixed(2)}). Verifique se digitou o valor corretamente.`,"error");
     }
-    const totalVendas=vendas.reduce((s,v)=>s+v.total,0);
-    const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);
-    const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR")};
+    const totalVendas=serverSummary?serverSummary.total_vendas:vendas.reduce((s,v)=>s+v.total,0);
+    const totalDesc=serverSummary?serverSummary.total_descontos:vendas.reduce((s,v)=>s+(v.discount||0),0);
+    const reportData={counted:{...counted},esperado:{...esperado},diferenca,obs:closeObs,closedBy:new Date().toLocaleTimeString("pt-BR"),origem_esperado:serverSummary?"servidor":"local"};
     const dinheiroContado=+(counted["dinheiro"]||0);
     updateCash(cs=>({...cs,open:false,initial:dinheiroContado,closedAt:new Date().toISOString(),closeReport:reportData}));
-    setPrintData({type:"fechamento",report:reportData,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—",vendas:vendas.length,totalVendas,totalDesc,groups:PAY_GROUPS,sangrias:saidas,history:storeCash.history});
+    setPrintData({type:"fechamento",report:reportData,date:new Date().toLocaleDateString("pt-BR"),store:STORES.find(s=>s.id===activeStore)?.name||"",operator:loggedUser?.name||"—",vendas:serverSummary?serverSummary.vendas:vendas.length,totalVendas,totalDesc,groups:PAY_GROUPS,sangrias:saidas,history:storeCash.history});
     setShowCloseModal(false);
     setCounted(initCounted());
+    setServerSummary(null);
     setCloseObs("");
     showToast(`Caixa fechado! ${diferenca>=0?"Sobra":"Falta"}: ${fmt(Math.abs(diferenca))}`);
     // Salva no servidor COM retry — só limpa localStorage após confirmar
@@ -3703,7 +3724,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
             <h3 style={S.cardTitle}>🔒 Fechar Caixa</h3>
             <p style={{fontSize:12,color:C.dim,marginBottom:12}}>Saldo sistema: <strong style={{color:C.gold,fontSize:15}}>{fmt(saldoSistema)}</strong></p>
             <button style={{...S.primBtn,background:`linear-gradient(135deg,${C.red},#B71C1C)`,width:"100%",justifyContent:"center"}}
-              onClick={()=>{setCounted(initCounted());setShowCloseModal(true);}}>
+              onClick={iniciarFechamento}>
               {I.lock} Iniciar Fechamento de Caixa
             </button>
           </div>
@@ -3731,12 +3752,15 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
       {showCloseModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",overflowY:"auto",padding:16}}>
         <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:20,width:520,maxWidth:"100%",padding:28}} onClick={e=>e.stopPropagation()}>
           <h3 style={{margin:"0 0 4px",fontSize:18}}>🔒 Fechamento de Caixa</h3>
-          <p style={{fontSize:12,color:C.dim,marginBottom:12}}>Informe o valor contado fisicamente para cada forma de pagamento.</p>
+          <p style={{fontSize:12,color:C.dim,marginBottom:6}}>Informe o valor contado fisicamente para cada forma de pagamento.</p>
+          <div style={{fontSize:10,fontWeight:700,marginBottom:12,color:serverSummary?C.grn:C.org}}>
+            {serverSummary?"✓ Valores esperados calculados pelo servidor":"⚠ Sem conexão com o servidor — usando cálculo local deste dispositivo"}
+          </div>
 
           {/* Resumo de vendas do operador */}
-          {(()=>{const totalVendas=vendas.reduce((s,v)=>s+v.total,0);const totalDesc=vendas.reduce((s,v)=>s+(v.discount||0),0);return(
+          {(()=>{const nVendas=serverSummary?serverSummary.vendas:vendas.length;const totalVendas=serverSummary?serverSummary.total_vendas:vendas.reduce((s,v)=>s+v.total,0);const totalDesc=serverSummary?serverSummary.total_descontos:vendas.reduce((s,v)=>s+(v.discount||0),0);return(
           <div style={{background:"rgba(0,230,118,.06)",border:"1px solid rgba(0,230,118,.2)",borderRadius:10,padding:"10px 14px",marginBottom:16,display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,textAlign:"center"}}>
-            <div><div style={{fontSize:18,fontWeight:800,color:C.grn}}>{vendas.length}</div><div style={{fontSize:10,color:C.dim}}>vendas no dia</div></div>
+            <div><div style={{fontSize:18,fontWeight:800,color:C.grn}}>{nVendas}</div><div style={{fontSize:10,color:C.dim}}>vendas na sessão</div></div>
             <div><div style={{fontSize:18,fontWeight:800,color:C.gold}}>{fmt(totalVendas)}</div><div style={{fontSize:10,color:C.dim}}>total faturado</div></div>
             <div><div style={{fontSize:18,fontWeight:800,color:C.red}}>{fmt(totalDesc)}</div><div style={{fontSize:10,color:C.dim}}>em descontos</div></div>
           </div>);})()}
@@ -3767,17 +3791,23 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
             </div>;
           })}
 
-          {/* Detalhamento: fundo + movimentações */}
-          {(fundoCaixa>0||suprimentos>0||sangrias>0)&&<div style={{borderTop:`1px solid ${C.brd}`,marginTop:10,paddingTop:8}}>
+          {/* Detalhamento: fundo + movimentações (usa valores do servidor quando disponíveis) */}
+          {(()=>{
+            const dVendas=serverSummary?(serverSummary.vendas_por_grupo?.dinheiro||0):(vendasPorGrupo["dinheiro"]||0);
+            const dFundo=serverSummary?(+serverSummary.initial_value||0):fundoCaixa;
+            const dSupr=serverSummary?(+serverSummary.suprimentos||0):suprimentos;
+            const dSang=serverSummary?(+serverSummary.sangrias||0):sangrias;
+            if(!(dFundo>0||dSupr>0||dSang>0))return null;
+            return <div style={{borderTop:`1px solid ${C.brd}`,marginTop:10,paddingTop:8}}>
             <div style={{fontSize:10,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:6}}>COMPOSIÇÃO DO DINHEIRO ESPERADO</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:4,fontSize:12,color:C.dim,padding:"0 8px"}}>
-              <span>Vendas em dinheiro</span><span style={{fontFamily:"monospace",textAlign:"right"}}>{fmt(vendasPorGrupo["dinheiro"]||0)}</span>
-              {fundoCaixa>0&&<><span>+ Fundo de caixa (abertura)</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.blu}}>{fmt(fundoCaixa)}</span></>}
-              {suprimentos>0&&<><span>+ Suprimentos</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.grn}}>{fmt(suprimentos)}</span></>}
-              {sangrias>0&&<><span>- Sangrias/Retiradas</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.red}}>-{fmt(sangrias)}</span></>}
+              <span>Vendas em dinheiro</span><span style={{fontFamily:"monospace",textAlign:"right"}}>{fmt(dVendas)}</span>
+              {dFundo>0&&<><span>+ Fundo de caixa (abertura)</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.blu}}>{fmt(dFundo)}</span></>}
+              {dSupr>0&&<><span>+ Suprimentos</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.grn}}>{fmt(dSupr)}</span></>}
+              {dSang>0&&<><span>- Sangrias/Retiradas</span><span style={{fontFamily:"monospace",textAlign:"right",color:C.red}}>-{fmt(dSang)}</span></>}
               <span style={{fontWeight:700,color:C.txt}}>= Dinheiro esperado</span><span style={{fontFamily:"monospace",textAlign:"right",fontWeight:700,color:C.txt}}>{fmt(esperado["dinheiro"])}</span>
             </div>
-          </div>}
+          </div>;})()}
 
           {/* Totais */}
           <div style={{borderTop:`1px solid ${C.brd}`,marginTop:10,paddingTop:12}}>
@@ -3809,7 +3839,7 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
           </div>
 
           <div style={{display:"flex",gap:8,marginTop:18}}>
-            <button style={{...S.secBtn,flex:1}} onClick={()=>setShowCloseModal(false)}>Cancelar</button>
+            <button style={{...S.secBtn,flex:1}} onClick={()=>{setShowCloseModal(false);setServerSummary(null);}}>Cancelar</button>
             <button style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:`linear-gradient(135deg,${C.red},#B71C1C)`,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
               onClick={confirmarFechamento}>
               {I.lock} Confirmar Fechamento
@@ -3990,6 +4020,260 @@ function CaixaModule({storeCash,activeStore,cashState,setCashState,storeSales,sh
               )}
             </div>
           </div>}
+        </div>;
+      })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// ═══  GESTÃO DE CAIXAS (ADMIN) — sessões       ═══
+// ═══════════════════════════════════════════════
+function CaixaGestaoModule({showToast,loggedUser,users}){
+  const isAdmin=loggedUser?.role==="admin";
+  const [filterStore,setFilterStore]=useState("");
+  const [filterDate,setFilterDate]=useState("");
+  const [sessions,setSessions]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [detail,setDetail]=useState(null); // {session, summary}
+  const [editCounted,setEditCounted]=useState(null); // {dinheiro:"", pix:"", ...}
+  const [adjType,setAdjType]=useState("entrada");
+  const [adjVal,setAdjVal]=useState("");
+  const [adjDesc,setAdjDesc]=useState("");
+
+  const GROUPS=[["dinheiro","💵 Dinheiro"],["pix","📱 PIX"],["pixchave","🔑 PIX Chave"],["credito","💳 Crédito"],["debito","💳 Débito"],["outros","🏷️ Outros"]];
+  const userName=(id)=>id==="main"?"Caixa geral":(users||[]).find(u=>u.id===id)?.name||id;
+  const statusInfo=(s)=>({
+    aberto:{label:"Aberto",color:C.grn},
+    reaberto:{label:"Reaberto (admin)",color:C.org},
+    fechado:{label:"Fechado",color:C.dim},
+    auto_fechado:{label:"Fechado automático",color:C.red},
+  }[s]||{label:s,color:C.dim});
+  const parseReport=(r)=>{try{return typeof r==="string"?JSON.parse(r):r;}catch{return null;}};
+
+  const loadSessions=async()=>{
+    setLoading(true);
+    try{
+      const data=await api.getCashSessions(filterStore||undefined,filterDate||undefined);
+      setSessions(Array.isArray(data)?data:[]);
+    }catch(e){showToast("Erro ao carregar sessões: "+e.message,"error");}
+    setLoading(false);
+  };
+  useEffect(()=>{loadSessions();},[filterStore,filterDate]);
+
+  const openDetail=async(id)=>{
+    try{
+      const data=await api.getCashSession(id);
+      if(data?.session){setDetail(data);setEditCounted(null);setAdjVal("");setAdjDesc("");}
+    }catch(e){showToast("Erro ao abrir sessão: "+e.message,"error");}
+  };
+  const refreshDetail=async()=>{if(detail?.session?.id){await openDetail(detail.session.id);await loadSessions();}};
+
+  const doReopen=async()=>{
+    if(!confirm("Reabrir este caixa? O operador poderá lançar/corrigir movimentos e fechar novamente."))return;
+    try{
+      const r=await api.reopenCashSession(detail.session.id);
+      if(r?.error)return showToast(r.error,"error");
+      showToast("Caixa reaberto! O relatório anterior foi guardado no histórico.");
+      await refreshDetail();
+    }catch(e){showToast(e.message,"error");}
+  };
+
+  const saveCounted=async()=>{
+    try{
+      const counted={};
+      GROUPS.forEach(([k])=>{if(editCounted[k]!==""&&editCounted[k]!=null)counted[k]=+editCounted[k];});
+      const r=await api.updateCashSession(detail.session.id,{counted});
+      if(r?.error)return showToast(r.error,"error");
+      showToast("Valores corrigidos! Diferença recalculada pelo servidor.");
+      setEditCounted(null);
+      await refreshDetail();
+    }catch(e){showToast(e.message,"error");}
+  };
+
+  const addAdjustment=async()=>{
+    if(!adjVal||+adjVal<=0)return showToast("Informe o valor do ajuste","error");
+    try{
+      const r=await api.addCashSessionMovement(detail.session.id,{type:adjType,value:+adjVal,description:adjDesc||"correção"});
+      if(r?.error)return showToast(r.error,"error");
+      showToast("Ajuste lançado!");
+      setAdjVal("");setAdjDesc("");
+      await refreshDetail();
+    }catch(e){showToast(e.message,"error");}
+  };
+
+  const removeMovement=async(mov)=>{
+    if(!confirm(`Excluir o movimento "${mov.description||mov.type}" de ${fmt(+mov.value)}? Essa ação não pode ser desfeita.`))return;
+    try{
+      const r=await api.deleteCashMovement(mov.id);
+      if(r?.error)return showToast(r.error,"error");
+      showToast("Movimento excluído!");
+      await refreshDetail();
+    }catch(e){showToast(e.message,"error");}
+  };
+
+  return(
+    <div style={{animation:"fadeIn .3s ease"}}>
+      <div style={{padding:"14px 18px",background:"rgba(255,215,64,.05)",border:`1px solid ${C.brdH}`,borderRadius:14,marginBottom:14,fontSize:12,color:C.dim}}>
+        🔐 <strong style={{color:C.gold}}>Gestão de Caixas</strong> — histórico de todas as aberturas e fechamentos. {isAdmin?"Você pode reabrir caixas fechados errado, corrigir valores contados, lançar ajustes e excluir movimentos.":"Somente visualização."}
+      </div>
+
+      {/* Filtros */}
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <select style={S.sel} value={filterStore} onChange={e=>setFilterStore(e.target.value)}>
+          <option value="">Todas as lojas</option>
+          {STORES.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <input style={{...S.inp,width:160}} type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)}/>
+        {filterDate&&<button style={S.secBtn} onClick={()=>setFilterDate("")}>Limpar data</button>}
+        <button style={S.secBtn} onClick={loadSessions}>🔄 Atualizar</button>
+      </div>
+
+      {/* Lista de sessões */}
+      <div style={S.card}>
+        <h3 style={S.cardTitle}>📋 Sessões de Caixa {loading&&<span style={{fontSize:11,color:C.dim}}>carregando...</span>}</h3>
+        {sessions.length===0
+          ?<div style={{opacity:.4,fontSize:12,textAlign:"center",padding:16}}>{loading?"Carregando...":"Nenhuma sessão encontrada. As sessões passam a ser registradas a partir desta atualização."}</div>
+          :<div style={S.tWrap}><table style={S.table}>
+            <thead><tr>
+              <th style={S.th}>Loja</th><th style={S.th}>Operador</th><th style={S.th}>Status</th>
+              <th style={S.th}>Abertura</th><th style={S.th}>Fechamento</th><th style={S.th}>Fundo</th><th style={S.th}>Diferença</th><th style={S.th}></th>
+            </tr></thead>
+            <tbody>{sessions.map(s=>{
+              const st=statusInfo(s.status);
+              const rep=parseReport(s.close_report);
+              const storeName=STORES.find(x=>x.id===s.store_id)?.name?.replace("D'Black ","")||s.store_id;
+              return <tr key={s.id} style={S.tr}>
+                <td style={{...S.td,fontWeight:600}}>{storeName}</td>
+                <td style={S.td}>{userName(s.user_id)}</td>
+                <td style={S.td}><span style={{fontSize:11,fontWeight:700,color:st.color}}>● {st.label}</span></td>
+                <td style={{...S.td,fontFamily:"monospace",fontSize:11}}>{s.opened_at?new Date(s.opened_at).toLocaleString("pt-BR"):"-"}</td>
+                <td style={{...S.td,fontFamily:"monospace",fontSize:11}}>{s.closed_at?new Date(s.closed_at).toLocaleString("pt-BR"):"-"}</td>
+                <td style={S.td}>{fmt(+s.initial_value||0)}</td>
+                <td style={{...S.td,fontWeight:700,color:rep?(rep.diferenca>=0?C.grn:C.red):C.dim}}>{rep&&rep.diferenca!=null?(rep.diferenca>0?"+":"")+fmt(rep.diferenca):"-"}</td>
+                <td style={S.td}><button style={S.smBtn} onClick={()=>openDetail(s.id)}>🔍 Ver</button></td>
+              </tr>;
+            })}</tbody>
+          </table></div>
+        }
+      </div>
+
+      {/* ── MODAL DETALHE DA SESSÃO ── */}
+      {detail&&(()=>{
+        const s=detail.session;
+        const sum=detail.summary||{};
+        const rep=parseReport(s.close_report);
+        const hist=(()=>{try{return JSON.parse(s.report_history||"[]");}catch{return [];}})();
+        const st=statusInfo(s.status);
+        const isClosed=s.status==="fechado"||s.status==="auto_fechado";
+        return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:16}} onClick={()=>setDetail(null)}>
+          <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:20,width:640,maxWidth:"100%",padding:26,margin:"20px 0"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <h3 style={{margin:0,fontSize:17}}>💰 Sessão de Caixa — {STORES.find(x=>x.id===s.store_id)?.name||s.store_id}</h3>
+              <button style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:18}} onClick={()=>setDetail(null)}>✕</button>
+            </div>
+            <div style={{fontSize:12,color:C.dim,marginBottom:12}}>
+              Operador: <strong style={{color:C.txt}}>{userName(s.user_id)}</strong> • Status: <strong style={{color:st.color}}>{st.label}</strong><br/>
+              Abertura: {s.opened_at?new Date(s.opened_at).toLocaleString("pt-BR"):"-"} {s.opened_by?`(${s.opened_by})`:""} • Fechamento: {s.closed_at?new Date(s.closed_at).toLocaleString("pt-BR"):"—"} {s.closed_by?`(${s.closed_by})`:""}
+              {s.reopened_by&&<><br/><span style={{color:C.org}}>Reaberto por {s.reopened_by} em {new Date(s.reopened_at).toLocaleString("pt-BR")}</span></>}
+            </div>
+
+            {/* Resumo do servidor */}
+            <div style={{background:C.s2,borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:8}}>RESUMO CALCULADO PELO SISTEMA</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,textAlign:"center",marginBottom:10}}>
+                <div><div style={{fontSize:16,fontWeight:800,color:C.grn}}>{sum.vendas??"-"}</div><div style={{fontSize:10,color:C.dim}}>vendas</div></div>
+                <div><div style={{fontSize:16,fontWeight:800,color:C.gold}}>{fmt(sum.total_vendas||0)}</div><div style={{fontSize:10,color:C.dim}}>faturado</div></div>
+                <div><div style={{fontSize:16,fontWeight:800,color:C.blu}}>{fmt(+s.initial_value||0)}</div><div style={{fontSize:10,color:C.dim}}>fundo</div></div>
+                <div><div style={{fontSize:16,fontWeight:800,color:C.red}}>{fmt(sum.sangrias||0)}</div><div style={{fontSize:10,color:C.dim}}>sangrias</div></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 100px 100px 90px",gap:6,fontSize:10,fontWeight:700,color:C.dim,letterSpacing:1,padding:"4px 6px"}}>
+                <span>FORMA</span><span style={{textAlign:"right"}}>ESPERADO</span><span style={{textAlign:"right"}}>CONTADO</span><span style={{textAlign:"right"}}>DIF.</span>
+              </div>
+              {GROUPS.map(([key,label])=>{
+                const esp=+(sum.esperado?.[key]||0);
+                const cont=rep?.counted?.[key];
+                const contN=cont===""||cont==null?null:+cont;
+                const dif=contN==null?null:Math.round((contN-esp)*100)/100;
+                if(esp===0&&contN==null)return null;
+                return <div key={key} style={{display:"grid",gridTemplateColumns:"1fr 100px 100px 90px",gap:6,fontSize:12,padding:"5px 6px",borderTop:`1px solid ${C.brd}`}}>
+                  <span>{label}</span>
+                  <span style={{textAlign:"right",fontFamily:"monospace"}}>{fmt(esp)}</span>
+                  <span style={{textAlign:"right",fontFamily:"monospace",color:C.gold}}>{contN==null?"—":fmt(contN)}</span>
+                  <span style={{textAlign:"right",fontWeight:700,color:dif==null?C.dim:dif===0?C.grn:dif>0?C.grn:C.red}}>{dif==null?"—":(dif>0?"+":"")+fmt(dif)}</span>
+                </div>;
+              })}
+              {rep&&rep.diferenca!=null&&<div style={{display:"flex",justifyContent:"space-between",marginTop:8,paddingTop:8,borderTop:`1px solid ${C.brd}`,fontWeight:800,fontSize:13}}>
+                <span>DIFERENÇA TOTAL</span>
+                <span style={{color:rep.diferenca>=0?C.grn:C.red}}>{rep.diferenca>0?"+":""}{fmt(rep.diferenca)}</span>
+              </div>}
+              {rep?.obs&&<div style={{marginTop:6,fontSize:11,color:C.dim}}>Obs. do operador: {rep.obs}</div>}
+              {rep?.ajustado_por&&<div style={{marginTop:4,fontSize:11,color:C.org}}>✏️ Valores ajustados por {rep.ajustado_por}</div>}
+            </div>
+
+            {/* Ações admin */}
+            {isAdmin&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+              {isClosed&&<button style={{...S.primBtn,background:`linear-gradient(135deg,${C.org},#E65100)`}} onClick={doReopen}>🔓 Reabrir Caixa</button>}
+              {rep&&<button style={S.secBtn} onClick={()=>{
+                const init={};GROUPS.forEach(([k])=>{init[k]=rep?.counted?.[k]??"";});
+                setEditCounted(editCounted?null:init);
+              }}>{editCounted?"Cancelar edição":"✏️ Corrigir Valores Contados"}</button>}
+            </div>}
+
+            {/* Edição de contados (admin) */}
+            {isAdmin&&editCounted&&<div style={{background:"rgba(255,143,0,.06)",border:"1px solid rgba(255,143,0,.25)",borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.org,marginBottom:8}}>CORRIGIR VALORES CONTADOS — a diferença será recalculada pelo servidor e a versão anterior fica no histórico</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                {GROUPS.map(([key,label])=><div key={key}>
+                  <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>{label}</label>
+                  <input style={{...S.inp,width:"100%",boxSizing:"border-box"}} type="number" value={editCounted[key]} onChange={e=>setEditCounted(prev=>({...prev,[key]:e.target.value}))}/>
+                </div>)}
+              </div>
+              <button style={{...S.primBtn,marginTop:10}} onClick={saveCounted}>💾 Salvar Correção</button>
+            </div>}
+
+            {/* Ajuste corretivo (admin) */}
+            {isAdmin&&<div style={{background:C.s2,borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.dim,marginBottom:8}}>LANÇAR AJUSTE NA SESSÃO (entrada/saída corretiva)</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                <select style={S.sel} value={adjType} onChange={e=>setAdjType(e.target.value)}>
+                  <option value="entrada">↑ Entrada</option>
+                  <option value="saida">↓ Saída</option>
+                </select>
+                <input style={{...S.inp,width:100}} type="number" placeholder="Valor R$" value={adjVal} onChange={e=>setAdjVal(e.target.value)}/>
+                <input style={{...S.inp,flex:1,minWidth:140}} placeholder="Motivo do ajuste" value={adjDesc} onChange={e=>setAdjDesc(e.target.value)}/>
+                <button style={S.primBtn} onClick={addAdjustment}>Lançar</button>
+              </div>
+            </div>}
+
+            {/* Movimentos da sessão */}
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:6}}>MOVIMENTAÇÕES DA SESSÃO</div>
+              {(sum.movements||[]).length===0
+                ?<div style={{opacity:.4,fontSize:12,padding:10,textAlign:"center"}}>Nenhuma movimentação</div>
+                :<div style={S.tWrap}><table style={S.table}>
+                  <thead><tr><th style={S.th}>Hora</th><th style={S.th}>Tipo</th><th style={S.th}>Descrição</th><th style={S.th}>Valor</th>{isAdmin&&<th style={S.th}></th>}</tr></thead>
+                  <tbody>{(sum.movements||[]).map(m=><tr key={m.id} style={S.tr}>
+                    <td style={{...S.td,fontFamily:"monospace",fontSize:11}}>{new Date(m.created_at).toLocaleString("pt-BR")}</td>
+                    <td style={S.td}><span style={{...S.stBadge,...(m.type==="entrada"?S.stOk:S.stLow)}}>{m.type==="entrada"?"↑ Entrada":"↓ Saída"}</span></td>
+                    <td style={{...S.td,fontSize:11}}>{m.description||"-"}{m.created_by?<span style={{color:C.dim}}> ({m.created_by})</span>:null}</td>
+                    <td style={{...S.td,fontWeight:700,color:m.type==="entrada"?C.grn:C.red}}>{m.type==="entrada"?"+":"-"}{fmt(+m.value)}</td>
+                    {isAdmin&&<td style={S.td}><button style={{...S.smBtn,color:C.red}} title="Excluir movimento" onClick={()=>removeMovement(m)}>🗑️</button></td>}
+                  </tr>)}</tbody>
+                </table></div>
+              }
+            </div>
+
+            {/* Histórico de versões do relatório */}
+            {hist.length>0&&<div style={{borderTop:`1px solid ${C.brd}`,paddingTop:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:6}}>HISTÓRICO DE ALTERAÇÕES</div>
+              {hist.map((h,i)=><div key={i} style={{fontSize:11,color:C.dim,padding:"4px 0",borderBottom:`1px dashed ${C.brd}`}}>
+                {h.reopened_by?`🔓 Reaberto por ${h.reopened_by} em ${h.reopened_at?new Date(h.reopened_at).toLocaleString("pt-BR"):""} (fechamento anterior de ${h.closed_at?new Date(h.closed_at).toLocaleString("pt-BR"):"?"} guardado)`
+                :h.edited_by?`✏️ Valores editados por ${h.edited_by} em ${h.edited_at?new Date(h.edited_at).toLocaleString("pt-BR"):""}`
+                :JSON.stringify(h).slice(0,120)}
+              </div>)}
+            </div>}
+          </div>
         </div>;
       })()}
     </div>

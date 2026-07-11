@@ -527,15 +527,32 @@ app.get('/api/stock/movements/:stockId', async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/sales', async (req, res) => {
   try {
-    const { store_id } = req.query;
-    const sales = store_id
-      ? await queryAll('SELECT * FROM sales WHERE store_id = $1 ORDER BY created_at DESC', [store_id])
-      : await queryAll('SELECT * FROM sales ORDER BY created_at DESC');
+    const { store_id, days } = req.query;
+    // days=N limita ao período recente (evita payload gigante que travava o app); sem days retorna tudo (compatibilidade)
+    const conditions = [];
+    const params = [];
+    if (store_id) { params.push(store_id); conditions.push(`store_id = $${params.length}`); }
+    if (days && parseInt(days) > 0) { params.push(parseInt(days)); conditions.push(`created_at >= NOW() - ($${params.length} || ' days')::interval`); }
+    const sales = await queryAll(
+      `SELECT * FROM sales ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''} ORDER BY created_at DESC`,
+      params
+    );
     sales.forEach(s => {
       try { s.items = JSON.parse(s.items); } catch { s.items = []; }
       try { s.payments = JSON.parse(s.payments || '[]'); } catch { s.payments = []; }
     });
     res.json(sales);
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Totais agregados de TODAS as vendas (calculado no banco — leve) para os dashboards
+app.get('/api/sales/stats', async (req, res) => {
+  try {
+    const stats = await queryAll(
+      `SELECT store_id, COUNT(*) as count, COALESCE(SUM(total),0) as total
+       FROM sales WHERE status != 'Cancelada' GROUP BY store_id`
+    );
+    res.json(stats);
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
@@ -741,21 +758,137 @@ app.delete('/api/expense-categories/:name', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════
-// ═══  CASH                               ═══
+// ═══  CASH (sessões de caixa)            ═══
 // ═══════════════════════════════════════════
+// Cada abertura→fechamento é uma sessão em cash_sessions. Movimentos são
+// vinculados à sessão (session_id), então não há mais recorte por "hoje"
+// nem exclusão de movimentos antigos na abertura.
+
+const getOpenSession = (storeId, userId) => queryOne(
+  "SELECT * FROM cash_sessions WHERE store_id = $1 AND user_id = $2 AND status IN ('aberto','reaberto') ORDER BY opened_at DESC LIMIT 1",
+  [storeId, userId]
+);
+
+const getSessionMovements = (session) => queryAll(
+  `SELECT * FROM cash_movements WHERE session_id = $1
+   OR (session_id IS NULL AND store_id = $2 AND user_id = $3 AND created_at >= $4 AND ($5::timestamp IS NULL OR created_at <= $5))
+   ORDER BY created_at ASC`,
+  [session.id, session.store_id, session.user_id, session.opened_at, session.status === 'fechado' || session.status === 'auto_fechado' ? session.closed_at : null]
+);
+
+// Agrupamento de formas de pagamento (mesma lógica da tela de fechamento)
+const PAY_GROUP_OF = (method) => {
+  const l = (method || '').toLowerCase().trim();
+  if (l === 'dinheiro' || l.startsWith('dinheiro:')) return 'dinheiro';
+  if (l === 'pix chave') return 'pixchave';
+  if (l === 'pix') return 'pix';
+  if (l.startsWith('créd') || l.startsWith('cred')) return 'credito';
+  if (l.startsWith('déb') || l.startsWith('deb')) return 'debito';
+  return 'outros';
+};
+
+// Calcula o esperado por forma de pagamento a partir do BANCO (fonte da verdade):
+// vendas dentro da janela da sessão + movimentos da sessão.
+async function computeSessionSummary(session) {
+  const end = session.closed_at && (session.status === 'fechado' || session.status === 'auto_fechado') ? session.closed_at : null;
+  const sales = await queryAll(
+    `SELECT id, total, payment, payments, seller_id, discount, status, created_at FROM sales
+     WHERE store_id = $1 AND status != 'Cancelada'
+       AND created_at >= $2 AND ($3::timestamp IS NULL OR created_at <= $3)
+       AND (seller_id = $4 OR seller_id = '' OR seller_id IS NULL)`,
+    [session.store_id, session.opened_at, end, session.user_id]
+  );
+
+  const vendasPorGrupo = { dinheiro: 0, pix: 0, pixchave: 0, credito: 0, debito: 0, outros: 0 };
+  let totalVendas = 0, totalDesc = 0;
+  for (const v of sales) {
+    totalVendas += +v.total || 0;
+    totalDesc += +v.discount || 0;
+    let pays = [];
+    try { pays = JSON.parse(v.payments || '[]'); } catch {}
+    if (!pays.length) pays = [{ method: (v.payment || '').split(':')[0].trim(), value: +v.total }];
+    const paySum = pays.reduce((s, p) => s + (+p.value || 0), 0);
+    const ratio = paySum > 0 && Math.abs(paySum - v.total) > 1 ? (v.total / paySum) : 1;
+    for (const p of pays) {
+      vendasPorGrupo[PAY_GROUP_OF(p.method)] += (+p.value || 0) * ratio;
+    }
+  }
+
+  const movements = await getSessionMovements(session);
+  let suprimentos = 0, sangrias = 0, trocasEstorno = 0;
+  const trocasPorGrupo = { dinheiro: 0, pix: 0, pixchave: 0, credito: 0, debito: 0, outros: 0 };
+  for (const m of movements) {
+    const desc = m.description || '';
+    const val = +m.value || 0;
+    if (m.type === 'entrada') {
+      if (desc.startsWith('Troca ')) {
+        const method = (desc.match(/\(([^)]+)\)/) || [])[1] || '';
+        trocasPorGrupo[method ? PAY_GROUP_OF(method) : 'dinheiro'] += val;
+      } else if (!desc.startsWith('Venda ')) {
+        suprimentos += val;
+      }
+    } else if (m.type === 'saida') {
+      if (desc.startsWith('Estorno troca')) trocasEstorno += val;
+      else sangrias += val;
+    }
+  }
+
+  const fundo = +session.initial_value || 0;
+  const esperado = {};
+  for (const key of Object.keys(vendasPorGrupo)) {
+    let t = vendasPorGrupo[key] + trocasPorGrupo[key];
+    if (key === 'dinheiro') t += fundo + suprimentos - sangrias - trocasEstorno;
+    esperado[key] = Math.round(t * 100) / 100;
+    vendasPorGrupo[key] = Math.round(vendasPorGrupo[key] * 100) / 100;
+  }
+
+  return {
+    session_id: session.id,
+    opened_at: session.opened_at,
+    closed_at: session.closed_at,
+    initial_value: fundo,
+    vendas: sales.length,
+    total_vendas: Math.round(totalVendas * 100) / 100,
+    total_descontos: Math.round(totalDesc * 100) / 100,
+    vendas_por_grupo: vendasPorGrupo,
+    trocas_por_grupo: trocasPorGrupo,
+    suprimentos: Math.round(suprimentos * 100) / 100,
+    sangrias: Math.round(sangrias * 100) / 100,
+    trocas_estorno: Math.round(trocasEstorno * 100) / 100,
+    esperado,
+    movements
+  };
+}
+
 app.get('/api/cash/:storeId', async (req, res) => {
   try {
     const userId = req.query.user_id || 'main';
-    const state = await queryOne('SELECT * FROM cash_state WHERE store_id = $1 AND user_id = $2', [req.params.storeId, userId]);
-    // Movimentações de hoje deste operador
-    const movements = await queryAll(
-      "SELECT * FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date + interval '3 hours' ORDER BY created_at ASC",
-      [req.params.storeId, userId]
-    );
-    res.json({
-      state: state || { store_id: req.params.storeId, user_id: userId, is_open: false, initial_value: 0 },
-      movements
-    });
+    const storeId = req.params.storeId;
+    const session = await getOpenSession(storeId, userId);
+    const state = await queryOne('SELECT * FROM cash_state WHERE store_id = $1 AND user_id = $2', [storeId, userId]);
+
+    let movements = [];
+    if (session) {
+      movements = await getSessionMovements(session);
+    }
+    // Sessão manda no estado (cash_state fica só como compatibilidade/fallback)
+    const effState = session
+      ? { store_id: storeId, user_id: userId, is_open: true, initial_value: +session.initial_value || 0, opened_at: session.opened_at, closed_at: null, close_report: null }
+      : (state ? { ...state, is_open: false } : { store_id: storeId, user_id: userId, is_open: false, initial_value: 0 });
+    // Último fechamento (para exibir na tela de abertura)
+    if (!session) {
+      const last = await queryOne(
+        "SELECT * FROM cash_sessions WHERE store_id = $1 AND user_id = $2 AND status IN ('fechado','auto_fechado') ORDER BY closed_at DESC LIMIT 1",
+        [storeId, userId]
+      );
+      if (last) {
+        effState.closed_at = last.closed_at;
+        effState.close_report = last.close_report;
+        // valor do último fechamento em dinheiro (fundo sugerido)
+        try { effState.initial_value = +(JSON.parse(last.close_report || '{}').counted?.dinheiro) || +state?.initial_value || 0; } catch {}
+      }
+    }
+    res.json({ state: effState, session: session || null, movements });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
@@ -764,21 +897,35 @@ app.post('/api/cash/:storeId', async (req, res) => {
     const { action, value, description, type, user_id, close_report, mov_id } = req.body;
     const storeId = req.params.storeId;
     const userId = user_id || 'main';
+    const actorName = req.user?.name || '';
 
     if (action === 'open') {
-      // UPSERT: cria se não existe, atualiza se existe
+      // Fecha automaticamente sessão esquecida aberta (dia anterior etc.) — preserva tudo para auditoria
+      const stale = await getOpenSession(storeId, userId);
+      if (stale) {
+        await queryRun(
+          `UPDATE cash_sessions SET status = 'auto_fechado', closed_at = NOW(), closed_by = $1,
+           admin_notes = COALESCE(admin_notes,'') || 'Fechada automaticamente na abertura seguinte. ' WHERE id = $2`,
+          ['sistema', stale.id]
+        );
+      }
+      const sessionId = genId();
+      await queryRun(
+        'INSERT INTO cash_sessions (id, store_id, user_id, status, initial_value, opened_by) VALUES ($1,$2,$3,$4,$5,$6)',
+        [sessionId, storeId, userId, 'aberto', value || 0, actorName]
+      );
+      // cash_state mantido por compatibilidade (Black IA, versões antigas do app)
       await queryRun(`
         INSERT INTO cash_state (store_id, user_id, is_open, initial_value, opened_at)
         VALUES ($1, $2, true, $3, NOW())
         ON CONFLICT (store_id, user_id)
         DO UPDATE SET is_open = true, initial_value = $3, opened_at = NOW()
       `, [storeId, userId, value || 0]);
-      // Limpa movimentações antigas deste operador (novo dia)
-      await queryRun(
-        "DELETE FROM cash_movements WHERE store_id = $1 AND user_id = $2 AND created_at < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date + interval '3 hours'",
-        [storeId, userId]
-      );
-    } else if (action === 'close') {
+      return res.json({ success: true, session_id: sessionId });
+    }
+
+    if (action === 'close') {
+      const session = await getOpenSession(storeId, userId);
       // Validação: valor contado não pode ser absurdamente diferente do esperado
       if (close_report && close_report.esperado) {
         const esperadoDinheiro = +(close_report.esperado.dinheiro || 0);
@@ -791,20 +938,176 @@ app.post('/api/cash/:storeId', async (req, res) => {
           });
         }
       }
+      if (session) {
+        // Anexa o resumo calculado pelo servidor ao relatório (auditoria do que o sistema esperava)
+        let report = close_report || null;
+        try {
+          const summary = await computeSessionSummary(session);
+          report = { ...(close_report || {}), esperado_servidor: summary.esperado, total_vendas_servidor: summary.total_vendas, vendas_servidor: summary.vendas };
+        } catch {}
+        await queryRun(
+          `UPDATE cash_sessions SET status = 'fechado', closed_at = NOW(), closed_by = $1, close_report = $2 WHERE id = $3`,
+          [actorName, report ? JSON.stringify(report) : null, session.id]
+        );
+      }
       await queryRun(
         'UPDATE cash_state SET is_open = false, initial_value = $1, closed_at = NOW(), close_report = $2 WHERE store_id = $3 AND user_id = $4',
         [value || 0, close_report ? JSON.stringify(close_report) : null, storeId, userId]
       );
-    } else if (action === 'movement') {
+      return res.json({ success: true, session_id: session?.id || null });
+    }
+
+    if (action === 'movement') {
+      const session = await getOpenSession(storeId, userId);
       // Usa mov_id do cliente (se enviado) para evitar duplicatas em timeout+retry
       const movId = mov_id || genId();
       await queryRun(
-        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
-        [movId, storeId, userId, type || 'entrada', value, description || '']
+        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description, session_id, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING',
+        [movId, storeId, userId, type || 'entrada', value, description || '', session?.id || null, actorName]
       );
+      return res.json({ success: true });
     }
 
     res.json({ success: true });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Resumo do fechamento calculado no SERVIDOR (fonte da verdade para a tela de fechamento)
+app.get('/api/cash/:storeId/summary', async (req, res) => {
+  try {
+    const userId = req.query.user_id || 'main';
+    const session = req.query.session_id
+      ? await queryOne('SELECT * FROM cash_sessions WHERE id = $1', [req.query.session_id])
+      : await getOpenSession(req.params.storeId, userId);
+    if (!session) return res.status(404).json({ error: 'Nenhuma sessão de caixa encontrada' });
+    res.json(await computeSessionSummary(session));
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════
+// ═══  CASH SESSIONS — GESTÃO (ADMIN)     ═══
+// ═══════════════════════════════════════════
+// Lista sessões (histórico de aberturas/fechamentos) — admin e gestor
+app.get('/api/cash-sessions', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const { store_id, date, limit } = req.query;
+    const lim = Math.min(parseInt(limit) || 60, 300);
+    const conditions = [];
+    const params = [];
+    if (store_id) { params.push(store_id); conditions.push(`store_id = $${params.length}`); }
+    if (date) { params.push(date); conditions.push(`(opened_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = $${params.length}::date`); }
+    params.push(lim);
+    const sessions = await queryAll(
+      `SELECT * FROM cash_sessions ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''} ORDER BY opened_at DESC LIMIT $${params.length}`,
+      params
+    );
+    res.json(sessions);
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Detalhe de uma sessão com resumo calculado e movimentos — admin e gestor
+app.get('/api/cash-sessions/:id', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const session = await queryOne('SELECT * FROM cash_sessions WHERE id = $1', [req.params.id]);
+    if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
+    const summary = await computeSessionSummary(session);
+    res.json({ session, summary });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Reabre um caixa fechado — SÓ ADMIN. Guarda o relatório anterior no histórico.
+app.post('/api/cash-sessions/:id/reopen', requireRole('admin'), async (req, res) => {
+  try {
+    const session = await queryOne('SELECT * FROM cash_sessions WHERE id = $1', [req.params.id]);
+    if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
+    if (session.status === 'aberto' || session.status === 'reaberto') return res.status(400).json({ error: 'Esta sessão já está aberta' });
+    // Não permite duas sessões abertas do mesmo operador na mesma loja
+    const conflict = await getOpenSession(session.store_id, session.user_id);
+    if (conflict) return res.status(400).json({ error: 'Já existe um caixa aberto para este operador nesta loja. Feche-o antes de reabrir.' });
+
+    let history = [];
+    try { history = JSON.parse(session.report_history || '[]'); } catch {}
+    if (session.close_report) {
+      history.push({ closed_at: session.closed_at, closed_by: session.closed_by, status: session.status, report: session.close_report, reopened_by: req.user.name, reopened_at: now() });
+    }
+    await queryRun(
+      `UPDATE cash_sessions SET status = 'reaberto', closed_at = NULL, close_report = NULL,
+       reopened_by = $1, reopened_at = NOW(), report_history = $2 WHERE id = $3`,
+      [req.user.name, JSON.stringify(history), req.params.id]
+    );
+    await queryRun(`
+      INSERT INTO cash_state (store_id, user_id, is_open, initial_value, opened_at)
+      VALUES ($1, $2, true, $3, $4)
+      ON CONFLICT (store_id, user_id)
+      DO UPDATE SET is_open = true, initial_value = $3, opened_at = $4
+    `, [session.store_id, session.user_id, +session.initial_value || 0, session.opened_at]);
+    res.json({ success: true });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Edita valores de uma sessão (fundo inicial, valores contados, observação) — SÓ ADMIN
+app.put('/api/cash-sessions/:id', requireRole('admin'), async (req, res) => {
+  try {
+    const session = await queryOne('SELECT * FROM cash_sessions WHERE id = $1', [req.params.id]);
+    if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
+    const { initial_value, counted, admin_notes } = req.body;
+
+    let report = null;
+    try { report = JSON.parse(session.close_report || 'null'); } catch {}
+    let history = [];
+    try { history = JSON.parse(session.report_history || '[]'); } catch {}
+
+    if (counted && report) {
+      // Guarda versão anterior antes de alterar
+      history.push({ edited_by: req.user.name, edited_at: now(), previous_report: session.close_report });
+      report.counted = { ...report.counted, ...counted };
+      // Recalcula esperado/diferença com base no servidor
+      const summary = await computeSessionSummary({ ...session, initial_value: initial_value !== undefined ? initial_value : session.initial_value });
+      report.esperado = summary.esperado;
+      const totalContado = Object.values(report.counted).reduce((s, v) => s + (+v || 0), 0);
+      const totalEsperado = Object.values(summary.esperado).reduce((s, v) => s + (+v || 0), 0);
+      report.diferenca = Math.round((totalContado - totalEsperado) * 100) / 100;
+      report.ajustado_por = req.user.name;
+      report.ajustado_em = now();
+    }
+
+    await queryRun(
+      `UPDATE cash_sessions SET
+        initial_value = COALESCE($1, initial_value),
+        close_report = COALESCE($2, close_report),
+        admin_notes = COALESCE($3, admin_notes),
+        report_history = $4
+       WHERE id = $5`,
+      [initial_value !== undefined ? initial_value : null, report ? JSON.stringify(report) : null, admin_notes !== undefined ? admin_notes : null, JSON.stringify(history), req.params.id]
+    );
+    const updated = await queryOne('SELECT * FROM cash_sessions WHERE id = $1', [req.params.id]);
+    res.json({ success: true, session: updated });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Lança movimento corretivo em uma sessão (entrada/saída de ajuste) — SÓ ADMIN
+app.post('/api/cash-sessions/:id/movements', requireRole('admin'), async (req, res) => {
+  try {
+    const session = await queryOne('SELECT * FROM cash_sessions WHERE id = $1', [req.params.id]);
+    if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
+    const { type, value, description } = req.body;
+    if (!value || +value <= 0) return res.status(400).json({ error: 'Valor inválido' });
+    const movId = genId();
+    await queryRun(
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description, session_id, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [movId, session.store_id, session.user_id, type === 'entrada' ? 'entrada' : 'saida', +value, `Ajuste admin: ${description || 'correção'}`, session.id, req.user.name]
+    );
+    res.json({ success: true, id: movId });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Exclui um movimento de caixa errado — SÓ ADMIN
+app.delete('/api/cash-movements/:id', requireRole('admin'), async (req, res) => {
+  try {
+    const mov = await queryOne('SELECT * FROM cash_movements WHERE id = $1', [req.params.id]);
+    if (!mov) return res.status(404).json({ error: 'Movimento não encontrado' });
+    await queryRun('DELETE FROM cash_movements WHERE id = $1', [req.params.id]);
+    res.json({ success: true, deleted: mov });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
@@ -832,9 +1135,10 @@ app.post('/api/withdrawals', async (req, res) => {
 
     // Registra a saída no caixa para que o saldo seja atualizado
     const movId = w.mov_id || genId();
+    const wSession = await getOpenSession(w.store_id, w.user_id || 'main');
     await queryRun(
-      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
-      [movId, w.store_id, w.user_id || 'main', 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim()]
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description, session_id, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING',
+      [movId, w.store_id, w.user_id || 'main', 'saida', w.value, `Retirada: ${w.description || 'Sem descrição'} (${w.responsible || ''})`.trim(), wSession?.id || null, req.user?.name || '']
     );
 
     res.json({ id, ...w, created_at: new Date().toISOString() });
@@ -888,9 +1192,10 @@ app.post('/api/advances', async (req, res) => {
 
     // Registra saída no caixa
     const movId = a.mov_id || genId();
+    const aSession = await getOpenSession(a.store_id, a.user_id || 'main');
     await queryRun(
-      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING',
-      [movId, a.store_id, a.user_id || 'main', 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`]
+      'INSERT INTO cash_movements (id, store_id, user_id, type, value, description, session_id, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING',
+      [movId, a.store_id, a.user_id || 'main', 'saida', a.value, `Vale: ${a.emp_name} - ${a.description || 'Adiantamento'}`, aSession?.id || null, req.user?.name || '']
     );
 
     res.json({ id, ...a, month, created_at: new Date().toISOString() });
@@ -1181,9 +1486,10 @@ app.put('/api/exchanges/:id/cancel', async (req, res) => {
       // Se diff < 0, loja devolveu dinheiro → estornar como entrada
       const type = diff > 0 ? 'saida' : 'entrada';
       const value = Math.abs(diff);
+      const exSession = await getOpenSession(ex.store_id, userId);
       await client.query(
-        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description) VALUES ($1,$2,$3,$4,$5,$6)',
-        [genId(), ex.store_id, userId, type, value, `Estorno troca cancelada - ${cupomRef}`]
+        'INSERT INTO cash_movements (id, store_id, user_id, type, value, description, session_id, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [genId(), ex.store_id, userId, type, value, `Estorno troca cancelada - ${cupomRef}`, exSession?.id || null, req.user?.name || '']
       );
     }
 
@@ -1425,28 +1731,36 @@ const AGENT_TOOLS = [
 async function executeTool(toolName, input, user) {
   switch (toolName) {
     case 'consultar_caixa': {
-      const state = await queryOne('SELECT * FROM cash_state WHERE store_id=$1', [input.store_id]);
-      const movements = await queryAll('SELECT * FROM cash_movements WHERE store_id=$1 ORDER BY created_at DESC LIMIT 20', [input.store_id]);
-      const totalEntradas = movements.filter(m => m.type === 'entrada').reduce((s, m) => s + parseFloat(m.value || 0), 0);
-      const totalSaidas = movements.filter(m => m.type === 'saida').reduce((s, m) => s + parseFloat(m.value || 0), 0);
-      const saldo = parseFloat(state?.initial_value || 0) + totalEntradas - totalSaidas;
-      return { estado: state?.is_open ? 'aberto' : 'fechado', valor_inicial: state?.initial_value, saldo_estimado: saldo, aberto_em: state?.opened_at, movimentacoes_recentes: movements.slice(0, 10) };
+      // Consulta a sessão do próprio usuário; se não tiver, procura qualquer sessão aberta na loja
+      let session = await getOpenSession(input.store_id, user.id);
+      if (!session) session = await queryOne("SELECT * FROM cash_sessions WHERE store_id=$1 AND status IN ('aberto','reaberto') ORDER BY opened_at DESC LIMIT 1", [input.store_id]);
+      if (!session) {
+        const last = await queryOne("SELECT * FROM cash_sessions WHERE store_id=$1 ORDER BY opened_at DESC LIMIT 1", [input.store_id]);
+        return { estado: 'fechado', ultimo_fechamento: last?.closed_at || null, valor_inicial: last?.initial_value };
+      }
+      const summary = await computeSessionSummary(session);
+      return { estado: 'aberto', operador: session.user_id, valor_inicial: session.initial_value, aberto_em: session.opened_at, saldo_dinheiro_esperado: summary.esperado.dinheiro, vendas_na_sessao: summary.vendas, total_vendido: summary.total_vendas, movimentacoes_recentes: summary.movements.slice(-10) };
     }
     case 'abrir_caixa': {
-      const current = await queryOne('SELECT * FROM cash_state WHERE store_id=$1', [input.store_id]);
-      if (current?.is_open) return { erro: 'Caixa já está aberto!' };
-      await queryRun('UPDATE cash_state SET is_open=true, initial_value=$1, opened_at=NOW() WHERE store_id=$2', [input.valor_inicial, input.store_id]);
+      const current = await getOpenSession(input.store_id, user.id);
+      if (current) return { erro: 'Caixa já está aberto!' };
+      const sessionId = genId();
+      await queryRun('INSERT INTO cash_sessions (id, store_id, user_id, status, initial_value, opened_by) VALUES ($1,$2,$3,$4,$5,$6)', [sessionId, input.store_id, user.id, 'aberto', input.valor_inicial, user.name + ' (via Black IA)']);
+      await queryRun(`INSERT INTO cash_state (store_id, user_id, is_open, initial_value, opened_at) VALUES ($1,$2,true,$3,NOW())
+        ON CONFLICT (store_id, user_id) DO UPDATE SET is_open=true, initial_value=$3, opened_at=NOW()`, [input.store_id, user.id, input.valor_inicial]);
       return { sucesso: true, mensagem: `Caixa aberto com R$${input.valor_inicial}` };
     }
     case 'fechar_caixa': {
-      const current = await queryOne('SELECT * FROM cash_state WHERE store_id=$1', [input.store_id]);
-      if (!current?.is_open) return { erro: 'Caixa já está fechado!' };
-      await queryRun('UPDATE cash_state SET is_open=false, closed_at=NOW() WHERE store_id=$1', [input.store_id]);
+      const current = await getOpenSession(input.store_id, user.id);
+      if (!current) return { erro: 'Caixa já está fechado!' };
+      await queryRun(`UPDATE cash_sessions SET status='fechado', closed_at=NOW(), closed_by=$1 WHERE id=$2`, [user.name + ' (via Black IA)', current.id]);
+      await queryRun('UPDATE cash_state SET is_open=false, closed_at=NOW() WHERE store_id=$1 AND user_id=$2', [input.store_id, user.id]);
       return { sucesso: true, mensagem: 'Caixa fechado com sucesso' };
     }
     case 'registrar_movimento_caixa': {
       const id = uuidv4().split('-')[0] + Date.now().toString(36).slice(-4);
-      await queryRun('INSERT INTO cash_movements (id, store_id, type, value, description, created_at) VALUES ($1,$2,$3,$4,$5,NOW())', [id, input.store_id, input.tipo, input.valor, input.descricao || '']);
+      const mvSession = await getOpenSession(input.store_id, user.id);
+      await queryRun('INSERT INTO cash_movements (id, store_id, user_id, type, value, description, session_id, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())', [id, input.store_id, user.id, input.tipo, input.valor, input.descricao || '', mvSession?.id || null, user.name + ' (via Black IA)']);
       return { sucesso: true, mensagem: `${input.tipo === 'entrada' ? 'Suprimento' : 'Sangria'} de R$${input.valor} registrado` };
     }
     case 'consultar_vendas': {

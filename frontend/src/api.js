@@ -348,7 +348,13 @@ const api = {
   getMovements: (stockId) => request(`/stock/movements/${stockId}`),
 
   // Sales
-  getSales: (storeId) => request(`/sales${storeId ? `?store_id=${storeId}` : ''}`),
+  getSales: (storeId, days) => {
+    const params = [];
+    if (storeId) params.push(`store_id=${storeId}`);
+    if (days) params.push(`days=${days}`);
+    return request(`/sales${params.length ? '?' + params.join('&') : ''}`);
+  },
+  getSalesStats: () => request('/sales/stats'),
   createSale: (data) => request('/sales', { method: 'POST', body: data }),
   updateSale: (id, data) => request(`/sales/${id}`, { method: 'PUT', body: data }),
   getEmployeePurchases: (month) => request(`/sales/employee-purchases?month=${month}`),
@@ -379,6 +385,26 @@ const api = {
     }
     return request(`/cash/${storeId}`, { method: 'POST', body: data });
   },
+  // Resumo do fechamento calculado no servidor (fonte da verdade)
+  getCashSummary: (storeId, userId, sessionId) => {
+    const params = [];
+    if (userId) params.push(`user_id=${userId}`);
+    if (sessionId) params.push(`session_id=${sessionId}`);
+    return request(`/cash/${storeId}/summary${params.length ? '?' + params.join('&') : ''}`);
+  },
+
+  // ─── Gestão de sessões de caixa (admin) ───
+  getCashSessions: (storeId, date) => {
+    const params = [];
+    if (storeId) params.push(`store_id=${storeId}`);
+    if (date) params.push(`date=${date}`);
+    return request(`/cash-sessions${params.length ? '?' + params.join('&') : ''}`);
+  },
+  getCashSession: (id) => request(`/cash-sessions/${id}`),
+  reopenCashSession: (id) => request(`/cash-sessions/${id}/reopen`, { method: 'POST', body: {} }),
+  updateCashSession: (id, data) => request(`/cash-sessions/${id}`, { method: 'PUT', body: data }),
+  addCashSessionMovement: (id, data) => request(`/cash-sessions/${id}/movements`, { method: 'POST', body: data }),
+  deleteCashMovement: (id) => request(`/cash-movements/${id}`, { method: 'DELETE' }),
 
   // Employees
   getEmployees: () => request('/employees'),
