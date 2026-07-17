@@ -75,12 +75,24 @@ async function syncQueue() {
       return;
     }
   }
-  const queue = getQueue();
+  let queue = getQueue();
   if (queue.length === 0) return;
+
+  // Auto-limpeza: descarta itens presos há mais de 14 dias (velhos demais para reprocessar
+  // com segurança — vendas recentes têm reenvio próprio pelo loadAllData)
+  const ageCutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  const stale = queue.filter(q => q.createdAt && new Date(q.createdAt).getTime() < ageCutoff);
+  if (stale.length > 0) {
+    stale.forEach(q => console.warn('[SYNC] Item com mais de 14 dias descartado:', q.method, q.path, 'criado em', q.createdAt, '| body:', JSON.stringify(q.body || {}).slice(0, 300)));
+    queue = queue.filter(q => !stale.includes(q));
+    saveQueue(queue);
+    if (queue.length === 0) return;
+  }
 
   syncing = true;
   syncStartedAt = Date.now();
   console.log('[SYNC] Iniciando sincronização de', queue.length, 'ações offline...');
+  queue.forEach(q => console.log('[SYNC] Pendente:', q.method, q.path, '| criado:', q.createdAt, '| tentativas:', q._retries || 0));
 
   let successCount = 0;
   let authFailed = false;
@@ -146,8 +158,24 @@ async function syncQueue() {
         }
       }
     } catch (e) {
-      // Sem internet ou timeout — para de tentar
-      console.log('[SYNC] Erro de rede/timeout, tentando depois:', e.name);
+      // Timeout com internet ligada: conta a tentativa e PULA para o próximo item.
+      // Antes o timeout quebrava o loop — um item permanentemente lento no início
+      // da fila travava a sincronização inteira para sempre.
+      if (e.name === 'AbortError' && navigator.onLine) {
+        item._retries = (item._retries || 0) + 1;
+        if (item._retries >= 5) {
+          console.warn('[SYNC] Item estourou timeout 5 vezes em', item.path, '— removendo da fila');
+          removeFromQueue(item.id);
+        } else {
+          console.warn('[SYNC] Timeout em', item.path, '(tentativa', item._retries + '/5) — pulando para o próximo');
+          const q = getQueue();
+          const idx = q.findIndex(qi => qi.id === item.id);
+          if (idx >= 0) { q[idx]._retries = item._retries; localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+        }
+        continue;
+      }
+      // Sem internet de verdade — para de tentar
+      console.log('[SYNC] Erro de rede, tentando depois:', e.name);
       break;
     }
   }
