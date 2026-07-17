@@ -306,6 +306,21 @@ const api = {
   },
   logout: () => { clearToken(); localStorage.removeItem('dblack_user'); },
 
+  // Settings (configurações gerais — ex.: limite de desconto)
+  getSettings: () => request('/settings'),
+  saveSetting: (key, value) => request(`/settings/${key}`, { method: 'PUT', body: { value } }),
+  // Verifica senha de gerente/gestor/admin (liberação de desconto, cancelamento etc.)
+  // Fetch direto (sem fila offline — não faz sentido enfileirar uma verificação de senha)
+  verifyManager: async (password) => {
+    const res = await fetch(`${BASE}/auth/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) throw new Error('Erro ao verificar senha');
+    return res.json();
+  },
+
   // Users
   getUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: data }),

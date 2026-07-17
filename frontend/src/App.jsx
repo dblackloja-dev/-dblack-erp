@@ -138,7 +138,7 @@ const prodFromApi = p => ({ ...p, minStock: parseInt(p.min_stock)||0, price: par
 const prodToApi = p => ({ ...p, min_stock: p.minStock, variations: Array.isArray(p.variations) ? p.variations : [] });
 const custFromApi = c => ({ ...c, totalSpent: parseFloat(c.total_spent||0), lastVisit: c.last_visit||'-', tags: typeof c.tags === 'string' ? JSON.parse(c.tags||'["Novo"]') : (c.tags||['Novo']) });
 const custToApi = c => ({ ...c, total_spent: c.totalSpent||0, last_visit: c.lastVisit||'-' });
-const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,canceledBy:s.canceled_by,canceledAt:s.canceled_at,subtotal:parseFloat(s.subtotal||0),discount:parseFloat(s.discount||0),total:parseFloat(s.total||0)}); }); return r; };
+const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,discountAuthBy:s.discount_auth_by||"",canceledBy:s.canceled_by,canceledAt:s.canceled_at,subtotal:parseFloat(s.subtotal||0),discount:parseFloat(s.discount||0),total:parseFloat(s.total||0)}); }); return r; };
 const expFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
 const exchFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
 const empFromApi = e => ({ ...e, storeId: e.store_id });
@@ -308,6 +308,8 @@ export default function App() {
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
   // Totais all-time por loja calculados no servidor (as vendas detalhadas carregam só os últimos 120 dias)
   const [salesStats, setSalesStats] = useState(() => ls('salesStats', []));
+  // Configurações gerais vindas do servidor (ex.: discount_limit) — cache local p/ funcionar offline
+  const [appSettings, setAppSettings] = useState(() => ls('appSettings', {}));
 
   // ─── LAZY LOADING DE FOTOS (carrega em lote para evitar N requests + N re-renders) ───
   const loadedPhotosRef = useRef(new Set());
@@ -360,6 +362,7 @@ export default function App() {
   useEffect(() => { debouncedSave('advances', advances); }, [advances]);
   useEffect(() => { debouncedSave('expenseCategories', expenseCategories); }, [expenseCategories]);
   useEffect(() => { debouncedSave('salesStats', salesStats); }, [salesStats]);
+  useEffect(() => { debouncedSave('appSettings', appSettings); }, [appSettings]);
 
   // ─── INICIALIZA QZ TRAY — colocado APÓS a definição de showToast ───
 
@@ -418,8 +421,10 @@ export default function App() {
       api.getAdvances(),
       api.getExpenseCategories(),
       api.getSalesStats(),
-    ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats,stats]) => {
+      api.getSettings(),
+    ]).then(([sls,custs,exps,emps,pays,sels,exchs,proms,invs,usrs,wdrs,advs,expCats,stats,stgs]) => {
       if(stats?.length) setSalesStats(stats);
+      if(stgs&&typeof stgs==='object') setAppSettings(stgs);
       if(sls?.length){
         const apiSales=salesFromApi(sls);
         // Reenvia vendas locais que não existem no servidor (vendas feitas offline ou que falharam)
@@ -432,7 +437,7 @@ export default function App() {
         Object.keys(currentSales).forEach(store=>{
           (currentSales[store]||[]).forEach(sale=>{
             if(sale.id&&!apiIds.has(sale.id)&&sale.status!=="Cancelada"&&sale.date&&sale.date>=cutoff){
-              api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',stock_id:''}).catch(()=>{});
+              api.createSale({...sale,store_id:sale.storeId||store,customer_id:sale.customerId||'',customer_whatsapp:sale.customerWhatsapp||'',seller_id:sale.sellerId||'',discount_label:sale.discountLabel||'',discount_auth_by:sale.discountAuthBy||'',stock_id:''}).catch(()=>{});
               if(!apiSales[store])apiSales[store]=[];
               apiSales[store].unshift(sale);
               synced++;
@@ -749,6 +754,7 @@ export default function App() {
     { id:"investimentos", label:"Investimento", icon:I.money, perm:"investimentos" },
     { id:"rh", label:"RH / Folha", icon:I.users, perm:"all" },
     { id:"usuarios", label:"Usuários", icon:I.key, perm:"all" },
+    { id:"config", label:"Configurações", icon:I.key, perm:"all" },
   ];
 
   const visibleTabs = allTabs.filter(t => hasPermission(t.perm));
@@ -854,7 +860,7 @@ export default function App() {
           {tab==="gestor" && <GestorPanel {...{sales,expenses,stock,catalog,customers,investments,cashState,salesStats}} />}
 
           {/* PDV */}
-          {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts}} />}
+          {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}} />}
 
           {/* PRODUTOS (Cadastro) */}
           {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts}} />}
@@ -879,6 +885,7 @@ export default function App() {
 
           {/* USUÁRIOS */}
           {tab==="usuarios" && <UsersModule {...{users,setUsers,showToast,loggedUser}} />}
+          {tab==="config" && <ConfigModule {...{appSettings,setAppSettings,showToast}} />}
 
           {/* CRM */}
           {tab==="crm" && <CRMModule {...{customers,setCustomers,storeSales,showToast}} />}
@@ -1170,13 +1177,15 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 // ═══  PDV MODULE                 ═══
 // ═══════════════════════════════════
-function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts}){
+function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}){
   // ── MULTI-TAB SALES ──
-  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
+  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
   const [activeTabIdx,setActiveTabIdx]=useState(0);
   const [search,setSearch]=useState("");
   const [showDiscountPanel,setShowDiscountPanel]=useState(false);
+  const [authPassInput,setAuthPassInput]=useState("");
+  const [authVerifying,setAuthVerifying]=useState(false);
   const [showShortcuts,setShowShortcuts]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const [autoFlow,setAutoFlow]=useState(false);
@@ -1333,7 +1342,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         case "F6": quickPay("Débito"); break;
         case "F7": finalizeSale(); break;
         case "F8": setCart([]);setPayments([]);setShowPayPanel(false);showToast("Carrinho limpo!"); break;
-        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
+        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
         case "F10": if(lastReceipt)setReceiptSale(lastReceipt); else showToast("Nenhum cupom anterior","error"); break;
         case "F12": setShowShortcuts(p=>!p); break;
         default: break;
@@ -1381,6 +1390,37 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   }
   discountValue=Math.min(discountValue,cartSub); // não pode ser maior que o subtotal
   const cartTotal=Math.round(Math.max(0,cartSub-discountValue)*100)/100;
+
+  // ── LIMITE DE DESCONTO (configurável em Configurações) ──
+  // Limite global em % sobre o subtotal; vale para desconto fixo e por item também.
+  // Admin não tem limite. Acima do limite exige liberação com senha de gerente/gestor/admin.
+  const discountLimitPct=+(appSettings?.discount_limit?.percent)||0; // 0 = sem limite
+  const discountPct=cartSub>0?discountValue/cartSub*100:0;
+  const discountAuth=tab.discountAuth||null;
+  // A liberação vale para o valor autorizado (ou menor) — se aumentar o desconto, pede senha de novo
+  const discountAuthValid=discountAuth&&discountValue<=discountAuth.value+0.001;
+  const discountBlocked=discountLimitPct>0&&loggedUser?.role!=="admin"&&discountPct>discountLimitPct+0.001&&!discountAuthValid;
+
+  // Libera o desconto acima do limite com senha de gerente/gestor/admin
+  const releaseDiscount=async()=>{
+    if(!authPassInput)return showToast("Digite a senha do gerente!","error");
+    if(!navigator.onLine)return showToast("Sem internet — não é possível verificar a senha agora.","error");
+    setAuthVerifying(true);
+    try{
+      const r=await api.verifyManager(authPassInput);
+      if(r?.authorized){
+        upTab({discountAuth:{by:r.user?.name||"Gerente",id:r.user?.id||"",value:discountValue}});
+        setAuthPassInput("");
+        showToast("Desconto liberado por "+(r.user?.name||"gerente")+"!");
+      }else{
+        showToast("Senha incorreta ou sem permissão!","error");
+      }
+    }catch(e){
+      showToast("Erro ao verificar senha: "+e.message,"error");
+    }finally{
+      setAuthVerifying(false);
+    }
+  };
 
   // Payment calculations
   const totalPaid=payments.reduce((s,p)=>s+p.value,0);
@@ -1467,14 +1507,15 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const finalizeSale=()=>{
     if(cart.length===0)return showToast("Carrinho vazio!","error");
     if(!storeCash.open)return showToast("Abra o caixa!","error");
+    if(discountBlocked){setShowDiscountPanel(true);return showToast("Desconto acima do limite de "+discountLimitPct+"%! Peça liberação de um gerente no painel de desconto.","error");}
     if(!isFullyPaid)return showToast("Pagamento incompleto! Faltam "+fmt(remaining),"error");
     const cupomNum="CNF-"+String(Date.now()).slice(-6);
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual};
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
-    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'' }).catch(e=>{
+    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'', discount_auth_by: newSale.discountAuthBy||'' }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
       // O loadAllData vai detectar e reenviar na próxima sincronização
       console.warn('[VENDA] Erro ao enviar para servidor (será reenviada):', e.message);
@@ -1487,7 +1528,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     if(saleTabs.length>1){
       closeSaleTab(activeTabIdx);
     } else {
-      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:""});
+      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null});
     }
     setShowDiscountPanel(false);
     setFolhaEmpId("");
@@ -1631,8 +1672,19 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                   <span style={{fontWeight:700,color:C.red}}>-{fmt(discountValue)}</span>
                 </div>}
 
+                {/* Limite de desconto excedido — pede liberação de gerente */}
+                {discountBlocked&&<div style={{marginTop:6,padding:"8px 10px",background:"rgba(255,143,0,.08)",border:"1px solid rgba(255,143,0,.35)",borderRadius:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.org,marginBottom:4}}>🔒 Desconto acima do limite de {discountLimitPct}%</div>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:6}}>Este desconto é de {discountPct.toFixed(1)}%. Peça a um gerente para digitar a senha e liberar esta venda.</div>
+                  <div style={{display:"flex",gap:4}}>
+                    <input style={{...S.inp,flex:1,fontSize:12}} type="password" placeholder="Senha do gerente" value={authPassInput} onChange={e=>setAuthPassInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&releaseDiscount()}/>
+                    <button style={{padding:"6px 12px",borderRadius:7,border:"none",background:C.org,color:"#000",cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit",opacity:authVerifying?.6:1}} disabled={authVerifying} onClick={releaseDiscount}>{authVerifying?"...":"Liberar"}</button>
+                  </div>
+                </div>}
+                {discountValue>0&&discountAuthValid&&<div style={{marginTop:6,padding:"6px 8px",background:"rgba(0,230,118,.08)",border:"1px solid rgba(0,230,118,.3)",borderRadius:6,fontSize:11,color:C.grn,fontWeight:600}}>✓ Desconto liberado por {discountAuth.by}</div>}
+
                 {/* Confirmar */}
-                {discountValue>0&&<button style={{width:"100%",marginTop:6,padding:"10px",borderRadius:8,border:"none",background:C.gold,color:"#000",cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}} onClick={()=>setShowDiscountPanel(false)}>✓ Aplicar Desconto (-{fmt(discountValue)})</button>}
+                {discountValue>0&&!discountBlocked&&<button style={{width:"100%",marginTop:6,padding:"10px",borderRadius:8,border:"none",background:C.gold,color:"#000",cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}} onClick={()=>setShowDiscountPanel(false)}>✓ Aplicar Desconto (-{fmt(discountValue)})</button>}
 
                 {/* Clear */}
                 {(cartDiscount>0||Object.values(itemDiscounts).some(v=>v>0))&&<button style={{width:"100%",marginTop:4,padding:"4px",borderRadius:5,border:"none",background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={()=>{setCartDiscount(0);upTab({discountItemIds:[],itemDiscounts:{}});}}>Remover desconto</button>}
@@ -4780,6 +4832,59 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
     </div>
   );
 }
+// ═══════════════════════════════════════════════
+// ═══  CONFIGURAÇÕES (admin) — limites do ERP  ═══
+// ═══════════════════════════════════════════════
+function ConfigModule({appSettings,setAppSettings,showToast}){
+  const savedPct=+(appSettings?.discount_limit?.percent)||0;
+  const [limitPct,setLimitPct]=useState(savedPct?String(savedPct):"");
+  const [saving,setSaving]=useState(false);
+
+  const saveLimit=async()=>{
+    const pct=Math.max(0,Math.min(100,+limitPct||0));
+    setSaving(true);
+    try{
+      const value={percent:pct};
+      const r=await api.saveSetting('discount_limit',value);
+      if(r?._offline)return showToast("Sem internet — tente novamente quando estiver online.","error");
+      setAppSettings(prev=>({...prev,discount_limit:value}));
+      showToast(pct>0?"Limite de desconto salvo: "+pct+"%":"Limite de desconto removido — sem restrição.");
+    }catch(e){
+      showToast("Erro ao salvar: "+e.message,"error");
+    }finally{
+      setSaving(false);
+    }
+  };
+
+  return(
+    <div>
+      <div style={{marginBottom:16}}>
+        <h2 style={{fontSize:20,fontWeight:800,marginBottom:2}}>⚙️ Configurações</h2>
+        <div style={{fontSize:12,color:C.dim}}>Regras gerais do ERP — valem para todas as lojas.</div>
+      </div>
+
+      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:520}}>
+        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🏷️ Limite de desconto dos colaboradores</div>
+        <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
+          Desconto máximo (em % do subtotal) que os colaboradores podem dar no PDV — vale para desconto em porcentagem, valor fixo ou por produto, em todas as lojas.
+          Acima disso o PDV bloqueia e pede a senha de um <strong style={{color:C.txt}}>gerente, gestor ou admin</strong> para liberar a venda (fica registrado quem liberou).
+          Administradores não têm limite.
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+          <input style={{...S.inp,width:110,textAlign:"center",fontSize:18,fontWeight:700}} type="number" min={0} max={100} placeholder="0" value={limitPct} onChange={e=>setLimitPct(e.target.value)}/>
+          <span style={{fontSize:16,fontWeight:700,color:C.dim}}>%</span>
+          <button style={{...S.primBtn,opacity:saving?.6:1}} disabled={saving} onClick={saveLimit}>{saving?"Salvando...":"Salvar limite"}</button>
+        </div>
+        <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
+          {savedPct>0
+            ?<>Limite atual: <strong style={{color:C.gold}}>{savedPct}%</strong>. Ex.: numa venda de R$ 200,00 o colaborador pode dar até <strong style={{color:C.gold}}>{fmt(200*savedPct/100)}</strong> de desconto sem liberação.</>
+            :<>Nenhum limite definido — colaboradores podem dar qualquer desconto. Digite 0 para manter sem limite.</>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UsersModule({users,setUsers,showToast,loggedUser}){
   const EMPTY={name:"",email:"",password:"",role:"vendedor",store_id:"loja1"};
   const [showForm,setShowForm]=useState(false);
@@ -6096,7 +6201,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
               <td style={S.td}>
                 <div style={{fontSize:11,maxWidth:180}}>{(sale.items||[]).map((it,i)=><div key={i}>{it.qty}x {it.name}</div>)}</div>
               </td>
-              <td style={{...S.td,color:C.red,fontSize:12}}>{sale.discount>0?"-"+fmt(sale.discount):"—"}</td>
+              <td style={{...S.td,color:C.red,fontSize:12}}>{sale.discount>0?"-"+fmt(sale.discount):"—"}{sale.discountAuthBy&&<div style={{fontSize:9,color:C.org,whiteSpace:"nowrap"}}>🔓 lib. {sale.discountAuthBy}</div>}</td>
               <td style={{...S.td,...S.tdM,color:cancelada?C.dim:C.grn}}>{fmt(sale.total)}</td>
               <td style={{...S.td,fontSize:11,maxWidth:160}}>
                 {sale.payments&&sale.payments.length>0

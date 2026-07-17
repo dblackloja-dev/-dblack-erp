@@ -123,6 +123,31 @@ app.get('/api/stores', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════
+// ═══  SETTINGS (configurações gerais)    ═══
+// ═══════════════════════════════════════════
+// Retorna todas as configurações como objeto { chave: valor }
+app.get('/api/settings', async (req, res) => {
+  try {
+    const rows = await queryAll('SELECT key, value FROM settings');
+    const out = {};
+    rows.forEach(r => { try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; } });
+    res.json(out);
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/settings/:key', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const { value } = req.body;
+    await queryRun(
+      `INSERT INTO settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_by = $3, updated_at = NOW()`,
+      [req.params.key, JSON.stringify(value), req.user.name || req.user.id]
+    );
+    res.json({ success: true });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════
 // ═══  AUTH / USERS                       ═══
 // ═══════════════════════════════════════════
 app.post('/api/auth/login', async (req, res) => {
@@ -579,13 +604,13 @@ app.post('/api/sales', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        ON CONFLICT (id) DO NOTHING`,
       [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
        s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
        JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
-       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null]
+       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null, s.discount_auth_by || null]
     );
 
     await client.query('COMMIT');

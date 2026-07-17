@@ -321,6 +321,14 @@ async function initDB() {
       admin_notes TEXT
     );
 
+    -- Configurações gerais do ERP (chave → valor JSON)
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_by TEXT,
+      updated_at TIMESTAMP DEFAULT NOW()
+    );
+
     -- Conversas do agente de suporte Black IA
     CREATE TABLE IF NOT EXISTS agent_conversations (
       id TEXT PRIMARY KEY,
@@ -360,6 +368,7 @@ async function initDB() {
     pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS emp_id TEXT`).catch(()=>{}),
     pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS session_id TEXT`).catch(()=>{}),
     pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS created_by TEXT`).catch(()=>{}),
+    pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_auth_by TEXT`).catch(()=>{}),
   ]);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_state_store_user ON cash_state(store_id, user_id)`).catch(()=>{});
 
