@@ -8,6 +8,8 @@ const pct = (v) => (parseFloat(v)||0).toFixed(1)+"%";
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 // Data local (Brasil) no formato YYYY-MM-DD — evita bug de fuso horário com toISOString (que usa UTC)
 const localDateStr = (d) => { const dt = d || new Date(); return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`; };
+// Janela de vendas detalhadas carregada no app; períodos maiores são buscados sob demanda na aba Vendas
+const SALES_WINDOW_DAYS = 30;
 
 // ─── IMPRESSÃO SILENCIOSA (QZ Tray) ───
 // Armazena o nome da impressora configurada pelo usuário
@@ -93,9 +95,13 @@ const ls = (key, fallback) => {
 };
 const lsSave = (key, val) => {
   try {
-    // Vendas: salvar tudo no localStorage (banco é a fonte principal)
+    // Vendas: salvar só os últimos 7 dias (banco é a fonte principal; a janela completa
+    // estourava a quota de ~5MB do localStorage e o tratamento de erro apagava o cache em loop)
     if (key === 'sales' && val && typeof val === 'object') {
-      localStorage.setItem('dblack_' + key, JSON.stringify(val));
+      const cutoff = localDateStr(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+      const light = {};
+      Object.keys(val).forEach(st => { light[st] = (val[st] || []).filter(s => s.date >= cutoff); });
+      localStorage.setItem('dblack_' + key, JSON.stringify(light));
       return;
     }
     // Para catálogo: remover campo photo antes de salvar (fotos são lazy-loaded da API)
@@ -274,6 +280,8 @@ export default function App() {
   // Ref para manter sempre o estado mais recente das vendas (evita race condition no loadAllData)
   const salesRef = useRef(sales);
   useEffect(() => { salesRef.current = sales; }, [sales]);
+  // Assinatura da última resposta de vendas — evita re-renderizar o app inteiro a cada refresh de 5 min quando nada mudou
+  const salesSigRef = useRef('');
   const [expenses, setExpenses] = useState(() => ls('expenses', INIT_EXPENSES));
   const [customers, setCustomers] = useState(() => ls('customers', INIT_CUSTOMERS));
   const [cashState, setCashState] = useState(() => ls('cashState', INIT_CASH));
@@ -306,7 +314,7 @@ export default function App() {
   const [withdrawals, setWithdrawals] = useState(() => ls('withdrawals', []));
   const [advances, setAdvances] = useState(() => ls('advances', []));
   const [expenseCategories, setExpenseCategories] = useState(() => ls('expenseCategories', ["Aluguel","Energia","Água","Internet","Funcionários","Marketing","Manutenção","Material","Impostos","Transporte","Alimentação","Fornecedor","Outros"]));
-  // Totais all-time por loja calculados no servidor (as vendas detalhadas carregam só os últimos 120 dias)
+  // Totais all-time por loja calculados no servidor (as vendas detalhadas carregam só a janela recente)
   const [salesStats, setSalesStats] = useState(() => ls('salesStats', []));
   // Configurações gerais vindas do servidor (ex.: discount_limit) — cache local p/ funcionar offline
   const [appSettings, setAppSettings] = useState(() => ls('appSettings', {}));
@@ -406,8 +414,10 @@ export default function App() {
 
     // FASE 2: Todo o resto carrega em paralelo (não bloqueia produtos)
     const fase2 = Promise.all([
-      // Últimos 120 dias — carregar TODAS as vendas da história travava o app conforme o volume crescia
-      api.getSales(undefined, 120),
+      // Últimos 30 dias — o volume cresceu (~120 vendas/dia) e a janela de 120 dias voltou a travar
+      // o app (9MB de JSON parseados e re-renderizados a cada refresh). Períodos maiores são
+      // buscados sob demanda na aba Vendas conforme o filtro de data.
+      api.getSales(undefined, SALES_WINDOW_DAYS),
       api.getCustomers(),
       api.getExpenses(),
       api.getEmployees(),
@@ -431,7 +441,7 @@ export default function App() {
         const apiIds=new Set(sls.map(s=>s.id));
         const currentSales=salesRef.current||{};
         let synced=0;
-        // Só reenvia vendas recentes (últimos 7 dias) — a API agora retorna janela de 120 dias,
+        // Só reenvia vendas recentes (últimos 7 dias) — a API retorna só a janela recente,
         // então vendas antigas fora da janela não podem ser tratadas como "faltando no servidor"
         const cutoff=localDateStr(new Date(Date.now()-7*24*60*60*1000));
         Object.keys(currentSales).forEach(store=>{
@@ -445,7 +455,13 @@ export default function App() {
           });
         });
         if(synced>0) console.log('[SYNC] '+synced+' vendas locais enviadas ao servidor');
-        setSales(apiSales);
+        // Só troca o estado se algo mudou desde o último refresh — trocar sempre re-renderizava
+        // o app inteiro (e re-serializava o localStorage) a cada 5 min à toa
+        const sig=JSON.stringify(sls);
+        if(synced>0||sig!==salesSigRef.current){
+          salesSigRef.current=sig;
+          setSales(apiSales);
+        }
       }
       if(custs?.length) setCustomers(custs.map(custFromApi));
       setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
@@ -5981,6 +5997,23 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const todayStr=localDateStr();
   const [dateFrom,setDateFrom]=useState(todayStr);
   const [dateTo,setDateTo]=useState(todayStr);
+  // Vendas além da janela recente, buscadas sob demanda quando o filtro de data pede período antigo
+  const [olderSales,setOlderSales]=useState(null);
+  const [loadingOlder,setLoadingOlder]=useState(false);
+  const olderDaysRef=useRef(0);
+  useEffect(()=>{ olderDaysRef.current=0; setOlderSales(null); },[activeStore]);
+  useEffect(()=>{
+    const daysNeeded=Math.ceil((new Date(todayStr)-new Date(dateFrom))/86400000)+1;
+    if(daysNeeded<=SALES_WINDOW_DAYS){ olderDaysRef.current=0; setOlderSales(null); return; }
+    if(daysNeeded<=olderDaysRef.current) return; // período já carregado
+    if(!navigator.onLine){ showToast("Sem conexão — vendas antigas indisponíveis offline","error"); return; }
+    setLoadingOlder(true);
+    api.getSales(activeStore,daysNeeded).then(rows=>{
+      olderDaysRef.current=daysNeeded;
+      setOlderSales(salesFromApi(rows||[])[activeStore]||[]);
+    }).catch(()=>showToast("Erro ao buscar vendas antigas — tente novamente","error"))
+      .finally(()=>setLoadingOlder(false));
+  },[dateFrom,activeStore]);
   const [search,setSearch]=useState("");
   const [showCanceled,setShowCanceled]=useState(false);
   const [payFilter,setPayFilter]=useState(""); // filtra por forma de pagamento
@@ -5995,7 +6028,13 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
   const [editPayments,setEditPayments]=useState([]);
   const payMethods=["PIX","PIX Chave","Dinheiro","Crédito","Débito","Pix Parcelado","Crédito 2x","Crédito 3x"];
 
-  const allSales=storeSales||[];
+  // Vendas locais têm prioridade (refletem cancelamentos/edições feitos agora); antigas completam o período
+  const allSales=(()=>{
+    const base=storeSales||[];
+    if(!olderSales||!olderSales.length) return base;
+    const ids=new Set(base.map(s=>s.id));
+    return [...base,...olderSales.filter(s=>!ids.has(s.id))];
+  })();
   const filtered=allSales.filter(s=>{
     if(s.date<dateFrom||s.date>dateTo)return false;
     if(!showCanceled&&s.status==="Cancelada")return false;
@@ -6048,6 +6087,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
         );
         return n;
       });
+      setOlderSales(prev=>prev?prev.map(s=>s.id===cancelModal.id?{...s,status:"Cancelada",canceledBy:auth.name,canceledAt}:s):prev);
       // Restaura estoque dos itens cancelados
       if(cancelModal.items?.length){
         setStock(prev=>{
@@ -6084,6 +6124,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
       );
       return n;
     });
+    setOlderSales(prev=>prev?prev.map(s=>s.id===payModal.id?{...s,payments:editPayments,payment:newPaymentDesc}:s):prev);
     api.updateSale&&api.updateSale(payModal.id,{status:payModal.status,payment:newPaymentDesc,payments:editPayments}).catch(console.error);
     setPayModal(null);
     showToast("Forma de pagamento atualizada!");
@@ -6103,6 +6144,7 @@ function VendasModule({storeSales,sales,setSales,activeStore,exchanges,setExchan
           <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} min={dateFrom}
             style={{...S.inp,padding:"7px 10px",fontSize:12,width:"auto"}}/>
           <button style={{...S.secBtn,fontSize:10,padding:"6px 10px"}} onClick={()=>{setDateFrom(todayStr);setDateTo(todayStr);}}>Hoje</button>
+          {loadingOlder&&<span style={{color:C.gold,fontSize:11,fontWeight:700}}>⏳ Buscando vendas antigas...</span>}
         </div>
         <div style={{...S.searchBar,flex:1,maxWidth:250}}>{I.search}
           <input style={S.searchIn} placeholder="Buscar cliente, cupom, vendedor..." value={search} onChange={e=>setSearch(e.target.value)}/>
