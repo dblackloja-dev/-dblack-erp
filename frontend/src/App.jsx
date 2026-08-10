@@ -2852,6 +2852,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const lowStock=storeProducts.filter(p=>p.stock<=p.minStock);
   const totalPieces=storeProducts.reduce((s,p)=>s+p.stock,0);
   const totalValue=storeProducts.reduce((s,p)=>s+p.cost*p.stock,0);
+  const totalSaleValue=storeProducts.reduce((s,p)=>s+p.price*p.stock,0);
   const otherStores=STORES.filter(s=>s.stockId!==activeStockId); // only stores with different stock
 
   // Adjust stock helper — uses stockId, not storeId
@@ -3001,6 +3002,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       <div style={S.kpiRow}>
         <KPI icon={I.box} label="Total Peças" value={totalPieces+""} sub={currentStore.name} color={C.blu}/>
         <KPI icon={I.money} label="Valor (Custo)" value={fmt(totalValue)} sub="Em estoque" color={C.gold}/>
+        <KPI icon={I.money} label="Valor (Venda)" value={fmt(totalSaleValue)} sub="Em estoque" color={C.grn}/>
         <KPI icon={I.alert} label="Estoque Baixo" value={lowStock.length+""} sub="Produtos críticos" color={lowStock.length>0?C.red:C.grn}/>
         <KPI icon={I.chart} label="Movimentações" value={movHistory.length+""} sub="Hoje" color={C.pur}/>
       </div>
