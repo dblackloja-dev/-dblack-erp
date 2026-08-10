@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import api from './api.js';
 
 // ─── HELPERS ───
@@ -10,6 +10,8 @@ const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2
 const localDateStr = (d) => { const dt = d || new Date(); return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`; };
 // Janela de vendas detalhadas carregada no app; períodos maiores são buscados sob demanda na aba Vendas
 const SALES_WINDOW_DAYS = 30;
+// Tamanho do bloco do render progressivo da tabela de contagem de estoque
+const COUNT_CHUNK = 300;
 
 // ─── IMPRESSÃO SILENCIOSA (QZ Tray) ───
 // Armazena o nome da impressora configurada pelo usuário
@@ -882,7 +884,7 @@ export default function App() {
           {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts}} />}
 
           {/* ESTOQUE */}
-          {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores}} />}
+          {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded}} />}
 
           {/* DESPESAS */}
           {tab==="despesas" && <DespesasModule {...{storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast,expenseCategories,setExpenseCategories,cashState,setCashState,loggedUser}} />}
@@ -2750,7 +2752,68 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
 // ═══════════════════════════════════
 // ═══  ESTOQUE MODULE             ═══
 // ═══════════════════════════════════
-function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores}){
+// Bloco de linhas da contagem — memoizado com comparação própria: só re-renderiza o bloco
+// que contém a linha alterada/destacada. Sem isso o React reconciliava as milhares de
+// linhas a cada tecla (~0,5s por tecla em máquina boa; muito pior nos PCs das lojas).
+const CountChunk=memo(function CountChunk({items,scanHighlight,onCount,onRowFocus,onRowEnter}){
+  return items.map(c=>
+    <CountRow key={c.productId} c={c} isHighlighted={scanHighlight===c.productId}
+      onCount={onCount} onRowFocus={onRowFocus} onRowEnter={onRowEnter}/>
+  );
+},(prev,next)=>{
+  if(prev.onCount!==next.onCount||prev.onRowFocus!==next.onRowFocus||prev.onRowEnter!==next.onRowEnter)return false;
+  if(prev.items!==next.items){
+    if(prev.items.length!==next.items.length)return false;
+    for(let i=0;i<prev.items.length;i++){ if(prev.items[i]!==next.items[i])return false; }
+  }
+  if(prev.scanHighlight!==next.scanHighlight){
+    const inChunk=id=>id!=null&&next.items.some(c=>c.productId===id);
+    if(inChunk(prev.scanHighlight)||inChunk(next.scanHighlight))return false;
+  }
+  return true;
+});
+
+// Linha da contagem memoizada — a lista tem milhares de produtos e sem isso cada tecla
+// digitada re-renderizava a tabela inteira (segundos de tela travada nos PCs das lojas)
+const CountRow=memo(function CountRow({c,isHighlighted,onCount,onRowFocus,onRowEnter}){
+  const diff=c.countedQty-c.systemQty;
+  const hasDiff=diff!==0;
+  return <tr style={{...S.tr,
+    ...(isHighlighted?{background:"rgba(64,196,255,.15)",boxShadow:"inset 0 0 0 2px "+C.blu}:
+    hasDiff?{background:diff>0?"rgba(0,230,118,.06)":"rgba(255,82,82,.06)"}:{}),
+    transition:"all .3s ease"
+  }}>
+    <td style={S.td}><span style={{fontSize:isHighlighted?22:16,transition:"font-size .3s"}}>{c.img}</span></td>
+    <td style={{...S.td,fontWeight:isHighlighted?800:600,color:isHighlighted?C.blu:C.txt,transition:"all .3s"}}>{c.productName}</td>
+    <td style={{...S.td,fontFamily:"monospace",fontSize:isHighlighted?12:10,color:isHighlighted?C.blu:C.dim}}>{c.sku}</td>
+    <td style={{...S.td,fontWeight:700}}>{c.systemQty}</td>
+    <td style={S.td}>
+      <input
+        id={"count-"+c.productId}
+        type="number"
+        value={c.countedQty}
+        onChange={e=>onCount(c.productId,e.target.value)}
+        onFocus={()=>onRowFocus(c.productId)}
+        onKeyDown={e=>{
+          if(e.key==="Enter"){
+            // After entering count, refocus scanner for next product
+            e.preventDefault();
+            onRowEnter();
+          }
+        }}
+        min={0}
+        style={{...S.inp,width:70,textAlign:"center",fontWeight:700,fontSize:isHighlighted?16:14,
+          borderColor:isHighlighted?C.blu:(hasDiff?(diff>0?"rgba(0,230,118,.4)":"rgba(255,82,82,.4)"):C.brd),
+          background:isHighlighted?"rgba(64,196,255,.08)":C.s2,
+          transition:"all .3s"
+        }}
+      />
+    </td>
+    <td style={{...S.td,fontWeight:800,fontSize:14,color:hasDiff?(diff>0?C.grn:C.red):C.dim}}>{diff>0?"+"+diff:diff===0?"—":diff}</td>
+  </tr>;
+});
+
+function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded}){
   const [search,setSearch]=useState("");
   const [activeTab,setActiveTab]=useState("lista"); // lista, entrada, saida, contagem, transferencia
   const [movHistory,setMovHistory]=useState([]); // {id,date,type,productId,productName,qty,reason,from,to}
@@ -2779,6 +2842,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   // Count form
   const [countData,setCountData]=useState(null); // [{productId, systemQty, countedQty}]
   const [countDone,setCountDone]=useState(false);
+  const [countLimit,setCountLimit]=useState(0); // render progressivo da tabela de contagem
   const [scanInput,setScanInput]=useState("");
   const [scanHighlight,setScanHighlight]=useState(null); // productId highlighted
   const scanRef=useRef(null);
@@ -2879,10 +2943,22 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
 
   // Start count
   const startCount=()=>{
+    // Não deixa iniciar antes do catálogo real chegar do servidor — senão a contagem
+    // abre com a lista incompleta (ex.: cache limpo → só os produtos de exemplo)
+    if(!apiLoaded){showToast("Aguarde — os produtos ainda estão carregando do servidor...","error");return;}
     const data=storeProducts.map(p=>({productId:p.id,productName:p.name,img:p.img,sku:p.sku,systemQty:p.stock,countedQty:p.stock}));
-    setCountData(data);setCountDone(false);
+    setCountData(data);setCountDone(false);setCountLimit(COUNT_CHUNK);
   };
-  const updateCount=(pid,val)=>{setCountData(prev=>prev.map(c=>c.productId===pid?{...c,countedQty:+val}:c));};
+  // Callbacks estáveis (useCallback) — obrigatório pro memo do CountRow funcionar
+  const updateCount=useCallback((pid,val)=>{setCountData(prev=>prev.map(c=>c.productId===pid?{...c,countedQty:+val}:c));},[]);
+  const highlightRow=useCallback((pid)=>setScanHighlight(pid),[]);
+  const refocusScanner=useCallback(()=>{setScanHighlight(null);if(scanRef.current){scanRef.current.focus();}},[]);
+  // Render progressivo: monta a tabela em blocos pra tela não travar segundos com milhares de linhas
+  useEffect(()=>{
+    if(!countData||countLimit>=countData.length)return;
+    const t=setTimeout(()=>setCountLimit(l=>l+COUNT_CHUNK),60);
+    return ()=>clearTimeout(t);
+  },[countData,countLimit]);
   const applyCount=()=>{
     const diffs=countData.filter(c=>c.countedQty!==c.systemQty);
     if(diffs.length===0){showToast("Estoque confere! Sem divergências.");setCountData(null);setCountDone(true);return;}
@@ -3141,11 +3217,16 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
                       if(found){
                         setScanHighlight(found.productId);
                         setScanInput("");
+                        // Se a linha ainda não montou (render progressivo), força a tabela completa
+                        const idx=countData.indexOf(found);
+                        if(idx>=countLimit) setCountLimit(countData.length);
                         // Scroll to and focus the count input
-                        setTimeout(()=>{
+                        const goTo=(tries)=>{
                           const el=document.getElementById("count-"+found.productId);
                           if(el){el.scrollIntoView({behavior:"smooth",block:"center"});el.focus();el.select();}
-                        },100);
+                          else if(tries>0) setTimeout(()=>goTo(tries-1),250);
+                        };
+                        setTimeout(()=>goTo(8),100);
                         showToast("✓ "+found.productName+" encontrado!");
                       } else {
                         showToast("Produto não encontrado: "+q,"error");
@@ -3168,45 +3249,17 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
               <span>Total: <strong>{countData.length}</strong> produtos</span>
             </div>
             <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Sistema</th><th style={S.th}>Contado</th><th style={S.th}>Dif.</th></tr></thead>
-            <tbody>{countData.map(c=>{
-              const diff=c.countedQty-c.systemQty;
-              const hasDiff=diff!==0;
-              const isHighlighted=scanHighlight===c.productId;
-              return <tr key={c.productId} style={{...S.tr,
-                ...(isHighlighted?{background:"rgba(64,196,255,.15)",boxShadow:"inset 0 0 0 2px "+C.blu}:
-                hasDiff?{background:diff>0?"rgba(0,230,118,.06)":"rgba(255,82,82,.06)"}:{}),
-                transition:"all .3s ease"
-              }}>
-                <td style={S.td}><span style={{fontSize:isHighlighted?22:16,transition:"font-size .3s"}}>{c.img}</span></td>
-                <td style={{...S.td,fontWeight:isHighlighted?800:600,color:isHighlighted?C.blu:C.txt,transition:"all .3s"}}>{c.productName}</td>
-                <td style={{...S.td,fontFamily:"monospace",fontSize:isHighlighted?12:10,color:isHighlighted?C.blu:C.dim}}>{c.sku}</td>
-                <td style={{...S.td,fontWeight:700}}>{c.systemQty}</td>
-                <td style={S.td}>
-                  <input
-                    id={"count-"+c.productId}
-                    type="number"
-                    value={c.countedQty}
-                    onChange={e=>updateCount(c.productId,e.target.value)}
-                    onFocus={()=>setScanHighlight(c.productId)}
-                    onKeyDown={e=>{
-                      if(e.key==="Enter"){
-                        // After entering count, refocus scanner for next product
-                        e.preventDefault();
-                        setScanHighlight(null);
-                        if(scanRef.current){scanRef.current.focus();}
-                      }
-                    }}
-                    min={0}
-                    style={{...S.inp,width:70,textAlign:"center",fontWeight:700,fontSize:isHighlighted?16:14,
-                      borderColor:isHighlighted?C.blu:(hasDiff?(diff>0?"rgba(0,230,118,.4)":"rgba(255,82,82,.4)"):C.brd),
-                      background:isHighlighted?"rgba(64,196,255,.08)":C.s2,
-                      transition:"all .3s"
-                    }}
-                  />
-                </td>
-                <td style={{...S.td,fontWeight:800,fontSize:14,color:hasDiff?(diff>0?C.grn:C.red):C.dim}}>{diff>0?"+"+diff:diff===0?"—":diff}</td>
-              </tr>;
-            })}</tbody></table></div>
+            <tbody>{(()=>{
+              const visible=countData.slice(0,countLimit);
+              const chunks=[];
+              for(let i=0;i<visible.length;i+=COUNT_CHUNK) chunks.push(visible.slice(i,i+COUNT_CHUNK));
+              return chunks.map((items,i)=>
+                <CountChunk key={i} items={items} scanHighlight={scanHighlight}
+                  onCount={updateCount} onRowFocus={highlightRow} onRowEnter={refocusScanner}/>
+              );
+            })()}</tbody></table>
+            {countLimit<countData.length&&<div style={{textAlign:"center",padding:12,color:C.dim,fontSize:12}}>Carregando produtos... {Math.min(countLimit,countData.length)}/{countData.length}</div>}
+            </div>
             <div style={{marginTop:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
               <div style={{fontSize:12,color:C.dim}}>{countData.filter(c=>c.countedQty!==c.systemQty).length} divergência(s)</div>
               <button style={{...S.primBtn,background:`linear-gradient(135deg,${C.grn},#00C853)`,padding:"10px 24px"}} onClick={applyCount}>{I.check} APLICAR CONTAGEM</button>
