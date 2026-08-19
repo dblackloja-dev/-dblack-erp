@@ -787,7 +787,9 @@ export default function App() {
   const sharedStockStores = STORES.filter(s=>s.stockId===activeStockId);
   const isSharedStock = sharedStockStores.length > 1;
 
-  const storeProducts = catalog.map(p => ({...p, stock: storeStock[p.id] || 0}));
+  // Produtos inativos (ex.: catálogo OLD- pré-queimão) ficam fora do PDV, Estoque,
+  // Etiquetas e Trocas — só a aba Produtos (admin) enxerga o catálogo completo.
+  const storeProducts = catalog.filter(p => p.active !== false).map(p => ({...p, stock: storeStock[p.id] || 0}));
   const _todayStr = localDateStr();
   const todaySales = storeSales.filter(s => s.date === _todayStr && s.status !== "Cancelada");
   const todayRev = todaySales.reduce((s,v) => s + v.total, 0);
