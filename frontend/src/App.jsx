@@ -2418,39 +2418,31 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const [newCat,setNewCat]=useState("");
   const [showCatManager,setShowCatManager]=useState(false);
 
-  // Auto-generate next SKU and EAN — usa o maior valor entre catálogo atual e último salvo.
-  // Produtos do catálogo pré-queimão (2026-08-19) têm sku/ref prefixados com OLD- e ficam fora
-  // da numeração; chaves de localStorage com sufixo _v2 para zerar o contador antigo das máquinas.
+  // Auto-generate next SKU/REF/EAN — puramente derivado do catálogo (maior código não-legado + 1),
+  // sem contador em localStorage: o contador antigo avançava a cada render do formulário e queimava
+  // números (catálogo com 1.666 produtos chegou a DBK-115xxx). Produtos pré-queimão (2026-08-19)
+  // têm sku/ref prefixados com OLD- e ficam fora da numeração.
   const isLegacy=p=>((p.sku||"").startsWith("OLD-"));
   const getNextSku=()=>{
     const skuNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const m=(p.sku||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
-    const savedMax=parseInt(localStorage.getItem('dblack_last_sku_v2')||'0')||0;
-    const next=Math.max(savedMax,0,...skuNums)+1;
-    try{localStorage.setItem('dblack_last_sku_v2',String(next));}catch{}
-    return "DBK-"+String(next).padStart(4,"0");
+    return "DBK-"+String(Math.max(0,...skuNums)+1).padStart(4,"0");
   };
   // EAN interno no prefixo GS1 de uso em loja (200) com dígito verificador válido —
   // sem o verificador correto o leitor rejeita o código. EANs de fornecedor (789...)
   // ficam fora da contagem do sequencial.
   const getNextEan=()=>{
     const eanNums=catalog.filter(p=>!isLegacy(p)&&/^200\d{10}$/.test(p.ean||"")).map(p=>parseInt(p.ean.slice(3,12))||0);
-    const savedMax=parseInt(localStorage.getItem('dblack_last_ean_v2')||'0')||0;
-    const next=Math.max(savedMax,0,...eanNums)+1;
-    try{localStorage.setItem('dblack_last_ean_v2',String(next));}catch{}
-    const base="200"+String(next).padStart(9,"0");
+    const base="200"+String(Math.max(0,...eanNums)+1).padStart(9,"0");
     let s=0;for(let i=0;i<12;i++)s+=parseInt(base[i])*(i%2===0?1:3);
     return base+((10-(s%10))%10);
   };
   const getNextRef=()=>{
     const refNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const m=(p.ref||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
-    const savedMax=parseInt(localStorage.getItem('dblack_last_ref_v2')||'0')||0;
-    const next=Math.max(savedMax,0,...refNums)+1;
-    try{localStorage.setItem('dblack_last_ref_v2',String(next));}catch{}
-    return "REF-"+String(next).padStart(3,"0");
+    return "REF-"+String(Math.max(0,...refNums)+1).padStart(3,"0");
   };
 
   const newEmpty=()=>({name:"",sku:getNextSku(),ean:getNextEan(),ref:getNextRef(),category:"Camisetas",brand:"D'Black",supplier:"",size:"",color:"",price:"",cost:"",minStock:"10",img:"👕",photo:"",variations:"",active:true});
-  const [np,setNp]=useState(newEmpty());
+  const [np,setNp]=useState(()=>newEmpty());
 
   // Margin calc (markup sobre custo)
   const npPrice=+np.price||0;const npCost=+np.cost||0;
