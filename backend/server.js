@@ -289,9 +289,11 @@ app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
 // ═══════════════════════════════════════════
 app.get('/api/products', async (req, res) => {
   try {
-    // Retorna photo apenas quando é URL (leve). Base64 pesados são carregados individualmente via /products/:id/photo
+    // A coluna photo NÃO pode ser lida aqui: com fotos base64 multi-MB no banco, qualquer
+    // expressão sobre ela (até um LIKE) descomprime TODAS as fotos e a listagem trava por
+    // minutos (tabela chegou a 3GB em 2026-08-19). Fotos vêm em lote via /products/photos.
     const products = await queryAll(`SELECT id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img,
-      CASE WHEN photo LIKE '/uploads/%' OR photo LIKE 'http%' THEN photo ELSE NULL END as photo,
+      NULL as photo,
       variations, active, created_at, updated_at FROM products ORDER BY created_at DESC`);
     products.forEach(p => {
       try { p.variations = JSON.parse(p.variations || '[]'); } catch { p.variations = []; }

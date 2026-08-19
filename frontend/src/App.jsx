@@ -2634,9 +2634,19 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
                 <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{
                   const file=e.target.files?.[0];
                   if(!file)return;
-                  const reader=new FileReader();
-                  reader.onload=ev=>setNp(p=>({...p,photo:ev.target.result}));
-                  reader.readAsDataURL(file);
+                  // Comprime antes de salvar: foto de câmera (~4MB) ia inteira pro banco e
+                  // inchou a tabela até travar o sistema; 900px JPEG fica ~100KB.
+                  const imgEl=new Image();
+                  imgEl.onload=()=>{
+                    const MAX=900;
+                    const scale=Math.min(1,MAX/Math.max(imgEl.width,imgEl.height));
+                    const cv=document.createElement("canvas");
+                    cv.width=Math.round(imgEl.width*scale);cv.height=Math.round(imgEl.height*scale);
+                    cv.getContext("2d").drawImage(imgEl,0,0,cv.width,cv.height);
+                    setNp(p=>({...p,photo:cv.toDataURL("image/jpeg",0.8)}));
+                    URL.revokeObjectURL(imgEl.src);
+                  };
+                  imgEl.src=URL.createObjectURL(file);
                 }}/>
                 <div style={{width:100,height:100,borderRadius:14,background:C.s2,border:`2px dashed ${np.photo?C.gold:C.brd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:np.photo?0:40,overflow:"hidden",position:"relative"}}>
                   {np.photo
