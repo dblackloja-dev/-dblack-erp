@@ -805,6 +805,23 @@ export default function App() {
   const allSales = Object.values(sales).flat();
   const allExpenses = Object.values(expenses).flat();
 
+  // Alt+1..4 troca de loja em qualquer aba (só para quem enxerga todas as lojas).
+  // AltGr conta como Ctrl+Alt, então o filtro de ctrlKey evita conflito com acentos do ABNT2.
+  useEffect(() => {
+    const handler = (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const m = /^Digit([1-4])$/.exec(e.code || "");
+      if (!m) return;
+      const s = STORES[parseInt(m[1]) - 1];
+      if (!s || !canSeeAllStores()) return;
+      e.preventDefault();
+      setActiveStore(s.id);
+      showToast("Loja ativa: " + s.name);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
+
   return (
     <div style={S.app}>
       <style>{CSS}</style>
@@ -828,7 +845,7 @@ export default function App() {
         {/* Store Selector */}
         {canSeeAllStores() ? (
           <div style={{padding:"10px 10px 6px"}}>
-            <select style={{...S.sel,width:"100%",fontSize:12,padding:"8px 10px",borderColor:currentStore.color+"44",color:currentStore.color}} value={activeStore} onChange={e => setActiveStore(e.target.value)}>
+            <select title="Atalho: Alt+1 a Alt+4 troca a loja" style={{...S.sel,width:"100%",fontSize:12,padding:"8px 10px",borderColor:currentStore.color+"44",color:currentStore.color}} value={activeStore} onChange={e => setActiveStore(e.target.value)}>
               {STORES.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
