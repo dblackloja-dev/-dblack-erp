@@ -2416,26 +2416,29 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const [newCat,setNewCat]=useState("");
   const [showCatManager,setShowCatManager]=useState(false);
 
-  // Auto-generate next SKU and EAN — usa o maior valor entre catálogo atual e último salvo
+  // Auto-generate next SKU and EAN — usa o maior valor entre catálogo atual e último salvo.
+  // Produtos do catálogo pré-queimão (2026-08-19) têm sku/ref prefixados com OLD- e ficam fora
+  // da numeração; chaves de localStorage com sufixo _v2 para zerar o contador antigo das máquinas.
+  const isLegacy=p=>((p.sku||"").startsWith("OLD-"));
   const getNextSku=()=>{
-    const skuNums=catalog.map(p=>{const m=(p.sku||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
-    const savedMax=parseInt(localStorage.getItem('dblack_last_sku')||'0')||0;
-    const next=Math.max(savedMax,...skuNums)+1;
-    try{localStorage.setItem('dblack_last_sku',String(next));}catch{}
+    const skuNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const m=(p.sku||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
+    const savedMax=parseInt(localStorage.getItem('dblack_last_sku_v2')||'0')||0;
+    const next=Math.max(savedMax,0,...skuNums)+1;
+    try{localStorage.setItem('dblack_last_sku_v2',String(next));}catch{}
     return "DBK-"+String(next).padStart(4,"0");
   };
   const getNextEan=()=>{
-    const eanNums=catalog.map(p=>{const n=parseInt((p.ean||"0").slice(-5));return isNaN(n)?0:n;});
-    const savedMax=parseInt(localStorage.getItem('dblack_last_ean')||'0')||0;
-    const next=Math.max(savedMax,...eanNums)+1;
-    try{localStorage.setItem('dblack_last_ean',String(next));}catch{}
+    const eanNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const n=parseInt((p.ean||"0").slice(-5));return isNaN(n)?0:n;});
+    const savedMax=parseInt(localStorage.getItem('dblack_last_ean_v2')||'0')||0;
+    const next=Math.max(savedMax,0,...eanNums)+1;
+    try{localStorage.setItem('dblack_last_ean_v2',String(next));}catch{}
     return "789"+String(next).padStart(10,"0");
   };
   const getNextRef=()=>{
-    const refNums=catalog.map(p=>{const m=(p.ref||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
-    const savedMax=parseInt(localStorage.getItem('dblack_last_ref')||'0')||0;
-    const next=Math.max(savedMax,...refNums)+1;
-    try{localStorage.setItem('dblack_last_ref',String(next));}catch{}
+    const refNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const m=(p.ref||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
+    const savedMax=parseInt(localStorage.getItem('dblack_last_ref_v2')||'0')||0;
+    const next=Math.max(savedMax,0,...refNums)+1;
+    try{localStorage.setItem('dblack_last_ref_v2',String(next));}catch{}
     return "REF-"+String(next).padStart(3,"0");
   };
 
