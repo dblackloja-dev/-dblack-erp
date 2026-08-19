@@ -805,14 +805,22 @@ export default function App() {
   const allSales = Object.values(sales).flat();
   const allExpenses = Object.values(expenses).flat();
 
-  // Alt+1..4 troca de loja em qualquer aba (só para quem enxerga todas as lojas).
+  // Troca rápida de loja (só para quem enxerga todas as lojas):
+  // F1..F4 em qualquer aba EXCETO o PDV, onde F1-F12 são os atalhos de venda;
+  // Alt+1..4 funciona em todas as abas, inclusive no PDV.
   // AltGr conta como Ctrl+Alt, então o filtro de ctrlKey evita conflito com acentos do ABNT2.
   useEffect(() => {
     const handler = (e) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey) return;
-      const m = /^Digit([1-4])$/.exec(e.code || "");
-      if (!m) return;
-      const s = STORES[parseInt(m[1]) - 1];
+      let n = 0;
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const m = /^Digit([1-4])$/.exec(e.code || "");
+        if (m) n = parseInt(m[1]);
+      } else if (!e.altKey && !e.ctrlKey && !e.metaKey && tab !== "pdv") {
+        const m = /^F([1-4])$/.exec(e.key || "");
+        if (m) n = parseInt(m[1]);
+      }
+      if (!n) return;
+      const s = STORES[n - 1];
       if (!s || !canSeeAllStores()) return;
       e.preventDefault();
       setActiveStore(s.id);
@@ -845,7 +853,7 @@ export default function App() {
         {/* Store Selector */}
         {canSeeAllStores() ? (
           <div style={{padding:"10px 10px 6px"}}>
-            <select title="Atalho: Alt+1 a Alt+4 troca a loja" style={{...S.sel,width:"100%",fontSize:12,padding:"8px 10px",borderColor:currentStore.color+"44",color:currentStore.color}} value={activeStore} onChange={e => setActiveStore(e.target.value)}>
+            <select title="Atalhos: F1 a F4 troca a loja (fora do PDV); Alt+1 a Alt+4 em qualquer aba" style={{...S.sel,width:"100%",fontSize:12,padding:"8px 10px",borderColor:currentStore.color+"44",color:currentStore.color}} value={activeStore} onChange={e => setActiveStore(e.target.value)}>
               {STORES.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
