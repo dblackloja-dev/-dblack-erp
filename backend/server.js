@@ -303,6 +303,13 @@ app.get('/api/products', async (req, res) => {
 app.post('/api/products', async (req, res) => {
   try {
     const p = req.body;
+    // Trava contra frontend desatualizado (pré-19/08/2026): o gerador antigo criava
+    // SKU DBK-100000+ e EAN 789+sequencial sem dígito verificador (leitor não bipa).
+    // O catálogo novo recomeçou em DBK-0001, então SKU gerado nessa faixa = página velha.
+    const skuLegado = /^DBK-(\d+)$/.exec(p.sku || '');
+    if (skuLegado && parseInt(skuLegado[1]) >= 100000) {
+      return res.status(400).json({ error: 'Esta máquina está com o sistema desatualizado — pressione Ctrl+F5 no navegador e cadastre o produto novamente' });
+    }
     const id = p.id || genId();
     const margin = p.cost > 0 ? ((p.price - p.cost) / p.cost * 100) : 0;
     const vars = JSON.stringify(p.variations || []);
