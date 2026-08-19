@@ -697,6 +697,32 @@ export default function App() {
     );
   }
 
+  // Troca rápida de loja (só para quem enxerga todas as lojas):
+  // F1..F4 em qualquer aba EXCETO o PDV, onde F1-F12 são os atalhos de venda;
+  // Alt+1..4 funciona em todas as abas, inclusive no PDV.
+  // AltGr conta como Ctrl+Alt, então o filtro de ctrlKey evita conflito com acentos do ABNT2.
+  // (precisa ficar ANTES do return da tela de login — hooks não podem vir depois de return condicional)
+  useEffect(() => {
+    const handler = (e) => {
+      let n = 0;
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const m = /^Digit([1-4])$/.exec(e.code || "");
+        if (m) n = parseInt(m[1]);
+      } else if (!e.altKey && !e.ctrlKey && !e.metaKey && tab !== "pdv") {
+        const m = /^F([1-4])$/.exec(e.key || "");
+        if (m) n = parseInt(m[1]);
+      }
+      if (!n) return;
+      const s = STORES[n - 1];
+      if (!s || !canSeeAllStores()) return;
+      e.preventDefault();
+      setActiveStore(s.id);
+      showToast("Loja ativa: " + s.name);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
+
   // ─── LOGIN SCREEN ───
   if (!loggedUser) {
     return (
@@ -804,31 +830,6 @@ export default function App() {
   // All stores aggregated (for gestor)
   const allSales = Object.values(sales).flat();
   const allExpenses = Object.values(expenses).flat();
-
-  // Troca rápida de loja (só para quem enxerga todas as lojas):
-  // F1..F4 em qualquer aba EXCETO o PDV, onde F1-F12 são os atalhos de venda;
-  // Alt+1..4 funciona em todas as abas, inclusive no PDV.
-  // AltGr conta como Ctrl+Alt, então o filtro de ctrlKey evita conflito com acentos do ABNT2.
-  useEffect(() => {
-    const handler = (e) => {
-      let n = 0;
-      if (e.altKey && !e.ctrlKey && !e.metaKey) {
-        const m = /^Digit([1-4])$/.exec(e.code || "");
-        if (m) n = parseInt(m[1]);
-      } else if (!e.altKey && !e.ctrlKey && !e.metaKey && tab !== "pdv") {
-        const m = /^F([1-4])$/.exec(e.key || "");
-        if (m) n = parseInt(m[1]);
-      }
-      if (!n) return;
-      const s = STORES[n - 1];
-      if (!s || !canSeeAllStores()) return;
-      e.preventDefault();
-      setActiveStore(s.id);
-      showToast("Loja ativa: " + s.name);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  });
 
   return (
     <div style={S.app}>
