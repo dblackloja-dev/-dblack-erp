@@ -2427,12 +2427,17 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
     try{localStorage.setItem('dblack_last_sku_v2',String(next));}catch{}
     return "DBK-"+String(next).padStart(4,"0");
   };
+  // EAN interno no prefixo GS1 de uso em loja (200) com dígito verificador válido —
+  // sem o verificador correto o leitor rejeita o código. EANs de fornecedor (789...)
+  // ficam fora da contagem do sequencial.
   const getNextEan=()=>{
-    const eanNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const n=parseInt((p.ean||"0").slice(-5));return isNaN(n)?0:n;});
+    const eanNums=catalog.filter(p=>!isLegacy(p)&&/^200\d{10}$/.test(p.ean||"")).map(p=>parseInt(p.ean.slice(3,12))||0);
     const savedMax=parseInt(localStorage.getItem('dblack_last_ean_v2')||'0')||0;
     const next=Math.max(savedMax,0,...eanNums)+1;
     try{localStorage.setItem('dblack_last_ean_v2',String(next));}catch{}
-    return "789"+String(next).padStart(10,"0");
+    const base="200"+String(next).padStart(9,"0");
+    let s=0;for(let i=0;i<12;i++)s+=parseInt(base[i])*(i%2===0?1:3);
+    return base+((10-(s%10))%10);
   };
   const getNextRef=()=>{
     const refNums=catalog.filter(p=>!isLegacy(p)).map(p=>{const m=(p.ref||"").match(/(\d+)$/);return m?parseInt(m[1]):0;});
