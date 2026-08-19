@@ -688,20 +688,11 @@ export default function App() {
 
   const currentStore = STORES.find(s => s.id === activeStore) || STORES[0];
 
-  // ─── VERIFICANDO SESSÃO ───
-  if (checkingSession) {
-    return (
-      <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Outfit',sans-serif",color:C.txt}}>
-        <div style={{textAlign:"center",color:C.dim,fontSize:14}}>Carregando...</div>
-      </div>
-    );
-  }
-
   // Troca rápida de loja (só para quem enxerga todas as lojas):
   // F1..F4 em qualquer aba EXCETO o PDV, onde F1-F12 são os atalhos de venda;
   // Alt+1..4 funciona em todas as abas, inclusive no PDV.
   // AltGr conta como Ctrl+Alt, então o filtro de ctrlKey evita conflito com acentos do ABNT2.
-  // (precisa ficar ANTES do return da tela de login — hooks não podem vir depois de return condicional)
+  // (precisa ficar ANTES de QUALQUER return condicional — checkingSession e login — regra dos hooks)
   useEffect(() => {
     const handler = (e) => {
       let n = 0;
@@ -722,6 +713,15 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   });
+
+  // ─── VERIFICANDO SESSÃO ───
+  if (checkingSession) {
+    return (
+      <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Outfit',sans-serif",color:C.txt}}>
+        <div style={{textAlign:"center",color:C.dim,fontSize:14}}>Carregando...</div>
+      </div>
+    );
+  }
 
   // ─── LOGIN SCREEN ───
   if (!loggedUser) {
