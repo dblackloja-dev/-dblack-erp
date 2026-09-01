@@ -2475,7 +2475,9 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const npMargin=npCost>0?((npPrice-npCost)/npCost*100):0;
 
   const [visibleCount,setVisibleCount]=useState(50);
+  const [showInactive,setShowInactive]=useState(false);
   const filtered=catalog.filter(p=>{
+    if(!showInactive&&p.active===false)return false;
     const matchSearch=p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search)||(p.ref||"").toLowerCase().includes(search.toLowerCase());
     const matchCat=filterCat?p.category===filterCat:true;
     return matchSearch&&matchCat;
@@ -2584,6 +2586,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
           <option value="">Todas categorias</option>
           {categories.map(c=><option key={c}>{c}</option>)}
         </select>
+        <button style={{...S.secBtn,...(showInactive?{borderColor:C.gold,color:C.gold}:{})}} onClick={()=>{setShowInactive(v=>!v);setVisibleCount(50);}}>{showInactive?"👁 Ocultar inativos":"🗂 Mostrar inativos"}</button>
         <button style={S.secBtn} onClick={()=>setShowCatManager(!showCatManager)}>📁 Categorias</button>
         <button style={S.secBtn} onClick={()=>setShowImport(!showImport)}>📥 Importar CSV</button>
         <button style={S.primBtn} onClick={()=>{setNp(newEmpty());setEditId(null);setShowForm(!showForm);}}>{I.plus} Novo Produto</button>
