@@ -82,7 +82,7 @@ async function initDB() {
       price NUMERIC NOT NULL DEFAULT 0,
       cost NUMERIC NOT NULL DEFAULT 0,
       margin NUMERIC DEFAULT 0,
-      min_stock INTEGER DEFAULT 10,
+      min_stock INTEGER DEFAULT 0,
       img TEXT DEFAULT '👕',
       photo TEXT,
       variations TEXT DEFAULT '[]',

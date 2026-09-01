@@ -2467,7 +2467,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
     return "REF-"+String(Math.max(0,...refNums)+1).padStart(3,"0");
   };
 
-  const newEmpty=()=>({name:"",sku:getNextSku(),ean:getNextEan(),ref:getNextRef(),category:"Camisetas",brand:"D'Black",supplier:"",size:"",color:"",price:"",cost:"",minStock:"10",img:"👕",photo:"",variations:"",active:true});
+  const newEmpty=()=>({name:"",sku:getNextSku(),ean:getNextEan(),ref:getNextRef(),category:"Camisetas",brand:"D'Black",supplier:"",size:"",color:"",price:"",cost:"",minStock:"0",img:"👕",photo:"",variations:"",active:true});
   const [np,setNp]=useState(()=>newEmpty());
 
   // Margin calc (markup sobre custo)
@@ -2547,7 +2547,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
       const [name,sku,category,size,color,price,cost]=cols;
       if(!name||!sku)return;
       const p=+price||0;const c=+cost||0;
-      const newProd={id:genId(),name,sku,ean:"",ref:"",category:category||"Camisetas",brand:"D'Black",supplier:"",size:size||"",color:color||"",price:p,cost:c,margin:c>0?((p-c)/c*100):0,minStock:10,img:"👕",variations:[],active:true};
+      const newProd={id:genId(),name,sku,ean:"",ref:"",category:category||"Camisetas",brand:"D'Black",supplier:"",size:size||"",color:color||"",price:p,cost:c,margin:c>0?((p-c)/c*100):0,minStock:0,img:"👕",variations:[],active:true};
       setCatalog(prev=>[newProd,...prev]);
       setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
       count++;

@@ -319,7 +319,7 @@ app.post('/api/products', async (req, res) => {
       `INSERT INTO products (id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img, photo, variations, active)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, p.name, p.sku, p.ean || '', p.ref || '', p.category || 'Camisetas', p.brand || "D'Black",
-       p.supplier || '', p.size || '', p.color || '', p.price, p.cost, margin, p.min_stock || 10,
+       p.supplier || '', p.size || '', p.color || '', p.price, p.cost, margin, p.min_stock ?? 0,
        p.img || '👕', p.photo || '', vars, p.active !== false]
     );
 
@@ -345,7 +345,7 @@ app.put('/api/products/:id', async (req, res) => {
       `UPDATE products SET name=$1, sku=$2, ean=$3, ref=$4, category=$5, brand=$6, supplier=$7, size=$8, color=$9,
        price=$10, cost=$11, margin=$12, min_stock=$13, img=$14, photo=$15, variations=$16, active=$17, updated_at=NOW() WHERE id=$18`,
       [p.name, p.sku, p.ean || '', p.ref || '', p.category, p.brand, p.supplier || '', p.size || '',
-       p.color || '', p.price, p.cost, margin, p.min_stock || 10, p.img || '👕', p.photo || '', vars, p.active !== false, req.params.id]
+       p.color || '', p.price, p.cost, margin, p.min_stock ?? 0, p.img || '👕', p.photo || '', vars, p.active !== false, req.params.id]
     );
     res.json({ success: true, margin });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
