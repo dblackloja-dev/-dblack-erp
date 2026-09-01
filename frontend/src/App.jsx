@@ -3206,7 +3206,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           <h3 style={S.cardTitle}>Estoque em Todas as Lojas</h3>
           <div style={{fontSize:11,color:C.dim,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>🔗 <strong style={{color:C.pur}}>Matriz</strong> e <strong style={{color:C.grn}}>E-commerce</strong> compartilham o mesmo estoque físico</div>
           <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>Produto</th>{STORES.map(s=><th key={s.id} style={{...S.th,color:s.color}}>{s.name.replace("D'Black ","")}{s.stockId==="shared_matriz"?" 🔗":""}</th>)}<th style={S.th}>Total Geral</th></tr></thead>
-          <tbody>{catalog.map(p=>{
+          <tbody>{catalog.filter(p=>p.active!==false).map(p=>{
             const uniqueStockIds=[...new Set(STORES.map(s=>s.stockId))];
             const total=uniqueStockIds.reduce((s,sid)=>s+((stock[sid]||{})[p.id]||0),0);
             return <tr key={p.id} style={S.tr}>
