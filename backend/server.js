@@ -1450,9 +1450,19 @@ app.post('/api/exchanges', async (req, res) => {
   const client = await connectWithTimeout();
   try {
     const e = req.body;
-    const id = genId();
+    // Idempotência: usa o id gerado no cliente (frontend manda ex.id). A fila offline
+    // das lojas reenvia o MESMO body em caso de falha/replay — sem isso, cada reenvio
+    // criava uma troca nova e mexia no estoque de novo (incidente 10/09: 164 mil trocas
+    // duplicadas). Vendas e movimentos de caixa já usam esse padrão de id do cliente.
+    const id = e.id || genId();
 
     await client.query('BEGIN');
+
+    const dup = await client.query('SELECT id FROM exchanges WHERE id = $1', [id]);
+    if (dup.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.json({ id, ...e, _duplicate: true });
+    }
 
     // Busca o stock_id da loja
     const storeResult = await client.query('SELECT stock_id FROM stores WHERE id = $1', [e.store_id]);
