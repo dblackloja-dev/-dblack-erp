@@ -302,6 +302,25 @@ app.get('/api/products', async (req, res) => {
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
+// Custo automático (regra do dono, 10/09/2026): o custo real não é revelado aos
+// colaboradores, então cadastros sem custo — ou com custo igual ao preço, hábito de
+// quem preenchia os dois campos — têm o custo derivado do preço pela margem padrão
+// (markup 122% → custo = preço ÷ 2,22). Custo real diferente do preço (informado pelo
+// admin) é sempre respeitado. Margem ajustável em settings.default_margin.{percent}.
+const DEFAULT_MARGIN_PERCENT = 122;
+async function resolveCost(price, cost) {
+  const p = +price || 0;
+  const c = +cost || 0;
+  if (c > 0 && Math.abs(c - p) > 0.005) return c;
+  let pct = DEFAULT_MARGIN_PERCENT;
+  try {
+    const row = await queryOne("SELECT value FROM settings WHERE key = 'default_margin'");
+    const v = row ? JSON.parse(row.value) : null;
+    if (v && +v.percent > 0) pct = +v.percent;
+  } catch {}
+  return Math.round((p / (1 + pct / 100)) * 100) / 100;
+}
+
 app.post('/api/products', async (req, res) => {
   try {
     const p = req.body;
@@ -313,13 +332,14 @@ app.post('/api/products', async (req, res) => {
       return res.status(400).json({ error: 'Esta máquina está com o sistema desatualizado — pressione Ctrl+F5 no navegador e cadastre o produto novamente' });
     }
     const id = p.id || genId();
-    const margin = p.cost > 0 ? ((p.price - p.cost) / p.cost * 100) : 0;
+    const cost = await resolveCost(p.price, p.cost);
+    const margin = cost > 0 ? ((p.price - cost) / cost * 100) : 0;
     const vars = JSON.stringify(p.variations || []);
     await queryRun(
       `INSERT INTO products (id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img, photo, variations, active)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, p.name, p.sku, p.ean || '', p.ref || '', p.category || 'Camisetas', p.brand || "D'Black",
-       p.supplier || '', p.size || '', p.color || '', p.price, p.cost, margin, p.min_stock ?? 0,
+       p.supplier || '', p.size || '', p.color || '', p.price, cost, margin, p.min_stock ?? 0,
        p.img || '👕', p.photo || '', vars, p.active !== false]
     );
 
@@ -332,22 +352,23 @@ app.post('/api/products', async (req, res) => {
       );
     }
 
-    res.json({ id, ...p, margin, variations: p.variations || [] });
+    res.json({ id, ...p, cost, margin, variations: p.variations || [] });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/products/:id', async (req, res) => {
   try {
     const p = req.body;
-    const margin = p.cost > 0 ? ((p.price - p.cost) / p.cost * 100) : 0;
+    const cost = await resolveCost(p.price, p.cost);
+    const margin = cost > 0 ? ((p.price - cost) / cost * 100) : 0;
     const vars = JSON.stringify(p.variations || []);
     await queryRun(
       `UPDATE products SET name=$1, sku=$2, ean=$3, ref=$4, category=$5, brand=$6, supplier=$7, size=$8, color=$9,
        price=$10, cost=$11, margin=$12, min_stock=$13, img=$14, photo=$15, variations=$16, active=$17, updated_at=NOW() WHERE id=$18`,
       [p.name, p.sku, p.ean || '', p.ref || '', p.category, p.brand, p.supplier || '', p.size || '',
-       p.color || '', p.price, p.cost, margin, p.min_stock ?? 0, p.img || '👕', p.photo || '', vars, p.active !== false, req.params.id]
+       p.color || '', p.price, cost, margin, p.min_stock ?? 0, p.img || '👕', p.photo || '', vars, p.active !== false, req.params.id]
     );
-    res.json({ success: true, margin });
+    res.json({ success: true, cost, margin });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 

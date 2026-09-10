@@ -900,7 +900,7 @@ export default function App() {
 
         <div style={S.content}>
           {/* DASHBOARD DA LOJA */}
-          {tab==="dashboard" && <StoreDashboard {...{storeProducts,storeSales,todaySales,todayRev,totalRev,lowStock,storeExpenses,currentStore,storeCash,customers,isSharedStock,sharedStockStores}} />}
+          {tab==="dashboard" && <StoreDashboard {...{storeProducts,storeSales,todaySales,todayRev,totalRev,lowStock,storeExpenses,currentStore,storeCash,customers,isSharedStock,sharedStockStores,loggedUser}} />}
 
           {/* PAINEL GESTOR (todas as lojas) */}
           {tab==="gestor" && <GestorPanel {...{sales,expenses,stock,catalog,customers,investments,cashState,salesStats}} />}
@@ -909,10 +909,10 @@ export default function App() {
           {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}} />}
 
           {/* PRODUTOS (Cadastro) */}
-          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts}} />}
+          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts,loggedUser}} />}
 
           {/* ESTOQUE */}
-          {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded}} />}
+          {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded,loggedUser}} />}
 
           {/* DESPESAS */}
           {tab==="despesas" && <DespesasModule {...{storeExpenses,activeStore,expenses,setExpenses,currentStore,showToast,expenseCategories,setExpenseCategories,cashState,setCashState,loggedUser}} />}
@@ -1093,10 +1093,11 @@ function KPI({icon,label,value,sub,color}){
 // ═══════════════════════════════════
 // ═══  STORE DASHBOARD            ═══
 // ═══════════════════════════════════
-function StoreDashboard({storeProducts,storeSales,todaySales,todayRev,totalRev,lowStock,storeExpenses,currentStore,storeCash,customers,isSharedStock,sharedStockStores}){
+function StoreDashboard({storeProducts,storeSales,todaySales,todayRev,totalRev,lowStock,storeExpenses,currentStore,storeCash,customers,isSharedStock,sharedStockStores,loggedUser}){
+  const isAdmin=loggedUser?.role==="admin"; // custo é sigiloso — colaboradores veem estoque a valor de venda
   const avgTicket = storeSales.length > 0 ? totalRev / storeSales.length : 0;
   const totalExp = storeExpenses.reduce((s,e) => s + e.value, 0);
-  const stockValue = storeProducts.reduce((s,p) => s + p.cost * p.stock, 0);
+  const stockValue = storeProducts.reduce((s,p) => s + (isAdmin?p.cost:p.price) * p.stock, 0);
   const cashBal = storeCash.open ? storeCash.initial + storeCash.history.filter(h=>h.type==="entrada").reduce((s,h)=>s+h.value,0) - storeCash.history.filter(h=>h.type==="saida").reduce((s,h)=>s+h.value,0) : 0;
 
   return (
@@ -1108,7 +1109,7 @@ function StoreDashboard({storeProducts,storeSales,todaySales,todayRev,totalRev,l
       <div style={S.kpiRow}>
         <KPI icon={I.money} label="Vendas Hoje" value={fmt(todayRev)} sub={todaySales.length+" vendas"} color={C.grn}/>
         <KPI icon={I.cart} label="Receita Total" value={fmt(totalRev)} sub={storeSales.length+" vendas"} color={C.gold}/>
-        <KPI icon={I.box} label="Estoque (Custo)" value={fmt(stockValue)} sub={storeProducts.reduce((s,p)=>s+p.stock,0)+" peças"} color={C.blu}/>
+        <KPI icon={I.box} label={isAdmin?"Estoque (Custo)":"Estoque (Venda)"} value={fmt(stockValue)} sub={storeProducts.reduce((s,p)=>s+p.stock,0)+" peças"} color={C.blu}/>
         <KPI icon={I.chart} label="Ticket Médio" value={fmt(avgTicket)} sub={customers.length+" clientes"} color={C.pur}/>
       </div>
       {storeCash.open&&<div style={S.kpiRow}><KPI icon={I.store} label="Caixa Aberto" value={fmt(cashBal)} sub="Saldo atual" color={C.grn}/><KPI icon={I.money} label="Despesas" value={fmt(totalExp)} sub={storeExpenses.length+" lançamentos"} color={C.red}/></div>}
@@ -2404,12 +2405,12 @@ function ReceiptComprovante({data,onClose}){
               <div style={{fontWeight:700,fontSize:11}}>{item.productName}</div>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}>
                 <span>SKU: {item.sku}</span>
-                <span>{item.qty} un. x {fmt(item.cost)} = {fmt(item.cost*item.qty)}</span>
+                <span>{item.qty} un. x {fmt(item.price)} = {fmt(item.price*item.qty)}</span>
               </div>
             </div>)}
             <HR2/>
             <Row l={"TOTAL PECAS:"} r={data.totalPcs+" un."}/>
-            <Row l={"VALOR CUSTO:"} r={fmt(data.totalVal)}/>
+            <Row l={"VALOR VENDA:"} r={fmt(data.totalVal)}/>
             <HR2/>
             <div style={{marginTop:16,fontSize:10}}>
               <div style={{borderBottom:"1px solid #000",marginBottom:4,paddingBottom:12}}>Assinatura (separou): ________________________</div>
@@ -2432,7 +2433,9 @@ function ReceiptComprovante({data,onClose}){
 // ═══════════════════════════════════
 // ═══  PRODUTOS MODULE (Cadastro) ═══
 // ═══════════════════════════════════
-function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts}){
+function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts,loggedUser}){
+  // Custo é sigiloso: só admin vê/edita. Cadastro sem custo → servidor calcula pela margem padrão (Configurações).
+  const isAdmin=loggedUser?.role==="admin";
   const [search,setSearch]=useState("");
   const [filterCat,setFilterCat]=useState("");
   const [showForm,setShowForm]=useState(false);
@@ -2494,7 +2497,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const [saving,setSaving]=useState(false);
   const saveProduct=async()=>{
     if(!np.name||!np.sku)return showToast("Preencha nome e SKU!","error");
-    if(!np.price||!np.cost)return showToast("Preencha preço e custo!","error");
+    if(!np.price)return showToast(isAdmin?"Preencha o preço!":"Preencha o preço de venda!","error");
     if(saving)return;
     setSaving(true);
     const vars=np.variations?np.variations.split(",").map(v=>v.trim()).filter(Boolean):[];
@@ -2576,7 +2579,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
     <div>
       <div style={S.kpiRow}>
         <KPI icon={I.box} label="Produtos" value={totalProducts+""} sub={activeProducts+" ativos"} color={C.blu}/>
-        <KPI icon={I.chart} label="Margem Média" value={pct(avgMargin)} sub="Preço vs Custo" color={C.grn}/>
+        {isAdmin&&<KPI icon={I.chart} label="Margem Média" value={pct(avgMargin)} sub="Preço vs Custo" color={C.grn}/>}
         <KPI icon={I.money} label="Categorias" value={Object.keys(catCount).length+""} sub="No catálogo" color={C.gold}/>
       </div>
 
@@ -2682,21 +2685,21 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
           {/* Price block */}
           <div style={{marginTop:14,padding:14,background:C.s2,borderRadius:12,border:`1px solid ${C.brd}`}}>
             <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:10}}>💰 PREÇOS</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,alignItems:"end"}}>
-              <div>
-                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Preço de Custo R$ *</label>
-                <input style={{...S.inp,width:"100%",fontSize:16,fontWeight:700}} type="number" value={np.cost} onChange={e=>setNp(p=>({...p,cost:e.target.value}))} placeholder="45.00"/>
-              </div>
+            <div style={{display:"grid",gridTemplateColumns:isAdmin?"1fr 1fr 1fr":"1fr",gap:10,alignItems:"end"}}>
+              {isAdmin&&<div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Preço de Custo R$</label>
+                <input style={{...S.inp,width:"100%",fontSize:16,fontWeight:700}} type="number" value={np.cost} onChange={e=>setNp(p=>({...p,cost:e.target.value}))} placeholder="automático"/>
+              </div>}
               <div>
                 <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Preço de Venda R$ *</label>
                 <input style={{...S.inp,width:"100%",fontSize:16,fontWeight:700,borderColor:C.gold+"44"}} type="number" value={np.price} onChange={e=>setNp(p=>({...p,price:e.target.value}))} placeholder="149.90"/>
               </div>
-              <div>
+              {isAdmin&&<div>
                 <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Margem (automática)</label>
                 <div style={{padding:"10px 12px",borderRadius:8,background:npMargin>=100?"rgba(0,230,118,.1)":npMargin>=50?"rgba(255,215,64,.1)":"rgba(255,82,82,.1)",border:`1px solid ${npMargin>=100?C.grn:npMargin>=50?C.gold:C.red}44`,fontSize:18,fontWeight:900,color:npMargin>=100?C.grn:npMargin>=50?C.gold:C.red,textAlign:"center"}}>{npCost>0?pct(npMargin):"—"}</div>
-              </div>
+              </div>}
             </div>
-            {npCost>0&&npPrice>0&&<div style={{marginTop:8,fontSize:11,color:C.dim,textAlign:"center"}}>
+            {isAdmin&&npCost>0&&npPrice>0&&<div style={{marginTop:8,fontSize:11,color:C.dim,textAlign:"center"}}>
               Lucro por peça: <strong style={{color:C.grn}}>{fmt(npPrice-npCost)}</strong>
             </div>}
           </div>
@@ -2733,8 +2736,8 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
           </div>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:18,fontWeight:800,color:C.gold}}>{fmt(npPrice)}</div>
-            <div style={{fontSize:11,color:C.dim}}>Custo: {fmt(npCost)}</div>
-            {npCost>0&&<div style={{fontSize:12,fontWeight:700,color:npMargin>=100?C.grn:npMargin>=50?C.gold:C.red}}>Margem: {pct(npMargin)}</div>}
+            {isAdmin&&<div style={{fontSize:11,color:C.dim}}>Custo: {fmt(npCost)}</div>}
+            {isAdmin&&npCost>0&&<div style={{fontSize:12,fontWeight:700,color:npMargin>=100?C.grn:npMargin>=50?C.gold:C.red}}>Margem: {pct(npMargin)}</div>}
           </div>
         </div>}
 
@@ -2747,7 +2750,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
       {/* Product Table */}
       {!catalogLoaded&&catalog.length===0&&<div style={{textAlign:"center",padding:40,color:C.dim,fontSize:16,fontWeight:700}}>Carregando produtos do servidor...</div>}
       <div style={S.tWrap}><table style={S.table}><thead><tr>
-        <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU / EAN</th><th style={S.th}>Cat.</th><th style={S.th}>Marca</th><th style={S.th}>Tam.</th><th style={S.th}>Cor</th><th style={S.th}>Preço</th><th style={S.th}>Custo</th><th style={S.th}>Margem</th><th style={S.th}>Variações</th><th style={S.th}>Ações</th>
+        <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU / EAN</th><th style={S.th}>Cat.</th><th style={S.th}>Marca</th><th style={S.th}>Tam.</th><th style={S.th}>Cor</th><th style={S.th}>Preço</th>{isAdmin&&<th style={S.th}>Custo</th>}{isAdmin&&<th style={S.th}>Margem</th>}<th style={S.th}>Variações</th><th style={S.th}>Ações</th>
       </tr></thead>
       <tbody>{visible.map(p=><tr key={p.id} style={{...S.tr,...(!p.active?{opacity:.35}:{})}}>
         <td style={S.td}>{p.photo
@@ -2761,8 +2764,8 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
         <td style={S.td}>{p.size}</td>
         <td style={{...S.td,fontSize:11}}>{p.color}</td>
         <td style={{...S.td,...S.tdM}}>{fmt(p.price)}</td>
-        <td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>
-        <td style={{...S.td,fontWeight:700,color:(p.margin||0)>=100?C.grn:(p.margin||0)>=50?C.gold:C.red}}>{pct(p.margin||0)}</td>
+        {isAdmin&&<td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>}
+        {isAdmin&&<td style={{...S.td,fontWeight:700,color:(p.margin||0)>=100?C.grn:(p.margin||0)>=50?C.gold:C.red}}>{pct(p.margin||0)}</td>}
         <td style={S.td}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.variations||[]).length>0?(p.variations||[]).map((v,i)=><span key={i} style={{padding:"1px 5px",borderRadius:3,background:C.s2,fontSize:9,border:`1px solid ${C.brd}`}}>{v}</span>):<span style={{fontSize:10,color:C.dim}}>-</span>}</div></td>
         <td style={S.td}><div style={{display:"flex",gap:3}}>
           <button style={S.smBtn} onClick={()=>startEdit(p)}>✏️</button>
@@ -2854,7 +2857,8 @@ const CountRow=memo(function CountRow({c,isHighlighted,onCount,onRowFocus,onRowE
   </tr>;
 });
 
-function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded}){
+function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded,loggedUser}){
+  const isAdmin=loggedUser?.role==="admin"; // custo é sigiloso — colaboradores só veem valores de venda
   const [search,setSearch]=useState("");
   const [activeTab,setActiveTab]=useState("lista"); // lista, entrada, saida, contagem, transferencia
   const [movHistory,setMovHistory]=useState([]); // {id,date,type,productId,productName,qty,reason,from,to}
@@ -2968,7 +2972,8 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     });
 
     const totalPcs=transItems.reduce((s,i)=>s+i.qty,0);
-    const totalVal=transItems.reduce((s,i)=>s+i.cost*i.qty,0);
+    // Cupom viaja com as peças entre lojas — mostra valor de VENDA (custo é sigiloso)
+    const totalVal=transItems.reduce((s,i)=>s+i.price*i.qty,0);
 
     // Dados para o cupom
     setPrintTransfer({
@@ -3042,7 +3047,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       {/* KPIs */}
       <div style={S.kpiRow}>
         <KPI icon={I.box} label="Total Peças" value={totalPieces+""} sub={currentStore.name} color={C.blu}/>
-        <KPI icon={I.money} label="Valor (Custo)" value={fmt(totalValue)} sub="Em estoque" color={C.gold}/>
+        {isAdmin&&<KPI icon={I.money} label="Valor (Custo)" value={fmt(totalValue)} sub="Em estoque" color={C.gold}/>}
         <KPI icon={I.money} label="Valor (Venda)" value={fmt(totalSaleValue)} sub="Em estoque" color={C.grn}/>
         <KPI icon={I.alert} label="Estoque Baixo" value={lowStock.length+""} sub="Produtos críticos" color={lowStock.length>0?C.red:C.grn}/>
         <KPI icon={I.chart} label="Movimentações" value={movHistory.length+""} sub="Hoje" color={C.pur}/>
@@ -3052,16 +3057,16 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
       {activeTab==="lista"&&<div>
         <div style={S.toolbar}><div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar produto..." value={search} onChange={e=>setSearch(e.target.value)}/></div></div>
 {/* alertas de estoque baixo desativados para testes */}
-        <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Cat.</th><th style={S.th}>Preço</th><th style={S.th}>Custo</th><th style={S.th}>Estoque</th><th style={S.th}>Valor</th><th style={S.th}>Ajuste</th></tr></thead>
+        <div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Cat.</th><th style={S.th}>Preço</th>{isAdmin&&<th style={S.th}>Custo</th>}<th style={S.th}>Estoque</th><th style={S.th}>Valor</th><th style={S.th}>Ajuste</th></tr></thead>
         <tbody>{filtered.map(p=><tr key={p.id} style={{...S.tr,...(p.stock<=p.minStock?{background:"rgba(255,82,82,0.06)"}:{})}}>
           <td style={S.td}><span style={{fontSize:18}}>{p.img}</span></td>
           <td style={{...S.td,fontWeight:600}}>{p.name}</td>
           <td style={{...S.td,fontFamily:"monospace",fontSize:10}}>{p.sku}</td>
           <td style={S.td}>{p.category}</td>
           <td style={{...S.td,...S.tdM}}>{fmt(p.price)}</td>
-          <td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>
+          {isAdmin&&<td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>}
           <td style={S.td}><span style={{...S.stBadge,...(p.stock<=p.minStock?S.stLow:S.stOk)}}>{p.stock}</span></td>
-          <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(p.cost*p.stock)}</td>
+          <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt((isAdmin?p.cost:p.price)*p.stock)}</td>
           <td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>{adjustStock(p.id,-1,activeStockId,{type:"saida",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:localDateStr(),time:new Date().toLocaleTimeString("pt-BR"),type:"saida",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>−</button><button style={S.smBtn} onClick={()=>{adjustStock(p.id,1,activeStockId,{type:"entrada",reason:"Ajuste rápido"});setMovHistory(prev=>[{id:genId(),date:localDateStr(),time:new Date().toLocaleTimeString("pt-BR"),type:"entrada",productId:p.id,productName:p.name,qty:1,reason:"Ajuste rápido",store:currentStore.name},...prev]);}}>+</button></div></td>
         </tr>)}</tbody></table></div>
       </div>}
@@ -3158,7 +3163,7 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
           {transItems.length>0&&<div style={{marginBottom:12}}>
             <div style={{fontSize:11,fontWeight:700,color:C.dim,letterSpacing:1,marginBottom:6}}>PRODUTOS NA TRANSFERÊNCIA ({transItems.length})</div>
             <div style={S.tWrap}><table style={S.table}><thead><tr>
-              <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Estoque</th><th style={S.th}>Qtd</th><th style={S.th}>Custo</th><th style={S.th}></th>
+              <th style={S.th}></th><th style={S.th}>Produto</th><th style={S.th}>SKU</th><th style={S.th}>Estoque</th><th style={S.th}>Qtd</th>{isAdmin&&<th style={S.th}>Custo</th>}<th style={S.th}></th>
             </tr></thead><tbody>
               {transItems.map((item,idx)=><tr key={item.productId} style={S.tr}>
                 <td style={S.td}><span style={{fontSize:16}}>{item.img}</span></td>
@@ -3166,10 +3171,10 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
                 <td style={{...S.td,fontFamily:"monospace",fontSize:10}}>{item.sku}</td>
                 <td style={S.td}><span style={{...S.stBadge,...S.stOk}}>{item.stock}</span></td>
                 <td style={S.td}><input type="number" min={1} max={item.stock} value={item.qty} onChange={e=>setTransItems(prev=>prev.map((it,i)=>i===idx?{...it,qty:Math.max(1,+e.target.value||1)}:it))} style={{...S.inp,width:60,textAlign:"center",padding:"4px 6px"}}/></td>
-                <td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(item.cost*item.qty)}</td>
+                {isAdmin&&<td style={{...S.td,fontSize:11,color:C.dim}}>{fmt(item.cost*item.qty)}</td>}
                 <td style={S.td}><button onClick={()=>setTransItems(prev=>prev.filter((_,i)=>i!==idx))} style={{...S.smBtn,color:C.red}}>✕</button></td>
               </tr>)}
-              <tr style={{background:C.s2}}><td colSpan={4} style={{...S.td,fontWeight:700,textAlign:"right"}}>Total:</td><td style={{...S.td,fontWeight:800,color:C.pur}}>{transItems.reduce((s,i)=>s+i.qty,0)} pç</td><td style={{...S.td,fontWeight:700,color:C.gold}}>{fmt(transItems.reduce((s,i)=>s+i.cost*i.qty,0))}</td><td style={S.td}></td></tr>
+              <tr style={{background:C.s2}}><td colSpan={4} style={{...S.td,fontWeight:700,textAlign:"right"}}>Total:</td><td style={{...S.td,fontWeight:800,color:C.pur}}>{transItems.reduce((s,i)=>s+i.qty,0)} pç</td>{isAdmin&&<td style={{...S.td,fontWeight:700,color:C.gold}}>{fmt(transItems.reduce((s,i)=>s+i.cost*i.qty,0))}</td>}<td style={S.td}></td></tr>
             </tbody></table></div>
           </div>}
 
@@ -4951,6 +4956,26 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
   const savedPct=+(appSettings?.discount_limit?.percent)||0;
   const [limitPct,setLimitPct]=useState(savedPct?String(savedPct):"");
   const [saving,setSaving]=useState(false);
+  const savedMargin=+(appSettings?.default_margin?.percent)||122;
+  const [marginPct,setMarginPct]=useState(String(savedMargin));
+  const [savingMargin,setSavingMargin]=useState(false);
+
+  const saveMargin=async()=>{
+    const pct=+marginPct||0;
+    if(pct<=0)return showToast("Informe uma margem maior que zero.","error");
+    setSavingMargin(true);
+    try{
+      const value={percent:pct};
+      const r=await api.saveSetting('default_margin',value);
+      if(r?._offline)return showToast("Sem internet — tente novamente quando estiver online.","error");
+      setAppSettings(prev=>({...prev,default_margin:value}));
+      showToast("Margem padrão salva: "+pct+"%");
+    }catch(e){
+      showToast("Erro ao salvar: "+e.message,"error");
+    }finally{
+      setSavingMargin(false);
+    }
+  };
 
   const saveLimit=async()=>{
     const pct=Math.max(0,Math.min(100,+limitPct||0));
@@ -4991,6 +5016,23 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
           {savedPct>0
             ?<>Limite atual: <strong style={{color:C.gold}}>{savedPct}%</strong>. Ex.: numa venda de R$ 200,00 o colaborador pode dar até <strong style={{color:C.gold}}>{fmt(200*savedPct/100)}</strong> de desconto sem liberação.</>
             :<>Nenhum limite definido — colaboradores podem dar qualquer desconto. Digite 0 para manter sem limite.</>}
+        </div>
+      </div>
+
+      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:520,marginTop:14}}>
+        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>💰 Margem padrão — custo automático</div>
+        <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
+          O campo de custo só aparece para o <strong style={{color:C.txt}}>administrador</strong>. Quando um produto é cadastrado sem custo
+          (ou com custo igual ao preço), o sistema calcula o custo automaticamente a partir do preço de venda usando esta margem
+          (markup sobre o custo). Um custo real informado pelo admin é sempre respeitado.
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+          <input style={{...S.inp,width:110,textAlign:"center",fontSize:18,fontWeight:700}} type="number" min={1} placeholder="122" value={marginPct} onChange={e=>setMarginPct(e.target.value)}/>
+          <span style={{fontSize:16,fontWeight:700,color:C.dim}}>%</span>
+          <button style={{...S.primBtn,opacity:savingMargin?.6:1}} disabled={savingMargin} onClick={saveMargin}>{savingMargin?"Salvando...":"Salvar margem"}</button>
+        </div>
+        <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
+          Margem atual: <strong style={{color:C.gold}}>{savedMargin}%</strong>. Ex.: peça vendida a <strong style={{color:C.gold}}>{fmt(110.90)}</strong> → custo calculado <strong style={{color:C.gold}}>{fmt(110.90/(1+savedMargin/100))}</strong>.
         </div>
       </div>
     </div>
