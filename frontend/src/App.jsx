@@ -146,7 +146,11 @@ const prodFromApi = p => ({ ...p, minStock: parseInt(p.min_stock)||0, price: par
 const prodToApi = p => ({ ...p, min_stock: p.minStock, variations: Array.isArray(p.variations) ? p.variations : [] });
 const custFromApi = c => ({ ...c, totalSpent: parseFloat(c.total_spent||0), lastVisit: c.last_visit||'-', tags: typeof c.tags === 'string' ? JSON.parse(c.tags||'["Novo"]') : (c.tags||['Novo']) });
 const custToApi = c => ({ ...c, total_spent: c.totalSpent||0, last_visit: c.lastVisit||'-' });
-const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,discountAuthBy:s.discount_auth_by||"",canceledBy:s.canceled_by,canceledAt:s.canceled_at,subtotal:parseFloat(s.subtotal||0),discount:parseFloat(s.discount||0),total:parseFloat(s.total||0)}); }); return r; };
+// Vendas do Chat gravam itens como {product_id, quantity} (PDV grava {id, qty}) — sem
+// normalizar, a Troca marcava todos os itens de uma vez (id undefined em todos) e só
+// processava o primeiro; CMV e reimpressão também ignoravam esses itens.
+const normSaleItems = items => { let arr=items; if(typeof arr==='string'){ try{arr=JSON.parse(arr);}catch{arr=[];} } return (arr||[]).map(it=>({ ...it, id: it.id||it.product_id||it.name, qty: +(it.qty ?? it.quantity ?? 1)||1, price: parseFloat(it.price)||0 })); };
+const salesFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(s=>{ const sid=s.store_id; if(r[sid]) r[sid].push({...s,storeId:s.store_id,customerId:s.customer_id,customerWhatsapp:s.customer_whatsapp,sellerId:s.seller_id,discountLabel:s.discount_label,discountAuthBy:s.discount_auth_by||"",canceledBy:s.canceled_by,canceledAt:s.canceled_at,subtotal:parseFloat(s.subtotal||0),discount:parseFloat(s.discount||0),total:parseFloat(s.total||0),items:normSaleItems(s.items)}); }); return r; };
 const expFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
 const exchFromApi = rows => { const r={loja1:[],loja2:[],loja3:[],loja4:[]}; rows.forEach(e=>{ if(r[e.store_id]) r[e.store_id].push(e); }); return r; };
 const empFromApi = e => ({ ...e, storeId: e.store_id });
@@ -278,7 +282,7 @@ export default function App() {
   const [catalog, setCatalog] = useState(() => ls('catalog', CATALOG));
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [stock, setStock] = useState(() => ls('stock', INIT_STOCK));
-  const [sales, setSales] = useState(() => ls('sales', INIT_SALES));
+  const [sales, setSales] = useState(() => { const s=ls('sales', INIT_SALES); Object.keys(s||{}).forEach(k=>{(s[k]||[]).forEach(v=>{v.items=normSaleItems(v.items);});}); return s; });
   // Ref para manter sempre o estado mais recente das vendas (evita race condition no loadAllData)
   const salesRef = useRef(sales);
   useEffect(() => { salesRef.current = sales; }, [sales]);
