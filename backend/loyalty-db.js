@@ -73,7 +73,7 @@ async function migrateLoyalty(pool) {
 
   // ─── Config default (espec Cliente Black) ───
   const DEFAULTS = {
-    window_days: 90, min_valid_sale: 80,
+    window_days: 90, min_valid_sale: 83.50,
     gold_min_sales: 6, gold_min_value: 500,
     diamond_min_sales: 12, diamond_min_value: 1000,
     grace_days: 30,
@@ -142,11 +142,12 @@ async function migrateLoyalty(pool) {
     $fn$ LANGUAGE sql STABLE;
   `, 'fn-balance');
 
-  // Estatísticas da janela: compras válidas = dias distintos com venda >= min_valid_sale
+  // Estatísticas da janela: compras válidas = dias distintos com venda ACIMA de min_valid_sale
+  // (estritamente maior — regra do dono 14/09: "o que conta são compras acima de 83,50")
   await run(`
     CREATE OR REPLACE FUNCTION loyalty_window_stats(cid TEXT, OUT valid_sales INT, OUT total_spent NUMERIC) AS $fn$
       SELECT
-        COUNT(DISTINCT s.date) FILTER (WHERE s.total >= loyalty_cfg_num('min_valid_sale'))::int,
+        COUNT(DISTINCT s.date) FILTER (WHERE s.total > loyalty_cfg_num('min_valid_sale'))::int,
         ROUND(COALESCE(SUM(s.total),0), 2)
       FROM sales s
       WHERE s.customer_id = cid AND s.status <> 'Cancelada'

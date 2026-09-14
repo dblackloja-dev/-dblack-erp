@@ -5150,7 +5150,7 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
         </div>
         {!cbCfg?<div style={{fontSize:12,color:C.dim}}>Carregando…</div>:<>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,marginBottom:10}}>
-            {[["window_days","Janela (dias)"],["min_valid_sale","Compra válida (R$)"],["gold_min_sales","GOLD: compras"],["gold_min_value","GOLD: valor (R$)"],["diamond_min_sales","DIAMOND: compras"],["diamond_min_value","DIAMOND: valor (R$)"],["grace_days","Carência (dias)"],["cashback_expiry_days","Validade saldo (dias)"],["min_redeem","Resgate mín. (R$)"],["discount_BLACK","Desc. BLACK %"],["discount_GOLD","Desc. GOLD %"],["discount_DIAMOND","Desc. DIAMOND %"],["cashback_BLACK","Cashback BLACK %"],["cashback_GOLD","Cashback GOLD %"],["cashback_DIAMOND","Cashback DIAMOND %"]].map(([k,lab])=>
+            {[["window_days","Janela (dias)"],["min_valid_sale","Compra válida: acima de (R$)"],["gold_min_sales","GOLD: compras"],["gold_min_value","GOLD: valor (R$)"],["diamond_min_sales","DIAMOND: compras"],["diamond_min_value","DIAMOND: valor (R$)"],["grace_days","Carência (dias)"],["cashback_expiry_days","Validade saldo (dias)"],["min_redeem","Resgate mín. (R$)"],["discount_BLACK","Desc. BLACK %"],["discount_GOLD","Desc. GOLD %"],["discount_DIAMOND","Desc. DIAMOND %"],["cashback_BLACK","Cashback BLACK %"],["cashback_GOLD","Cashback GOLD %"],["cashback_DIAMOND","Cashback DIAMOND %"]].map(([k,lab])=>
               <label key={k} style={{fontSize:10,color:C.dim,display:"flex",flexDirection:"column",gap:2}}>{lab}
                 <input style={{...S.inp,fontSize:13,fontWeight:700,padding:"5px 8px"}} type="number" min={0} value={cbCfg[k]??""} onChange={e=>upCb(k,e.target.value)}/>
               </label>)}
@@ -6083,7 +6083,7 @@ function FidelidadeModule({customers,setCustomers,showToast,appSettings,loggedUs
           {loggedUser?.role==="admin"&&<button style={S.smBtn} disabled={recalcing} onClick={recalc}>{recalcing?"Recalculando...":"↻ Recalcular níveis"}</button>}
         </div>
         {cfg&&<p style={{fontSize:12,color:C.dim,marginBottom:12}}>
-          Compra válida ≥ {fmt(cfg.min_valid_sale)} • janela de {cfg.window_days} dias • desconto só à vista (PIX/Dinheiro), fora de promoção • cashback vale {cfg.cashback_expiry_days} dias • resgate a partir de {String(cfg.cashback_redeem_from).split("-").reverse().join("/")} (mín. {fmt(cfg.min_redeem)}).
+          Compra válida: acima de {fmt(cfg.min_valid_sale)} • janela de {cfg.window_days} dias • desconto só à vista (PIX/Dinheiro), fora de promoção • cashback vale {cfg.cashback_expiry_days} dias • resgate a partir de {String(cfg.cashback_redeem_from).split("-").reverse().join("/")} (mín. {fmt(cfg.min_redeem)}).
         </p>}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
           {["BLACK","GOLD","DIAMOND"].map(t=><div key={t} style={{...S.card,borderColor:tierMeta[t].color+"44",textAlign:"center"}}>
