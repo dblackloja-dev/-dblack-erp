@@ -5,7 +5,7 @@ require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
-const API = 'http://localhost:4001/api';
+const API = (process.env.API_BASE || 'http://localhost:4001') + '/api';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 const token = jwt.sign({ id: 'test', name: 'TesteCB', role: 'admin', store_id: 'all' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
