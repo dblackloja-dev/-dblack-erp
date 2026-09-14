@@ -10,7 +10,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejec
 const token = jwt.sign({ id: 'test', name: 'TesteFidelidade', role: 'admin', store_id: 'all' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
 const PHONE = '5533999990001';
-const S1 = 'testfid-s1', S2 = 'testfid-s2', S3 = 'testfid-s3', R1 = 'testfid-r1', R2 = 'testfid-r2';
+const S1 = 'testfid-s1', S2 = 'testfid-s2', S3 = 'testfid-s3', S4 = 'testfid-s4', S5 = 'testfid-s5', R1 = 'testfid-r1', R2 = 'testfid-r2';
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra) => {
@@ -30,7 +30,7 @@ async function api(method, path, body) {
 const getCust = async () => (await pool.query("SELECT * FROM customers WHERE whatsapp = $1", ['33999990001'])).rows[0];
 
 async function cleanup() {
-  await pool.query("DELETE FROM sales WHERE id IN ($1,$2,$3)", [S1, S2, S3]);
+  await pool.query("DELETE FROM sales WHERE id IN ($1,$2,$3,$4,$5)", [S1, S2, S3, S4, S5]);
   await pool.query("DELETE FROM loyalty_redemptions WHERE id IN ($1,$2) OR customer_id IN (SELECT id FROM customers WHERE whatsapp='33999990001')", [R1, R2]);
   await pool.query("DELETE FROM customers WHERE whatsapp = '33999990001'");
   await pool.query("DELETE FROM stock WHERE stock_id = 'stk_teste'");
@@ -90,6 +90,28 @@ async function cleanup() {
   await api('POST', '/sales', { ...saleBase, id: S3, stock_id: 'stk_teste', items: [{ id: 'prod_teste', qty: 2, price: 50 }], total: 100, subtotal: 100, cupom: 'TST-3' });
   q = (await pool.query("SELECT quantity FROM stock WHERE stock_id='stk_teste' AND product_id='prod_teste'")).rows[0].quantity;
   check('replay: estoque continua 8', q === 8, q);
+
+  console.log('G) pontos usados na venda voltam se a venda for cancelada');
+  // após F o cliente tem 10 pts (venda S3 de R$100)
+  await api('POST', '/sales', { ...saleBase, id: S5, total: 200, subtotal: 200, items: [{ id: 'x', qty: 1, price: 200 }], cupom: 'TST-5' });
+  c = await getCust();
+  check('S5 acumula: 30 pts', c.points === 30, c.points);
+  r = await api('POST', '/customers/' + c.id + '/redeem', { id: 'sale-' + S5, points: 8, reason: 'Desconto na venda TST-5' });
+  check('8 pts usados na venda: saldo 22', r.body.points === 22, r.body);
+  await api('PUT', '/sales/' + S5, { status: 'Cancelada', canceled_by: 'teste', canceled_at: new Date().toISOString() });
+  c = await getCust();
+  check('cancelou: tira os 20 ganhos e devolve os 8 usados = 10', c.points === 10, c.points);
+  check('resgate da venda removido (replay-safe)', (await pool.query("SELECT COUNT(*)::int n FROM loyalty_redemptions WHERE id=$1", ['sale-' + S5])).rows[0].n === 0);
+
+  console.log('H) cliente com tag Interno vincula mas NAO pontua');
+  await pool.query('UPDATE customers SET tags=$1 WHERE id=$2', ['["Interno"]', c.id]);
+  const beforeVisits = c.visits;
+  await api('POST', '/sales', { ...saleBase, id: S4, total: 300, subtotal: 300, items: [{ id: 'x', qty: 1, price: 300 }], cupom: 'TST-4' });
+  c = await getCust();
+  check('pontos nao mudam', c.points === 10, c.points);
+  check('visits nao muda', c.visits === beforeVisits, c.visits);
+  sale = (await pool.query('SELECT customer_id FROM sales WHERE id=$1', [S4])).rows[0];
+  check('venda mesmo assim vinculada ao cliente', sale.customer_id === c.id, sale);
 
   await cleanup();
   const leftovers = (await pool.query("SELECT COUNT(*)::int n FROM customers WHERE whatsapp='33999990001'")).rows[0].n;

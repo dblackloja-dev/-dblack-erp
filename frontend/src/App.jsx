@@ -953,7 +953,7 @@ export default function App() {
           {tab==="etiquetas" && <EtiquetasModule {...{storeProducts,showToast}} />}
 
           {/* FIDELIDADE */}
-          {tab==="fidelidade" && <FidelidadeModule {...{customers,setCustomers,showToast}} />}
+          {tab==="fidelidade" && <FidelidadeModule {...{customers,setCustomers,showToast,appSettings}} />}
 
           {/* PROMOÇÕES */}
           {tab==="promos" && <PromosModule {...{promos,setPromos,showToast}} />}
@@ -1230,7 +1230,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}){
   // ── MULTI-TAB SALES ──
-  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null});
+  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,pointsUsed:0});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
   const [activeTabIdx,setActiveTabIdx]=useState(0);
   const [search,setSearch]=useState("");
@@ -1393,7 +1393,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         case "F6": quickPay("Débito"); break;
         case "F7": finalizeSale(); break;
         case "F8": setCart([]);setPayments([]);setShowPayPanel(false);showToast("Carrinho limpo!"); break;
-        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
+        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,pointsUsed:0});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
         case "F10": if(lastReceipt)setReceiptSale(lastReceipt); else showToast("Nenhum cupom anterior","error"); break;
         case "F12": setShowShortcuts(p=>!p); break;
         default: break;
@@ -1440,7 +1440,18 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     }
   }
   discountValue=Math.min(discountValue,cartSub); // não pode ser maior que o subtotal
-  const cartTotal=Math.round(Math.max(0,cartSub-discountValue)*100)/100;
+  const cartTotalPrePoints=Math.round(Math.max(0,cartSub-discountValue)*100)/100;
+
+  // ── PONTOS CLIENTE BLACK como desconto ──
+  // 1 ponto vale loyalty_point_value (Configurações). Fica fora do limite de desconto
+  // dos colaboradores (é benefício do programa, não liberalidade). Clamp automático:
+  // se o carrinho diminuir, usa só os pontos que cabem no total.
+  const pointValue=+(appSettings?.loyalty_point_value?.value)||0;
+  const custObjSel=customers.find(c=>c.name===cartCustomer);
+  const maxPtsUsable=custObjSel&&pointValue>0?Math.min(custObjSel.points||0,Math.floor(cartTotalPrePoints/pointValue)):0;
+  const pointsUsed=Math.min(tab.pointsUsed||0,maxPtsUsable);
+  const pointsDiscount=Math.round(pointsUsed*pointValue*100)/100;
+  const cartTotal=Math.round(Math.max(0,cartTotalPrePoints-pointsDiscount)*100)/100;
 
   // ── LIMITE DE DESCONTO (configurável em Configurações) ──
   // Limite global em % sobre o subtotal; vale para desconto fixo e por item também.
@@ -1564,13 +1575,21 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:discountValue,discountLabel:discountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
+    const fullDiscountLabel=[discountValue>0?discountLabel:"",pointsUsed>0?`Pontos Cliente Black (${pointsUsed} pts)`:""].filter(Boolean).join(" + ");
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:Math.round((discountValue+pointsDiscount)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'', discount_auth_by: newSale.discountAuthBy||'' }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
       // O loadAllData vai detectar e reenviar na próxima sincronização
       console.warn('[VENDA] Erro ao enviar para servidor (será reenviada):', e.message);
     });
+    if(pointsUsed>0&&custObj?.id){
+      // Baixa idempotente por venda ("sale-<id>"): retry não desconta 2x e o
+      // cancelamento da venda devolve esses pontos (trigger loyalty_reverse)
+      api.redeemPoints(custObj.id,{id:"sale-"+newSale.id,points:pointsUsed,reason:"Desconto na venda "+cupomNum}).then(r=>{
+        setCustomers(prev=>prev.map(c=>c.id===custObj.id?{...c,points:r.points}:c));
+      }).catch(()=>showToast("Baixa dos pontos não confirmada (sem internet?) — confira depois na aba Fidelidade.","error"));
+    }
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};cart.forEach(c=>{st[c.id]=Math.max(0,(st[c.id]||0)-c.qty);});n[activeStockId]=st;return n;});
     setAutoFlow(true);
     setReceiptSale(newSale);
@@ -1579,7 +1598,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     if(saleTabs.length>1){
       closeSaleTab(activeTabIdx);
     } else {
-      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null});
+      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,pointsUsed:0});
     }
     setShowDiscountPanel(false);
     setFolhaEmpId("");
@@ -1654,6 +1673,13 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`}}>
           <CustomerSelector customers={customers} setCustomers={setCustomers} cartCustomer={cartCustomer} setCartCustomer={setCartCustomer} showToast={showToast}/>
         </div>
+        {custObjSel&&pointValue>0&&(custObjSel.points||0)>0&&
+          <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`,display:"flex",alignItems:"center",gap:6,background:"rgba(255,215,64,.04)"}}>
+            <span style={{fontSize:11,color:C.gold,flex:1,fontWeight:600}}>🖤 {custObjSel.points} pts = {fmt((custObjSel.points||0)*pointValue)} em desconto</span>
+            {pointsUsed>0
+              ?<button onClick={()=>upTab({pointsUsed:0})} style={{padding:"4px 10px",borderRadius:7,border:`1px solid ${C.gold}`,background:"rgba(255,215,64,.12)",color:C.gold,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700}}>✕ Usando {pointsUsed} pts (−{fmt(pointsDiscount)})</button>
+              :<button disabled={maxPtsUsable<=0} onClick={()=>upTab({pointsUsed:maxPtsUsable})} style={{padding:"4px 10px",borderRadius:7,border:`1px solid ${maxPtsUsable>0?C.gold:C.brd}`,background:"transparent",color:maxPtsUsable>0?C.gold:C.dim,cursor:maxPtsUsable>0?"pointer":"default",fontSize:11,fontFamily:"inherit",fontWeight:700}}>Usar pontos</button>}
+          </div>}
         <div style={{flex:1,overflowY:"auto",padding:8}}>
           {cart.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:12}}>🛒 Carrinho vazio</div>:
           cart.map(item=>{const itemDisc=discountScope==="item"&&(itemDiscounts[item.id]||0)>0?(discountType==="percent"?Math.round(item.price*item.qty*(itemDiscounts[item.id]||0)/100*100)/100:Math.min(itemDiscounts[item.id]||0,item.price*item.qty)):0;return <div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(itemDisc>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
@@ -1874,23 +1900,34 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
   const [qc,setQc]=useState({name:"",phone:"",city:""});
   const inputRef=useRef(null);
 
+  const searchDigits=custSearch.replace(/\D/g,"");
   const filtered=custSearch.trim()?customers.filter(c=>
     c.name.toLowerCase().includes(custSearch.toLowerCase())||
     (c.cpf||"").includes(custSearch)||
-    (c.phone||"").includes(custSearch)
+    (c.phone||"").includes(custSearch)||
+    (searchDigits.length>=4&&((c.whatsapp||"").replace(/\D/g,"").includes(searchDigits)||(c.phone||"").replace(/\D/g,"").includes(searchDigits)))
   ):customers;
 
   const selectCustomer=(c)=>{setCartCustomer(c.name);setCustSearch("");setShowResults(false);};
   const clearCustomer=()=>{setCartCustomer("");setCustSearch("");};
 
-  const quickAdd=()=>{
-    if(!qc.name||!qc.phone)return showToast("Preencha nome e telefone!","error");
-    const newCust={id:genId(),name:qc.name,phone:qc.phone,email:"",cpf:"",birthdate:"",totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],notes:"Cidade: "+qc.city,points:0,whatsapp:qc.phone.replace(/\D/g,"")};
+  // Cadastro persiste no servidor na hora — o acúmulo de pontos (trigger no banco)
+  // acha o cliente pelo WhatsApp; se ficasse só no localStorage, criaria duplicado
+  const registerCustomer=(nome,phone,city)=>{
+    const digits=phone.replace(/\D/g,"");
+    if(digits.length<8)return showToast("WhatsApp incompleto — digite com DDD!","error");
+    const nomeFinal=(nome||"").trim()||("Cliente "+digits.slice(-4));
+    const newCust={id:genId(),name:nomeFinal,phone:phone,email:"",cpf:"",birthdate:"",totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],notes:city?"Cidade: "+city:"",points:0,whatsapp:digits};
     setCustomers(prev=>[...prev,newCust]);
-    setCartCustomer(qc.name);
+    api.createCustomer(custToApi(newCust)).catch(console.error);
+    setCartCustomer(nomeFinal);
     setQc({name:"",phone:"",city:""});
     setShowQuickAdd(false);setCustSearch("");setShowResults(false);
-    showToast("Cliente "+qc.name+" cadastrado e selecionado!");
+    showToast("Cliente "+nomeFinal+" vinculado — compras somam pontos Cliente Black!");
+  };
+  const quickAdd=()=>{
+    if(!qc.phone)return showToast("Informe pelo menos o WhatsApp!","error");
+    registerCustomer(qc.name,qc.phone,qc.city);
   };
 
   return(
@@ -1899,6 +1936,7 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
         <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 8px",background:"rgba(255,215,64,.06)",borderRadius:8,border:`1px solid ${C.brdH}`}}>
           <div style={{...S.avatar,width:24,height:24,fontSize:10}}>{cartCustomer.charAt(0)}</div>
           <span style={{flex:1,fontSize:12,fontWeight:700,color:C.gold}}>{cartCustomer}</span>
+          {(()=>{const sc=customers.find(c=>c.name===cartCustomer);return sc&&(sc.points||0)>0?<span style={{fontSize:10,fontWeight:800,color:C.gold}}>★{sc.points} pts</span>:null;})()}
           <button onClick={clearCustomer} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:10,padding:2}}>✕</button>
         </div>
       :
@@ -1909,7 +1947,7 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
               <input
                 ref={inputRef}
                 style={{background:"none",border:"none",color:C.txt,fontSize:12,fontFamily:"inherit",outline:"none",flex:1}}
-                placeholder="Nome ou CPF do cliente..."
+                placeholder="Nome, CPF ou WhatsApp do cliente..."
                 value={custSearch}
                 onChange={e=>{setCustSearch(e.target.value);setShowResults(true);}}
                 onFocus={()=>setShowResults(true)}
@@ -1925,7 +1963,11 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
             {filtered.length===0?
               <div style={{padding:"12px",textAlign:"center",color:C.dim,fontSize:11}}>
                 Nenhum cliente encontrado
-                <button onClick={()=>{setShowQuickAdd(true);setQc(q=>({...q,name:custSearch}));setShowResults(false);}} style={{display:"block",margin:"6px auto 0",padding:"5px 12px",borderRadius:6,border:`1px solid ${C.grn}`,background:"transparent",color:C.grn,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>
+                {searchDigits.length>=8&&
+                  <button onClick={()=>registerCustomer("",custSearch,"")} style={{display:"block",margin:"6px auto 0",padding:"5px 12px",borderRadius:6,border:`1px solid ${C.gold}`,background:"transparent",color:C.gold,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>
+                    📱 Vincular WhatsApp {custSearch}
+                  </button>}
+                <button onClick={()=>{setShowQuickAdd(true);setQc(q=>({...q,[searchDigits.length>=8?"phone":"name"]:custSearch}));setShowResults(false);}} style={{display:"block",margin:"6px auto 0",padding:"5px 12px",borderRadius:6,border:`1px solid ${C.grn}`,background:"transparent",color:C.grn,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>
                   + Cadastrar "{custSearch}"
                 </button>
               </div>
@@ -4963,6 +5005,25 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
   const savedMargin=+(appSettings?.default_margin?.percent)||122;
   const [marginPct,setMarginPct]=useState(String(savedMargin));
   const [savingMargin,setSavingMargin]=useState(false);
+  const savedPointVal=+(appSettings?.loyalty_point_value?.value)||0;
+  const [pointVal,setPointVal]=useState(savedPointVal?String(savedPointVal):"");
+  const [savingPoint,setSavingPoint]=useState(false);
+
+  const savePointVal=async()=>{
+    const v=Math.max(0,+String(pointVal).replace(",","."))||0;
+    setSavingPoint(true);
+    try{
+      const value={value:v};
+      const r=await api.saveSetting('loyalty_point_value',value);
+      if(r?._offline)return showToast("Sem internet — tente novamente quando estiver online.","error");
+      setAppSettings(prev=>({...prev,loyalty_point_value:value}));
+      showToast(v>0?"Valor do ponto salvo: "+fmt(v):"Uso de pontos no PDV desativado.");
+    }catch(e){
+      showToast("Erro ao salvar: "+e.message,"error");
+    }finally{
+      setSavingPoint(false);
+    }
+  };
 
   const saveMargin=async()=>{
     const pct=+marginPct||0;
@@ -5037,6 +5098,25 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
         </div>
         <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
           Margem atual: <strong style={{color:C.gold}}>{savedMargin}%</strong>. Ex.: peça vendida a <strong style={{color:C.gold}}>{fmt(110.90)}</strong> → custo calculado <strong style={{color:C.gold}}>{fmt(110.90/(1+savedMargin/100))}</strong>.
+        </div>
+      </div>
+
+      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:520,marginTop:14}}>
+        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🖤 Cliente Black — valor do ponto</div>
+        <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
+          O cliente ganha <strong style={{color:C.txt}}>1 ponto a cada R$ 10,00</strong> em compras (automático, pelo WhatsApp).
+          Aqui você define quanto cada ponto vale como <strong style={{color:C.txt}}>desconto no PDV</strong> quando o cliente resolve usar.
+          Digite 0 para desativar o uso de pontos no PDV (o acúmulo continua).
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+          <span style={{fontSize:16,fontWeight:700,color:C.dim}}>R$</span>
+          <input style={{...S.inp,width:110,textAlign:"center",fontSize:18,fontWeight:700}} type="number" min={0} step="0.05" placeholder="0,50" value={pointVal} onChange={e=>setPointVal(e.target.value)}/>
+          <button style={{...S.primBtn,opacity:savingPoint?.6:1}} disabled={savingPoint} onClick={savePointVal}>{savingPoint?"Salvando...":"Salvar valor"}</button>
+        </div>
+        <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
+          {savedPointVal>0
+            ?<>Valor atual: <strong style={{color:C.gold}}>{fmt(savedPointVal)}</strong> por ponto (retorno de <strong style={{color:C.gold}}>{(savedPointVal/10*100).toFixed(1)}%</strong> do gasto). Ex.: cliente com <strong style={{color:C.gold}}>100 pts</strong> tem <strong style={{color:C.gold}}>{fmt(100*savedPointVal)}</strong> de desconto disponível.</>
+            :<>Uso de pontos no PDV desativado — os clientes continuam acumulando.</>}
         </div>
       </div>
     </div>
@@ -5923,22 +6003,33 @@ function EtiquetasModule({storeProducts,showToast}){
 // ═══════════════════════════════════
 // ═══  FIDELIDADE MODULE          ═══
 // ═══════════════════════════════════
-function FidelidadeModule({customers,setCustomers,showToast}){
-  const tiers=[{name:"Bronze",min:0,max:99,color:"#CD7F32",benefit:"5% desc."},{name:"Prata",min:100,max:299,color:"#C0C0C0",benefit:"10% desc."},{name:"Ouro",min:300,max:499,color:C.gold,benefit:"15% + brindes"},{name:"Diamante",min:500,max:Infinity,color:C.blu,benefit:"20% + prioridade"}];
+function FidelidadeModule({customers,setCustomers,showToast,appSettings}){
+  // Níveis são STATUS (por pontos acumulados) — benefícios por nível ainda não definidos pelo dono.
+  // O benefício concreto do programa é o resgate: 1 ponto = loyalty_point_value em desconto no PDV.
+  const tiers=[{name:"Bronze",min:0,max:99,color:"#CD7F32"},{name:"Prata",min:100,max:299,color:"#C0C0C0"},{name:"Ouro",min:300,max:499,color:C.gold},{name:"Diamante",min:500,max:Infinity,color:C.blu}];
   const getTier=(pts)=>tiers.find(t=>pts>=t.min&&pts<=t.max)||tiers[0];
-  const sorted=[...customers].sort((a,b)=>b.points-a.points);
+  const pointValue=+(appSettings?.loyalty_point_value?.value)||0;
+  const isInterno=(c)=>(c.tags||[]).includes("Interno");
+  const sorted=customers.filter(c=>!isInterno(c)).sort((a,b)=>b.points-a.points);
   const redeem=(cId,pts)=>{
     // Saldo é do servidor: o resgate persiste via endpoint idempotente e o estado local usa o saldo retornado
-    api.redeemPoints(cId,{id:genId(),points:pts}).then(r=>{
+    api.redeemPoints(cId,{id:genId(),points:pts,reason:"Resgate manual (aba Fidelidade)"}).then(r=>{
       setCustomers(prev=>prev.map(c=>c.id===cId?{...c,points:r.points}:c));
-      showToast(pts+" pontos resgatados!");
+      showToast(pts+" pontos resgatados"+(pointValue>0?" (= "+fmt(pts*pointValue)+")":"")+"!");
     }).catch(()=>showToast("Erro ao resgatar — verifique a conexão","error"));
   };
   return(
     <div>
-      <div style={S.card}><h3 style={S.cardTitle}>Programa de Fidelidade</h3><p style={{fontSize:12,color:C.dim,marginBottom:12}}>R$10 = 1 ponto</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>{tiers.map(t=><div key={t.name} style={{...S.card,borderColor:t.color+"44",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:t.color}}>{t.name}</div><div style={{fontSize:11,color:C.dim}}>{t.max===Infinity?t.min+"+ pts":t.min+"-"+t.max+" pts"}</div><div style={{fontSize:12,fontWeight:600}}>{t.benefit}</div></div>)}</div></div>
-      <div style={S.card}><h3 style={S.cardTitle}>Ranking</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>#</th><th style={S.th}>Cliente</th><th style={S.th}>Nível</th><th style={S.th}>Pontos</th><th style={S.th}>Gasto</th><th style={S.th}>Ações</th></tr></thead>
-      <tbody>{sorted.map((c,i)=>{const tier=getTier(c.points);return <tr key={c.id} style={S.tr}><td style={{...S.td,fontWeight:800,color:C.gold}}>#{i+1}</td><td style={{...S.td,fontWeight:600}}>{c.name}</td><td style={S.td}><span style={{fontWeight:700,color:tier.color}}>{tier.name}</span></td><td style={{...S.td,fontWeight:700,color:C.gold,fontSize:15}}>{c.points}</td><td style={{...S.td,...S.tdM}}>{fmt(c.totalSpent)}</td><td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} onClick={()=>redeem(c.id,50)}>-50</button><button style={S.smBtn} onClick={()=>redeem(c.id,100)}>-100</button></div></td></tr>;})}</tbody></table></div></div>
+      <div style={S.card}>
+        <h3 style={S.cardTitle}>🖤 Programa Cliente Black</h3>
+        <p style={{fontSize:12,color:C.dim,marginBottom:12}}>
+          R$10 em compras = 1 ponto (automático pelo WhatsApp, em todas as lojas e no chat).
+          {pointValue>0?<> Cada ponto vale <strong style={{color:C.gold}}>{fmt(pointValue)}</strong> de desconto no PDV — configurável em ⚙️ Configurações.</>:<> Uso de pontos no PDV desativado (defina o valor do ponto em ⚙️ Configurações).</>}
+        </p>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>{tiers.map(t=><div key={t.name} style={{...S.card,borderColor:t.color+"44",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:t.color}}>{t.name}</div><div style={{fontSize:11,color:C.dim}}>{t.max===Infinity?t.min+"+ pts":t.min+"-"+t.max+" pts"}</div></div>)}</div>
+      </div>
+      <div style={S.card}><h3 style={S.cardTitle}>Ranking</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>#</th><th style={S.th}>Cliente</th><th style={S.th}>Nível</th><th style={S.th}>Pontos</th>{pointValue>0&&<th style={S.th}>Vale</th>}<th style={S.th}>Gasto</th><th style={S.th}>Compras</th><th style={S.th}>Resgatar</th></tr></thead>
+      <tbody>{sorted.slice(0,100).map((c,i)=>{const tier=getTier(c.points);return <tr key={c.id} style={S.tr}><td style={{...S.td,fontWeight:800,color:C.gold}}>#{i+1}</td><td style={{...S.td,fontWeight:600}}>{c.name}</td><td style={S.td}><span style={{fontWeight:700,color:tier.color}}>{tier.name}</span></td><td style={{...S.td,fontWeight:700,color:C.gold,fontSize:15}}>{c.points}</td>{pointValue>0&&<td style={{...S.td,color:C.grn,fontWeight:600}}>{fmt(c.points*pointValue)}</td>}<td style={{...S.td,...S.tdM}}>{fmt(c.totalSpent)}</td><td style={S.td}>{c.visits||0}</td><td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} disabled={c.points<50} onClick={()=>redeem(c.id,50)}>-50</button><button style={S.smBtn} disabled={c.points<100} onClick={()=>redeem(c.id,100)}>-100</button></div></td></tr>;})}</tbody></table></div></div>
     </div>
   );
 }

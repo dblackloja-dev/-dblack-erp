@@ -437,6 +437,12 @@ async function initDB() {
           OR regexp_replace(COALESCE(c.phone,''),'[^0-9]','','g') IN (digits, '55'||digits)
        ORDER BY c.created_at LIMIT 1;
 
+      -- Números internos (loja/atendentes, tag Interno) vinculam a venda mas não pontuam
+      IF cid IS NOT NULL AND EXISTS (SELECT 1 FROM customers WHERE id = cid AND tags LIKE '%Interno%') THEN
+        UPDATE sales SET customer_id = cid WHERE id = NEW.id AND COALESCE(customer_id,'') = '';
+        RETURN NULL;
+      END IF;
+
       IF cid IS NULL THEN
         cid := substr(md5(random()::text || clock_timestamp()::text), 1, 12);
         INSERT INTO customers (id, name, phone, whatsapp, tags, points, total_spent, visits, last_visit)
@@ -465,6 +471,8 @@ async function initDB() {
 
   await pool.query(`
     CREATE OR REPLACE FUNCTION loyalty_reverse() RETURNS trigger AS $fn$
+    DECLARE
+      refund INTEGER;
     BEGIN
       IF COALESCE(OLD.status,'') <> 'Cancelada' AND NEW.status = 'Cancelada' AND COALESCE(OLD.customer_id,'') <> '' THEN
         UPDATE customers
@@ -472,6 +480,13 @@ async function initDB() {
                total_spent = GREATEST(0, total_spent - COALESCE(OLD.total,0)),
                visits = GREATEST(0, visits - 1)
          WHERE id = OLD.customer_id;
+        -- Devolve pontos que foram usados como desconto nesta venda (resgate id 'sale-<id>');
+        -- DELETE torna a devolução replay-safe (segunda tentativa não acha a linha)
+        WITH d AS (DELETE FROM loyalty_redemptions WHERE id = 'sale-'||OLD.id AND customer_id = OLD.customer_id RETURNING points)
+        SELECT COALESCE(SUM(points),0)::int INTO refund FROM d;
+        IF refund > 0 THEN
+          UPDATE customers SET points = points + refund WHERE id = OLD.customer_id;
+        END IF;
       END IF;
       RETURN NEW;
     EXCEPTION WHEN OTHERS THEN
@@ -484,6 +499,9 @@ async function initDB() {
   await pool.query(`CREATE TRIGGER trg_loyalty_accrue AFTER INSERT ON sales FOR EACH ROW EXECUTE FUNCTION loyalty_accrue()`).catch(e => console.error('trg_loyalty_accrue:', e.message));
   await pool.query(`DROP TRIGGER IF EXISTS trg_loyalty_reverse ON sales`).catch(()=>{});
   await pool.query(`CREATE TRIGGER trg_loyalty_reverse BEFORE UPDATE OF status ON sales FOR EACH ROW EXECUTE FUNCTION loyalty_reverse()`).catch(e => console.error('trg_loyalty_reverse:', e.message));
+
+  // Valor do ponto no resgate (Cliente Black) — ajustável na aba Configurações (admin)
+  await pool.query(`INSERT INTO settings (key, value) VALUES ('loyalty_point_value', '{"value":0.5}') ON CONFLICT (key) DO NOTHING`).catch(()=>{});
 
   // Seed categorias de despesas padrão
   const defExpCats = ['Aluguel','Energia','Água','Internet','Funcionários','Marketing','Manutenção','Material','Impostos','Transporte','Alimentação','Fornecedor','Outros'];
