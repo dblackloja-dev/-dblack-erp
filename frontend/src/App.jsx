@@ -953,7 +953,7 @@ export default function App() {
           {tab==="etiquetas" && <EtiquetasModule {...{storeProducts,showToast}} />}
 
           {/* FIDELIDADE */}
-          {tab==="fidelidade" && <FidelidadeModule {...{customers,setCustomers,showToast,appSettings}} />}
+          {tab==="fidelidade" && <FidelidadeModule {...{customers,setCustomers,showToast,appSettings,loggedUser}} />}
 
           {/* PROMOÇÕES */}
           {tab==="promos" && <PromosModule {...{promos,setPromos,showToast}} />}
@@ -1230,7 +1230,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}){
   // ── MULTI-TAB SALES ──
-  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,pointsUsed:0});
+  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
   const [activeTabIdx,setActiveTabIdx]=useState(0);
   const [search,setSearch]=useState("");
@@ -1240,6 +1240,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const [showShortcuts,setShowShortcuts]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const [autoFlow,setAutoFlow]=useState(false);
+  const [cbQuote,setCbQuote]=useState(null); // cotação Cliente Black do servidor
 
   // Current tab data
   const tab=saleTabs[activeTabIdx]||emptyTab();
@@ -1393,7 +1394,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         case "F6": quickPay("Débito"); break;
         case "F7": finalizeSale(); break;
         case "F8": setCart([]);setPayments([]);setShowPayPanel(false);showToast("Carrinho limpo!"); break;
-        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,pointsUsed:0});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
+        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
         case "F10": if(lastReceipt)setReceiptSale(lastReceipt); else showToast("Nenhum cupom anterior","error"); break;
         case "F12": setShowShortcuts(p=>!p); break;
         default: break;
@@ -1440,18 +1441,29 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     }
   }
   discountValue=Math.min(discountValue,cartSub); // não pode ser maior que o subtotal
-  const cartTotalPrePoints=Math.round(Math.max(0,cartSub-discountValue)*100)/100;
 
-  // ── PONTOS CLIENTE BLACK como desconto ──
-  // 1 ponto vale loyalty_point_value (Configurações). Fica fora do limite de desconto
-  // dos colaboradores (é benefício do programa, não liberalidade). Clamp automático:
-  // se o carrinho diminuir, usa só os pontos que cabem no total.
-  const pointValue=+(appSettings?.loyalty_point_value?.value)||0;
+  // ── CLIENTE BLACK (níveis + cashback) — cotação do servidor ──
+  // O servidor decide desconto de nível (só à vista, fora de promoção) e saldo usável.
+  // Sem internet a venda sai sem benefícios (o cashback ainda entra via trigger no banco).
   const custObjSel=customers.find(c=>c.name===cartCustomer);
-  const maxPtsUsable=custObjSel&&pointValue>0?Math.min(custObjSel.points||0,Math.floor(cartTotalPrePoints/pointValue)):0;
-  const pointsUsed=Math.min(tab.pointsUsed||0,maxPtsUsable);
-  const pointsDiscount=Math.round(pointsUsed*pointValue*100)/100;
-  const cartTotal=Math.round(Math.max(0,cartTotalPrePoints-pointsDiscount)*100)/100;
+  const manualPct=cartSub>0?Math.round(discountValue/cartSub*10000)/100:0;
+  const payMethodForQuote=payments.length?(payments.every(p=>["PIX","Dinheiro"].includes(p.method))?"PIX":"CREDITO"):((tab.currentMethod||"PIX").toUpperCase()==="DINHEIRO"?"DINHEIRO":(tab.currentMethod||"PIX").toUpperCase()==="PIX"?"PIX":"CREDITO");
+  const quoteFresh=cbQuote&&cbQuote._custId===(custObjSel?.id||null)&&cbQuote.subtotal===cartSub&&cbQuote.maxItemPromoPct===manualPct;
+  const tierDiscountValue=quoteFresh?(cbQuote.tierDiscountValue||0):0;
+  const balanceUsed=quoteFresh&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSub-discountValue-tierDiscountValue)*100)/100):0;
+  const cartTotal=Math.round(Math.max(0,cartSub-discountValue-tierDiscountValue-balanceUsed)*100)/100;
+
+  // Cotação Cliente Black a cada mudança de cliente/carrinho/desconto/pagamento (debounce)
+  useEffect(()=>{
+    if(!custObjSel?.id||cartSub<=0){setCbQuote(null);return;}
+    const t=setTimeout(()=>{
+      api.quoteSale({customer_id:custObjSel.id,subtotal:cartSub,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0})
+        .then(q=>{if(q&&!q._offline)setCbQuote({...q,_custId:custObjSel.id});})
+        .catch(()=>setCbQuote(null));
+    },350);
+    return ()=>clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[custObjSel?.id,cartSub,manualPct,payMethodForQuote,tab.useBalance]);
 
   // ── LIMITE DE DESCONTO (configurável em Configurações) ──
   // Limite global em % sobre o subtotal; vale para desconto fixo e por item também.
@@ -1575,21 +1587,20 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const fullDiscountLabel=[discountValue>0?discountLabel:"",pointsUsed>0?`Pontos Cliente Black (${pointsUsed} pts)`:""].filter(Boolean).join(" + ");
-    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:Math.round((discountValue+pointsDiscount)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
+    const fullDiscountLabel=[discountValue>0?discountLabel:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${cbQuote?.tierDiscountPct||0}% à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:Math.round((discountValue+tierDiscountValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
-    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'', discount_auth_by: newSale.discountAuthBy||'' }).catch(e=>{
+    // O saldo usado e o cashback são processados pelo servidor (trigger no banco);
+    // balance_used vai na venda e é consumido de forma idempotente lá.
+    api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'', discount_auth_by: newSale.discountAuthBy||'',
+      tier_discount_pct: quoteFresh?(cbQuote.tierDiscountPct||0):0, tier_discount_value: tierDiscountValue, balance_used: balanceUsed, max_item_promo_pct: manualPct }).then(r=>{
+      if(r?.error) showToast(r.error,"error");
+    }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
       // O loadAllData vai detectar e reenviar na próxima sincronização
       console.warn('[VENDA] Erro ao enviar para servidor (será reenviada):', e.message);
     });
-    if(pointsUsed>0&&custObj?.id){
-      // Baixa idempotente por venda ("sale-<id>"): retry não desconta 2x e o
-      // cancelamento da venda devolve esses pontos (trigger loyalty_reverse)
-      api.redeemPoints(custObj.id,{id:"sale-"+newSale.id,points:pointsUsed,reason:"Desconto na venda "+cupomNum}).then(r=>{
-        setCustomers(prev=>prev.map(c=>c.id===custObj.id?{...c,points:r.points}:c));
-      }).catch(()=>showToast("Baixa dos pontos não confirmada (sem internet?) — confira depois na aba Fidelidade.","error"));
-    }
+    setCbQuote(null);
     setStock(prev=>{const n={...prev};const st={...(n[activeStockId]||{})};cart.forEach(c=>{st[c.id]=Math.max(0,(st[c.id]||0)-c.qty);});n[activeStockId]=st;return n;});
     setAutoFlow(true);
     setReceiptSale(newSale);
@@ -1598,7 +1609,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     if(saleTabs.length>1){
       closeSaleTab(activeTabIdx);
     } else {
-      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,pointsUsed:0});
+      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false});
     }
     setShowDiscountPanel(false);
     setFolhaEmpId("");
@@ -1673,12 +1684,25 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`}}>
           <CustomerSelector customers={customers} setCustomers={setCustomers} cartCustomer={cartCustomer} setCartCustomer={setCartCustomer} showToast={showToast}/>
         </div>
-        {custObjSel&&pointValue>0&&(custObjSel.points||0)>0&&
-          <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`,display:"flex",alignItems:"center",gap:6,background:"rgba(255,215,64,.04)"}}>
-            <span style={{fontSize:11,color:C.gold,flex:1,fontWeight:600}}>🖤 {custObjSel.points} pts = {fmt((custObjSel.points||0)*pointValue)} em desconto</span>
-            {pointsUsed>0
-              ?<button onClick={()=>upTab({pointsUsed:0})} style={{padding:"4px 10px",borderRadius:7,border:`1px solid ${C.gold}`,background:"rgba(255,215,64,.12)",color:C.gold,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700}}>✕ Usando {pointsUsed} pts (−{fmt(pointsDiscount)})</button>
-              :<button disabled={maxPtsUsable<=0} onClick={()=>upTab({pointsUsed:maxPtsUsable})} style={{padding:"4px 10px",borderRadius:7,border:`1px solid ${maxPtsUsable>0?C.gold:C.brd}`,background:"transparent",color:maxPtsUsable>0?C.gold:C.dim,cursor:maxPtsUsable>0?"pointer":"default",fontSize:11,fontFamily:"inherit",fontWeight:700}}>Usar pontos</button>}
+        {custObjSel&&quoteFresh&&cbQuote.customer&&
+          <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`,background:"rgba(255,215,64,.04)"}}>
+            {cbQuote.customer.enrolled?<>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{fontSize:10,fontWeight:900,letterSpacing:1,padding:"2px 8px",borderRadius:6,background:cbQuote.tier==="DIAMOND"?"rgba(64,196,255,.15)":cbQuote.tier==="GOLD"?"rgba(255,215,64,.15)":"rgba(255,255,255,.08)",color:cbQuote.tier==="DIAMOND"?C.blu:C.gold}}>🖤 {cbQuote.customer.tier_label}</span>
+                {tierDiscountValue>0&&<span style={{fontSize:11,color:C.grn,fontWeight:700}}>−{cbQuote.tierDiscountPct}% à vista (−{fmt(tierDiscountValue)})</span>}
+                {cbQuote.cashbackValue>0&&<span style={{fontSize:10,color:C.dim}}>+{fmt(cbQuote.cashbackValue)} de volta{cbQuote.cashbackPct>((cbQuote.tier==="GOLD"?3:cbQuote.tier==="DIAMOND"?5:2))?" 🎂":""}</span>}
+              </div>
+              {cbQuote.balanceAvailable>0&&
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+                  <span style={{fontSize:11,color:C.gold,flex:1,fontWeight:600}}>Saldo: {fmt(cbQuote.balanceAvailable)}</span>
+                  {balanceUsed>0
+                    ?<button onClick={()=>upTab({useBalance:false})} style={{padding:"4px 10px",borderRadius:7,border:`1px solid ${C.gold}`,background:"rgba(255,215,64,.12)",color:C.gold,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700}}>✕ Usando {fmt(balanceUsed)}</button>
+                    :<button disabled={cbQuote.balanceUsable<=0} onClick={()=>upTab({useBalance:true})} style={{padding:"4px 10px",borderRadius:7,border:`1px solid ${cbQuote.balanceUsable>0?C.gold:C.brd}`,background:"transparent",color:cbQuote.balanceUsable>0?C.gold:C.dim,cursor:cbQuote.balanceUsable>0?"pointer":"default",fontSize:11,fontFamily:"inherit",fontWeight:700}}>Usar saldo</button>}
+                </div>}
+              {cbQuote.progress?.nextText&&<div style={{fontSize:9,color:C.dim,marginTop:3}}>{cbQuote.progress.nextText}</div>}
+              {cbQuote.warnings?.length>0&&<div style={{fontSize:9,color:"#ffb74d",marginTop:3}}>{cbQuote.warnings[0]}</div>}
+            </>:
+              <div style={{fontSize:10,color:"#ffb74d"}}>⚠️ Cliente sem CPF — cadastre o CPF para ativar desconto à vista e cashback Cliente Black.</div>}
           </div>}
         <div style={{flex:1,overflowY:"auto",padding:8}}>
           {cart.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:12}}>🛒 Carrinho vazio</div>:
@@ -1897,7 +1921,7 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
   const [custSearch,setCustSearch]=useState("");
   const [showResults,setShowResults]=useState(false);
   const [showQuickAdd,setShowQuickAdd]=useState(false);
-  const [qc,setQc]=useState({name:"",phone:"",city:""});
+  const [qc,setQc]=useState({name:"",phone:"",city:"",cpf:"",birthdate:""});
   const inputRef=useRef(null);
 
   const searchDigits=custSearch.replace(/\D/g,"");
@@ -1911,23 +1935,39 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
   const selectCustomer=(c)=>{setCartCustomer(c.name);setCustSearch("");setShowResults(false);};
   const clearCustomer=()=>{setCartCustomer("");setCustSearch("");};
 
-  // Cadastro persiste no servidor na hora — o acúmulo de pontos (trigger no banco)
-  // acha o cliente pelo WhatsApp; se ficasse só no localStorage, criaria duplicado
-  const registerCustomer=(nome,phone,city)=>{
+  // Cadastro persiste no servidor na hora — o vínculo da venda (trigger no banco)
+  // acha o cliente pelo WhatsApp; se ficasse só no localStorage, criaria duplicado.
+  // Com CPF o cadastro vira adesão Cliente Black (valida CPF no servidor e já calcula o nível).
+  const registerCustomer=async(nome,phone,city,cpf,birthdate)=>{
     const digits=phone.replace(/\D/g,"");
     if(digits.length<8)return showToast("WhatsApp incompleto — digite com DDD!","error");
     const nomeFinal=(nome||"").trim()||("Cliente "+digits.slice(-4));
-    const newCust={id:genId(),name:nomeFinal,phone:phone,email:"",cpf:"",birthdate:"",totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],notes:city?"Cidade: "+city:"",points:0,whatsapp:digits};
-    setCustomers(prev=>[...prev,newCust]);
-    api.createCustomer(custToApi(newCust)).catch(console.error);
-    setCartCustomer(nomeFinal);
-    setQc({name:"",phone:"",city:""});
+    if((cpf||"").replace(/\D/g,"").length>0){
+      try{
+        const r=await api.loyaltyEnroll({name:nomeFinal,whatsapp:digits,cpf:cpf,birthdate:birthdate||""});
+        if(r?.error)return showToast(r.error,"error");
+        if(r?._offline)return showToast("Sem internet — cadastre o CPF quando voltar a conexão.","error");
+        setCustomers(prev=>{
+          const exists=prev.some(c=>c.id===r.id);
+          const cust={id:r.id,name:r.name,phone:r.whatsapp,whatsapp:r.whatsapp,cpf:r.cpf,birthdate:r.birthdate||"",tier:r.tier,email:"",totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],notes:"",points:0};
+          return exists?prev.map(c=>c.id===r.id?{...c,...cust}:c):[...prev,cust];
+        });
+        setCartCustomer(r.name);
+        showToast(r.tier&&r.tier!=="BLACK"?("🖤 "+r.name+" já entra como "+r.tier_label+"!"):("🖤 "+r.name+" agora é Cliente Black!"));
+      }catch(e){return showToast(e.message||"Erro ao cadastrar","error");}
+    }else{
+      const newCust={id:genId(),name:nomeFinal,phone:phone,email:"",cpf:"",birthdate:birthdate||"",totalSpent:0,visits:0,lastVisit:"-",tags:["Novo"],notes:city?"Cidade: "+city:"",points:0,whatsapp:digits};
+      setCustomers(prev=>[...prev,newCust]);
+      api.createCustomer(custToApi(newCust)).catch(console.error);
+      setCartCustomer(nomeFinal);
+      showToast("Cliente "+nomeFinal+" vinculado. Cadastre o CPF para ativar os benefícios Cliente Black.");
+    }
+    setQc({name:"",phone:"",city:"",cpf:"",birthdate:""});
     setShowQuickAdd(false);setCustSearch("");setShowResults(false);
-    showToast("Cliente "+nomeFinal+" vinculado — compras somam pontos Cliente Black!");
   };
   const quickAdd=()=>{
     if(!qc.phone)return showToast("Informe pelo menos o WhatsApp!","error");
-    registerCustomer(qc.name,qc.phone,qc.city);
+    registerCustomer(qc.name,qc.phone,qc.city,qc.cpf,qc.birthdate);
   };
 
   return(
@@ -1936,7 +1976,7 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
         <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 8px",background:"rgba(255,215,64,.06)",borderRadius:8,border:`1px solid ${C.brdH}`}}>
           <div style={{...S.avatar,width:24,height:24,fontSize:10}}>{cartCustomer.charAt(0)}</div>
           <span style={{flex:1,fontSize:12,fontWeight:700,color:C.gold}}>{cartCustomer}</span>
-          {(()=>{const sc=customers.find(c=>c.name===cartCustomer);return sc&&(sc.points||0)>0?<span style={{fontSize:10,fontWeight:800,color:C.gold}}>★{sc.points} pts</span>:null;})()}
+          {(()=>{const sc=customers.find(c=>c.name===cartCustomer);return sc&&(sc.cpf||"").length>=11?<span style={{fontSize:9,fontWeight:900,letterSpacing:1,color:sc.tier==="DIAMOND"?C.blu:C.gold}}>🖤{sc.tier==="GOLD"?" GOLD":sc.tier==="DIAMOND"?" DIAMOND":" BLACK"}</span>:null;})()}
           <button onClick={clearCustomer} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:10,padding:2}}>✕</button>
         </div>
       :
@@ -1979,7 +2019,7 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
                     <div style={{fontSize:12,fontWeight:700}}>{c.name}</div>
                     <div style={{fontSize:10,color:C.dim}}>{c.phone}{c.cpf?" • "+c.cpf:""}</div>
                   </div>
-                  <div style={{fontSize:10,color:C.gold}}>{c.points}pts</div>
+                  <div style={{fontSize:9,fontWeight:800,color:(c.cpf||"").length>=11?(c.tier==="DIAMOND"?C.blu:C.gold):C.dim}}>{(c.cpf||"").length>=11?("🖤 "+(c.tier==="GOLD"?"GOLD":c.tier==="DIAMOND"?"DIAMOND":"BLACK")):"sem CPF"}</div>
                 </button>
               )
             }
@@ -1993,12 +2033,17 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:5}}>
               <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="Nome *" value={qc.name} onChange={e=>setQc(q=>({...q,name:e.target.value}))} autoFocus/>
-              <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="Telefone *" value={qc.phone} onChange={e=>setQc(q=>({...q,phone:e.target.value}))}/>
-              <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="Cidade" value={qc.city} onChange={e=>setQc(q=>({...q,city:e.target.value}))}/>
+              <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="WhatsApp c/ DDD *" value={qc.phone} onChange={e=>setQc(q=>({...q,phone:e.target.value}))}/>
+              <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="CPF (ativa Cliente Black 🖤)" value={qc.cpf} onChange={e=>setQc(q=>({...q,cpf:e.target.value}))}/>
+              <div style={{display:"flex",gap:5}}>
+                <input style={{...S.inp,fontSize:12,padding:"6px 10px",flex:1}} type="date" title="Aniversário (cashback em dobro no mês)" value={qc.birthdate} onChange={e=>setQc(q=>({...q,birthdate:e.target.value}))}/>
+                <input style={{...S.inp,fontSize:12,padding:"6px 10px",flex:1}} placeholder="Cidade" value={qc.city} onChange={e=>setQc(q=>({...q,city:e.target.value}))}/>
+              </div>
             </div>
             <button onClick={quickAdd} style={{...S.primBtn,width:"100%",justifyContent:"center",marginTop:6,padding:"7px",fontSize:11,background:`linear-gradient(135deg,${C.grn},#00C853)`}}>
               {I.check} Cadastrar e Selecionar
             </button>
+            <div style={{fontSize:9,color:C.dim,marginTop:4}}>Com CPF o cliente entra no Cliente Black: desconto à vista + cashback (aceite LGPD registrado).</div>
           </div>}
 
           {/* Quick select: no search, show "Cliente Avulso" link */}
@@ -5005,24 +5050,21 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
   const savedMargin=+(appSettings?.default_margin?.percent)||122;
   const [marginPct,setMarginPct]=useState(String(savedMargin));
   const [savingMargin,setSavingMargin]=useState(false);
-  const savedPointVal=+(appSettings?.loyalty_point_value?.value)||0;
-  const [pointVal,setPointVal]=useState(savedPointVal?String(savedPointVal):"");
-  const [savingPoint,setSavingPoint]=useState(false);
-
-  const savePointVal=async()=>{
-    const v=Math.max(0,+String(pointVal).replace(",","."))||0;
-    setSavingPoint(true);
+  // Cliente Black — parâmetros do programa (loyalty_config no servidor)
+  const [cbCfg,setCbCfg]=useState(null);
+  const [cbSaving,setCbSaving]=useState(false);
+  useEffect(()=>{api.loyaltyConfig().then(c=>{if(!c?.error)setCbCfg(c);}).catch(()=>{});},[]);
+  const upCb=(k,v)=>setCbCfg(prev=>({...prev,[k]:v}));
+  const saveCb=async()=>{
+    setCbSaving(true);
     try{
-      const value={value:v};
-      const r=await api.saveSetting('loyalty_point_value',value);
+      const r=await api.loyaltyConfigSave(cbCfg);
       if(r?._offline)return showToast("Sem internet — tente novamente quando estiver online.","error");
-      setAppSettings(prev=>({...prev,loyalty_point_value:value}));
-      showToast(v>0?"Valor do ponto salvo: "+fmt(v):"Uso de pontos no PDV desativado.");
-    }catch(e){
-      showToast("Erro ao salvar: "+e.message,"error");
-    }finally{
-      setSavingPoint(false);
-    }
+      if(r?.error)return showToast(r.error,"error");
+      setCbCfg(r);
+      showToast("Parâmetros do Cliente Black salvos!");
+    }catch(e){showToast("Erro ao salvar: "+e.message,"error");}
+    finally{setCbSaving(false);}
   };
 
   const saveMargin=async()=>{
@@ -5101,23 +5143,34 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
         </div>
       </div>
 
-      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:520,marginTop:14}}>
-        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🖤 Cliente Black — valor do ponto</div>
+      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:640,marginTop:14}}>
+        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🖤 Cliente Black — parâmetros do programa</div>
         <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
-          O cliente ganha <strong style={{color:C.txt}}>1 ponto a cada R$ 10,00</strong> em compras (automático, pelo WhatsApp).
-          Aqui você define quanto cada ponto vale como <strong style={{color:C.txt}}>desconto no PDV</strong> quando o cliente resolve usar.
-          Digite 0 para desativar o uso de pontos no PDV (o acúmulo continua).
+          Níveis por <strong style={{color:C.txt}}>frequência OU valor</strong> na janela; desconto só <strong style={{color:C.txt}}>à vista</strong> (PIX/Dinheiro) e fora de promoção; cashback vira saldo com validade. Promoção ativa suspende o desconto de nível.
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-          <span style={{fontSize:16,fontWeight:700,color:C.dim}}>R$</span>
-          <input style={{...S.inp,width:110,textAlign:"center",fontSize:18,fontWeight:700}} type="number" min={0} step="0.05" placeholder="0,50" value={pointVal} onChange={e=>setPointVal(e.target.value)}/>
-          <button style={{...S.primBtn,opacity:savingPoint?.6:1}} disabled={savingPoint} onClick={savePointVal}>{savingPoint?"Salvando...":"Salvar valor"}</button>
-        </div>
-        <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
-          {savedPointVal>0
-            ?<>Valor atual: <strong style={{color:C.gold}}>{fmt(savedPointVal)}</strong> por ponto (retorno de <strong style={{color:C.gold}}>{(savedPointVal/10*100).toFixed(1)}%</strong> do gasto). Ex.: cliente com <strong style={{color:C.gold}}>100 pts</strong> tem <strong style={{color:C.gold}}>{fmt(100*savedPointVal)}</strong> de desconto disponível.</>
-            :<>Uso de pontos no PDV desativado — os clientes continuam acumulando.</>}
-        </div>
+        {!cbCfg?<div style={{fontSize:12,color:C.dim}}>Carregando…</div>:<>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,marginBottom:10}}>
+            {[["window_days","Janela (dias)"],["min_valid_sale","Compra válida (R$)"],["gold_min_sales","GOLD: compras"],["gold_min_value","GOLD: valor (R$)"],["diamond_min_sales","DIAMOND: compras"],["diamond_min_value","DIAMOND: valor (R$)"],["grace_days","Carência (dias)"],["cashback_expiry_days","Validade saldo (dias)"],["min_redeem","Resgate mín. (R$)"],["discount_BLACK","Desc. BLACK %"],["discount_GOLD","Desc. GOLD %"],["discount_DIAMOND","Desc. DIAMOND %"],["cashback_BLACK","Cashback BLACK %"],["cashback_GOLD","Cashback GOLD %"],["cashback_DIAMOND","Cashback DIAMOND %"]].map(([k,lab])=>
+              <label key={k} style={{fontSize:10,color:C.dim,display:"flex",flexDirection:"column",gap:2}}>{lab}
+                <input style={{...S.inp,fontSize:13,fontWeight:700,padding:"5px 8px"}} type="number" min={0} value={cbCfg[k]??""} onChange={e=>upCb(k,e.target.value)}/>
+              </label>)}
+            <label style={{fontSize:10,color:C.dim,display:"flex",flexDirection:"column",gap:2}}>Resgate abre em
+              <input style={{...S.inp,fontSize:13,fontWeight:700,padding:"5px 8px"}} type="date" value={cbCfg.cashback_redeem_from||""} onChange={e=>upCb("cashback_redeem_from",e.target.value)}/>
+            </label>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10,padding:"8px 10px",background:C.s2,borderRadius:8}}>
+            <label style={{fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+              <input type="checkbox" checked={Number(cbCfg.promo_active)===1} onChange={e=>upCb("promo_active",e.target.checked?1:0)}/>
+              Promoção/liquidação ativa agora (suspende desconto de nível)
+            </label>
+            <label style={{fontSize:10,color:C.dim,display:"flex",alignItems:"center",gap:4}}>ou de
+              <input style={{...S.inp,fontSize:12,padding:"4px 6px"}} type="date" value={cbCfg.promo_from||""} onChange={e=>upCb("promo_from",e.target.value)}/>
+              até
+              <input style={{...S.inp,fontSize:12,padding:"4px 6px"}} type="date" value={cbCfg.promo_to||""} onChange={e=>upCb("promo_to",e.target.value)}/>
+            </label>
+          </div>
+          <button style={{...S.primBtn,opacity:cbSaving?.6:1}} disabled={cbSaving} onClick={saveCb}>{cbSaving?"Salvando...":"Salvar parâmetros"}</button>
+        </>}
       </div>
     </div>
   );
@@ -6003,33 +6056,67 @@ function EtiquetasModule({storeProducts,showToast}){
 // ═══════════════════════════════════
 // ═══  FIDELIDADE MODULE          ═══
 // ═══════════════════════════════════
-function FidelidadeModule({customers,setCustomers,showToast,appSettings}){
-  // Níveis são STATUS (por pontos acumulados) — benefícios por nível ainda não definidos pelo dono.
-  // O benefício concreto do programa é o resgate: 1 ponto = loyalty_point_value em desconto no PDV.
-  const tiers=[{name:"Bronze",min:0,max:99,color:"#CD7F32"},{name:"Prata",min:100,max:299,color:"#C0C0C0"},{name:"Ouro",min:300,max:499,color:C.gold},{name:"Diamante",min:500,max:Infinity,color:C.blu}];
-  const getTier=(pts)=>tiers.find(t=>pts>=t.min&&pts<=t.max)||tiers[0];
-  const pointValue=+(appSettings?.loyalty_point_value?.value)||0;
-  const isInterno=(c)=>(c.tags||[]).includes("Interno");
-  const sorted=customers.filter(c=>!isInterno(c)).sort((a,b)=>b.points-a.points);
-  const redeem=(cId,pts)=>{
-    // Saldo é do servidor: o resgate persiste via endpoint idempotente e o estado local usa o saldo retornado
-    api.redeemPoints(cId,{id:genId(),points:pts,reason:"Resgate manual (aba Fidelidade)"}).then(r=>{
-      setCustomers(prev=>prev.map(c=>c.id===cId?{...c,points:r.points}:c));
-      showToast(pts+" pontos resgatados"+(pointValue>0?" (= "+fmt(pts*pointValue)+")":"")+"!");
-    }).catch(()=>showToast("Erro ao resgatar — verifique a conexão","error"));
+function FidelidadeModule({customers,setCustomers,showToast,appSettings,loggedUser}){
+  // Cliente Black: níveis BLACK/GOLD/DIAMOND por frequência OU valor em 90 dias + cashback com validade.
+  // Dados vêm do servidor (fonte da verdade). Parâmetros em ⚙️ Configurações.
+  const [dash,setDash]=useState(null);
+  const [cfg,setCfg]=useState(null);
+  const [err,setErr]=useState("");
+  const [recalcing,setRecalcing]=useState(false);
+  const load=()=>{
+    api.loyaltyDashboard().then(d=>{if(d?.error)setErr(d.error);else setDash(d);}).catch(e=>setErr(e.message));
+    api.loyaltyConfig().then(c=>{if(!c?.error)setCfg(c);}).catch(()=>{});
   };
+  useEffect(load,[]);
+  const recalc=async()=>{
+    setRecalcing(true);
+    try{const r=await api.loyaltyRecalc();showToast(`Níveis recalculados: ${r.evaluated} clientes, ${r.changed} mudanças.`);load();}
+    catch(e){showToast(e.message,"error");}finally{setRecalcing(false);}
+  };
+  const tierMeta={BLACK:{label:"BLACK",color:"#bbb"},GOLD:{label:"BLACK GOLD",color:C.gold},DIAMOND:{label:"BLACK DIAMOND",color:C.blu}};
+  const nByTier=(t)=>dash?.by_tier?.find(x=>x.tier===t)?.n||0;
   return(
     <div>
       <div style={S.card}>
-        <h3 style={S.cardTitle}>🖤 Programa Cliente Black</h3>
-        <p style={{fontSize:12,color:C.dim,marginBottom:12}}>
-          R$10 em compras = 1 ponto (automático pelo WhatsApp, em todas as lojas e no chat).
-          {pointValue>0?<> Cada ponto vale <strong style={{color:C.gold}}>{fmt(pointValue)}</strong> de desconto no PDV — configurável em ⚙️ Configurações.</>:<> Uso de pontos no PDV desativado (defina o valor do ponto em ⚙️ Configurações).</>}
-        </p>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>{tiers.map(t=><div key={t.name} style={{...S.card,borderColor:t.color+"44",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:t.color}}>{t.name}</div><div style={{fontSize:11,color:C.dim}}>{t.max===Infinity?t.min+"+ pts":t.min+"-"+t.max+" pts"}</div></div>)}</div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <h3 style={{...S.cardTitle,flex:1}}>🖤 Programa Cliente Black</h3>
+          {loggedUser?.role==="admin"&&<button style={S.smBtn} disabled={recalcing} onClick={recalc}>{recalcing?"Recalculando...":"↻ Recalcular níveis"}</button>}
+        </div>
+        {cfg&&<p style={{fontSize:12,color:C.dim,marginBottom:12}}>
+          Compra válida ≥ {fmt(cfg.min_valid_sale)} • janela de {cfg.window_days} dias • desconto só à vista (PIX/Dinheiro), fora de promoção • cashback vale {cfg.cashback_expiry_days} dias • resgate a partir de {String(cfg.cashback_redeem_from).split("-").reverse().join("/")} (mín. {fmt(cfg.min_redeem)}).
+        </p>}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+          {["BLACK","GOLD","DIAMOND"].map(t=><div key={t} style={{...S.card,borderColor:tierMeta[t].color+"44",textAlign:"center"}}>
+            <div style={{fontSize:17,fontWeight:900,color:tierMeta[t].color}}>{tierMeta[t].label}</div>
+            {cfg&&<div style={{fontSize:11,color:C.dim,marginTop:2}}>
+              {t==="BLACK"?"Entrada (CPF cadastrado)":t==="GOLD"?`${cfg.gold_min_sales} compras ou ${fmt(cfg.gold_min_value)}/90d`:`${cfg.diamond_min_sales} compras ou ${fmt(cfg.diamond_min_value)}/90d`}
+            </div>}
+            {cfg&&<div style={{fontSize:12,fontWeight:700,marginTop:4}}>{cfg["discount_"+t]}% à vista • {cfg["cashback_"+t]}% de volta</div>}
+            <div style={{fontSize:18,fontWeight:900,color:C.gold,marginTop:6}}>{nByTier(t)}</div>
+            <div style={{fontSize:9,color:C.dim}}>clientes</div>
+          </div>)}
+        </div>
       </div>
-      <div style={S.card}><h3 style={S.cardTitle}>Ranking</h3><div style={S.tWrap}><table style={S.table}><thead><tr><th style={S.th}>#</th><th style={S.th}>Cliente</th><th style={S.th}>Nível</th><th style={S.th}>Pontos</th>{pointValue>0&&<th style={S.th}>Vale</th>}<th style={S.th}>Gasto</th><th style={S.th}>Compras</th><th style={S.th}>Resgatar</th></tr></thead>
-      <tbody>{sorted.slice(0,100).map((c,i)=>{const tier=getTier(c.points);return <tr key={c.id} style={S.tr}><td style={{...S.td,fontWeight:800,color:C.gold}}>#{i+1}</td><td style={{...S.td,fontWeight:600}}>{c.name}</td><td style={S.td}><span style={{fontWeight:700,color:tier.color}}>{tier.name}</span></td><td style={{...S.td,fontWeight:700,color:C.gold,fontSize:15}}>{c.points}</td>{pointValue>0&&<td style={{...S.td,color:C.grn,fontWeight:600}}>{fmt(c.points*pointValue)}</td>}<td style={{...S.td,...S.tdM}}>{fmt(c.totalSpent)}</td><td style={S.td}>{c.visits||0}</td><td style={S.td}><div style={{display:"flex",gap:3}}><button style={S.smBtn} disabled={c.points<50} onClick={()=>redeem(c.id,50)}>-50</button><button style={S.smBtn} disabled={c.points<100} onClick={()=>redeem(c.id,100)}>-100</button></div></td></tr>;})}</tbody></table></div></div>
+      {err&&<div style={{...S.card,color:"#ffb74d",fontSize:12}}>Sem acesso ao painel do programa ({err}). Peça a um admin/gestor.</div>}
+      {dash&&<>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))",gap:10,marginBottom:12}}>
+          <KPI icon={I.dollar||I.chart} label="Saldo em aberto" value={fmt(dash.balance_total)} sub="cashback a resgatar" color={C.gold}/>
+          <KPI icon={I.chart} label="Vencendo em 15d" value={fmt(dash.expiring_15d)} sub="avisos automáticos" color={"#ffb74d"}/>
+          <KPI icon={I.chart} label="Gerado (30d)" value={fmt(dash.earned_30d)} sub="cashback concedido" color={C.grn}/>
+          <KPI icon={I.chart} label="Resgatado (30d)" value={fmt(dash.redeemed_30d)} sub="usado em compras" color={C.blu}/>
+          <KPI icon={I.users||I.chart} label="Em carência" value={String(dash.in_grace)} sub="risco de queda de nível" color={"#ff8a65"}/>
+        </div>
+        <div style={S.card}><h3 style={S.cardTitle}>Clientes com saldo</h3><div style={S.tWrap}><table style={S.table}>
+          <thead><tr><th style={S.th}>Cliente</th><th style={S.th}>Nível</th><th style={S.th}>Saldo</th><th style={S.th}>Gasto</th><th style={S.th}>Compras</th><th style={S.th}>Carência</th></tr></thead>
+          <tbody>{dash.top.map(c=><tr key={c.id} style={S.tr}>
+            <td style={{...S.td,fontWeight:600}}>{c.name}</td>
+            <td style={S.td}><span style={{fontWeight:800,color:tierMeta[c.tier]?.color||C.dim}}>{tierMeta[c.tier]?.label||c.tier}</span></td>
+            <td style={{...S.td,fontWeight:700,color:C.gold}}>{fmt(c.balance)}</td>
+            <td style={{...S.td,...S.tdM}}>{fmt(c.gasto)}</td>
+            <td style={S.td}>{c.visits||0}</td>
+            <td style={{...S.td,fontSize:11,color:c.grace_until?"#ff8a65":C.dim}}>{c.grace_until?String(c.grace_until).slice(0,10).split("-").reverse().join("/"):"—"}</td>
+          </tr>)}</tbody></table></div></div>
+      </>}
     </div>
   );
 }

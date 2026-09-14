@@ -407,7 +407,16 @@ const api = {
   getCustomers: () => request('/customers'),
   createCustomer: (data) => request('/customers', { method: 'POST', body: data }),
   updateCustomer: (id, data) => request(`/customers/${id}`, { method: 'PUT', body: data }),
-  redeemPoints: (id, data) => request(`/customers/${id}/redeem`, { method: 'POST', body: data }),
+
+  // Cliente Black (fidelidade níveis + cashback)
+  quoteSale: (data) => request('/sales/quote', { method: 'POST', body: data }),
+  loyaltyEnroll: (data) => request('/loyalty/enroll', { method: 'POST', body: data }),
+  loyaltyLookup: (q) => request(`/loyalty/lookup?q=${encodeURIComponent(q)}`),
+  loyaltyCustomer: (id) => request(`/loyalty/customers/${id}`),
+  loyaltyConfig: () => request('/loyalty/config'),
+  loyaltyConfigSave: (data) => request('/loyalty/config', { method: 'PUT', body: data }),
+  loyaltyDashboard: () => request('/loyalty/dashboard'),
+  loyaltyRecalc: () => request('/loyalty/recalc', { method: 'POST' }),
 
   // Expenses
   getExpenses: (storeId) => request(`/expenses${storeId ? `?store_id=${storeId}` : ''}`),

@@ -414,94 +414,9 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_sales_cupom ON sales(cupom)',
   ].map(idx => pool.query(idx).catch(() => {})));
 
-  // ─── FIDELIDADE (Programa Cliente Black) ───
-  // Acúmulo feito por trigger no banco porque as vendas entram por mais de um caminho
-  // (API do ERP e INSERT direto do dblack-chat). AFTER INSERT não dispara em replay
-  // idempotente (ON CONFLICT DO NOTHING) — pontos nunca duplicam por reenvio da fila offline.
-  // Regra: R$10 = 1 ponto. EXCEPTION engole qualquer erro: fidelidade nunca pode bloquear venda.
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION loyalty_accrue() RETURNS trigger AS $fn$
-    DECLARE
-      digits TEXT;
-      cid TEXT;
-      pts INTEGER;
-    BEGIN
-      IF COALESCE(NEW.status,'') = 'Cancelada' THEN RETURN NULL; END IF;
-      digits := regexp_replace(COALESCE(NEW.customer_whatsapp,''), '[^0-9]', '', 'g');
-      IF length(digits) < 8 THEN RETURN NULL; END IF;
-      IF length(digits) >= 12 AND digits LIKE '55%' THEN digits := substr(digits, 3); END IF;
-      pts := floor(COALESCE(NEW.total,0) / 10)::int;
-
-      SELECT c.id INTO cid FROM customers c
-       WHERE regexp_replace(COALESCE(c.whatsapp,''),'[^0-9]','','g') IN (digits, '55'||digits)
-          OR regexp_replace(COALESCE(c.phone,''),'[^0-9]','','g') IN (digits, '55'||digits)
-       ORDER BY c.created_at LIMIT 1;
-
-      -- Números internos (loja/atendentes, tag Interno) vinculam a venda mas não pontuam
-      IF cid IS NOT NULL AND EXISTS (SELECT 1 FROM customers WHERE id = cid AND tags LIKE '%Interno%') THEN
-        UPDATE sales SET customer_id = cid WHERE id = NEW.id AND COALESCE(customer_id,'') = '';
-        RETURN NULL;
-      END IF;
-
-      IF cid IS NULL THEN
-        cid := substr(md5(random()::text || clock_timestamp()::text), 1, 12);
-        INSERT INTO customers (id, name, phone, whatsapp, tags, points, total_spent, visits, last_visit)
-        VALUES (cid,
-                CASE WHEN COALESCE(NEW.customer,'') NOT IN ('','Avulso','Cliente WhatsApp') THEN NEW.customer
-                     ELSE 'Cliente '||right(digits,4) END,
-                digits, digits, '["Novo"]', pts, COALESCE(NEW.total,0), 1, NEW.date);
-      ELSE
-        UPDATE customers
-           SET points = points + pts,
-               total_spent = total_spent + COALESCE(NEW.total,0),
-               visits = visits + 1,
-               last_visit = NEW.date,
-               name = CASE WHEN COALESCE(NEW.customer,'') NOT IN ('','Avulso','Cliente WhatsApp')
-                            AND name LIKE 'Cliente %' THEN NEW.customer ELSE name END
-         WHERE id = cid;
-      END IF;
-
-      UPDATE sales SET customer_id = cid WHERE id = NEW.id AND COALESCE(customer_id,'') = '';
-      RETURN NULL;
-    EXCEPTION WHEN OTHERS THEN
-      RETURN NULL;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  `).catch(e => console.error('loyalty_accrue:', e.message));
-
-  await pool.query(`
-    CREATE OR REPLACE FUNCTION loyalty_reverse() RETURNS trigger AS $fn$
-    DECLARE
-      refund INTEGER;
-    BEGIN
-      IF COALESCE(OLD.status,'') <> 'Cancelada' AND NEW.status = 'Cancelada' AND COALESCE(OLD.customer_id,'') <> '' THEN
-        UPDATE customers
-           SET points = GREATEST(0, points - floor(COALESCE(OLD.total,0)/10)::int),
-               total_spent = GREATEST(0, total_spent - COALESCE(OLD.total,0)),
-               visits = GREATEST(0, visits - 1)
-         WHERE id = OLD.customer_id;
-        -- Devolve pontos que foram usados como desconto nesta venda (resgate id 'sale-<id>');
-        -- DELETE torna a devolução replay-safe (segunda tentativa não acha a linha)
-        WITH d AS (DELETE FROM loyalty_redemptions WHERE id = 'sale-'||OLD.id AND customer_id = OLD.customer_id RETURNING points)
-        SELECT COALESCE(SUM(points),0)::int INTO refund FROM d;
-        IF refund > 0 THEN
-          UPDATE customers SET points = points + refund WHERE id = OLD.customer_id;
-        END IF;
-      END IF;
-      RETURN NEW;
-    EXCEPTION WHEN OTHERS THEN
-      RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  `).catch(e => console.error('loyalty_reverse:', e.message));
-
-  await pool.query(`DROP TRIGGER IF EXISTS trg_loyalty_accrue ON sales`).catch(()=>{});
-  await pool.query(`CREATE TRIGGER trg_loyalty_accrue AFTER INSERT ON sales FOR EACH ROW EXECUTE FUNCTION loyalty_accrue()`).catch(e => console.error('trg_loyalty_accrue:', e.message));
-  await pool.query(`DROP TRIGGER IF EXISTS trg_loyalty_reverse ON sales`).catch(()=>{});
-  await pool.query(`CREATE TRIGGER trg_loyalty_reverse BEFORE UPDATE OF status ON sales FOR EACH ROW EXECUTE FUNCTION loyalty_reverse()`).catch(e => console.error('trg_loyalty_reverse:', e.message));
-
-  // Valor do ponto no resgate (Cliente Black) — ajustável na aba Configurações (admin)
-  await pool.query(`INSERT INTO settings (key, value) VALUES ('loyalty_point_value', '{"value":0.5}') ON CONFLICT (key) DO NOTHING`).catch(()=>{});
+  // ─── CLIENTE BLACK (níveis + cashback) ───
+  // Substituiu o sistema de pontos de 14/09. Schema, triggers e funções em loyalty-db.js.
+  await require('./loyalty-db').migrateLoyalty(pool);
 
   // Seed categorias de despesas padrão
   const defExpCats = ['Aluguel','Energia','Água','Internet','Funcionários','Marketing','Manutenção','Material','Impostos','Transporte','Alimentação','Fornecedor','Outros'];

@@ -75,6 +75,10 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ error: 'Token inválido ou expirado' });
   }
 };
+// Pré-cadastro público do Cliente Black (link na bio) — único endpoint sem token, com rate limit
+const loyalty = require('./loyalty');
+app.post('/api/loyalty/public-signup', loyalty.publicSignupHandler(pool));
+
 app.use('/api', authMiddleware);
 
 // ─── RBAC MIDDLEWARE — controle de permissão por role ───
@@ -85,6 +89,9 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
   }
   next();
 };
+
+// ─── CLIENTE BLACK — quote, cadastro, config, dashboard, jobs ───
+app.use('/api', loyalty.router(pool, { requireRole }));
 
 // Multer — upload de fotos de produtos
 const storage = multer.diskStorage({
@@ -617,18 +624,29 @@ app.post('/api/sales', async (req, res) => {
     const s = req.body;
     const id = s.id || genId();
 
+    // Cliente Black: se a venda usa saldo, confere ANTES de gravar (evita desconto sem saldo;
+    // o trigger ainda faz clamp num race raro e emite evento balance_shortfall)
+    if (Number(s.balance_used) > 0) {
+      const cust = await loyalty.findCustomer(pool, s.customer_id ? { id: s.customer_id } : { phone: s.customer_whatsapp });
+      const bal = cust ? Number((await client.query('SELECT loyalty_balance($1) b', [cust.id])).rows[0].b) : 0;
+      if (!cust || bal + 0.001 < Number(s.balance_used)) {
+        return res.status(409).json({ error: 'Saldo Cliente Black insuficiente — refaça a cotação.' });
+      }
+    }
+
     await client.query('BEGIN');
 
     // INSERT primeiro: se for replay da fila offline (mesmo id), rowCount=0 e o
     // estoque NÃO baixa de novo (mesma classe de bug do incidente das trocas 10/09)
     const ins = await client.query(
-      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by, tier_discount_pct, tier_discount_value, balance_used, max_item_promo_pct)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        ON CONFLICT (id) DO NOTHING`,
       [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
        s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
        JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
-       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null, s.discount_auth_by || null]
+       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null, s.discount_auth_by || null,
+       s.tier_discount_pct || 0, s.tier_discount_value || 0, s.balance_used || 0, s.max_item_promo_pct || 0]
     );
 
     // Baixa estoque com lock (FOR UPDATE) para evitar race condition em vendas simultâneas
@@ -717,24 +735,40 @@ app.post('/api/customers', async (req, res) => {
   try {
     const c = req.body;
     const id = c.id || genId();
+    // Cliente Black: CPF, quando informado, precisa ser válido e único
+    const cpf = loyalty.onlyDigits(c.cpf);
+    if (cpf && !loyalty.isValidCPF(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+    if (cpf) {
+      const dup = await queryOne('SELECT id FROM customers WHERE cpf = $1', [cpf]);
+      if (dup) return res.status(409).json({ error: 'CPF já cadastrado' });
+    }
     await queryRun(
-      `INSERT INTO customers (id, name, phone, email, cpf, whatsapp, city, notes, tags, points, total_spent, visits)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [id, c.name, c.phone || '', c.email || '', c.cpf || '', c.whatsapp || '', c.city || '',
-       c.notes || '', JSON.stringify(c.tags || ['Novo']), c.points || 0, c.total_spent || 0, c.visits || 0]
+      `INSERT INTO customers (id, name, phone, email, cpf, whatsapp, city, notes, tags, points, total_spent, visits, birthdate, lgpd_consent_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, CASE WHEN $5 <> '' THEN NOW() END)`,
+      [id, c.name, c.phone || '', c.email || '', cpf, loyalty.normPhone(c.whatsapp || c.phone) || '', c.city || '',
+       c.notes || '', JSON.stringify(c.tags || ['Novo']), c.points || 0, c.total_spent || 0, c.visits || 0, c.birthdate || '']
     );
-    res.json({ id, ...c, tags: c.tags || ['Novo'] });
+    if (cpf) await pool.query('SELECT loyalty_apply_tier($1)', [id]).catch(() => {});
+    res.json({ id, ...c, cpf, tags: c.tags || ['Novo'] });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/customers/:id', async (req, res) => {
   try {
     const c = req.body;
+    const cpf = loyalty.onlyDigits(c.cpf);
+    if (cpf && !loyalty.isValidCPF(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+    if (cpf) {
+      const dup = await queryOne('SELECT id FROM customers WHERE cpf = $1 AND id <> $2', [cpf, req.params.id]);
+      if (dup) return res.status(409).json({ error: 'CPF já cadastrado em outro cliente' });
+    }
     await queryRun(
-      `UPDATE customers SET name=$1, phone=$2, email=$3, cpf=$4, whatsapp=$5, city=$6, notes=$7, tags=$8, points=$9, total_spent=$10, visits=$11 WHERE id=$12`,
-      [c.name, c.phone || '', c.email || '', c.cpf || '', c.whatsapp || '', c.city || '',
-       c.notes || '', JSON.stringify(c.tags || []), c.points || 0, c.total_spent || 0, c.visits || 0, req.params.id]
+      `UPDATE customers SET name=$1, phone=$2, email=$3, cpf=$4, whatsapp=$5, city=$6, notes=$7, tags=$8, points=$9, total_spent=$10, visits=$11, birthdate=COALESCE(NULLIF($13,''), birthdate),
+        lgpd_consent_at = COALESCE(lgpd_consent_at, CASE WHEN $4 <> '' THEN NOW() END) WHERE id=$12`,
+      [c.name, c.phone || '', c.email || '', cpf, loyalty.normPhone(c.whatsapp || c.phone) || '', c.city || '',
+       c.notes || '', JSON.stringify(c.tags || []), c.points || 0, c.total_spent || 0, c.visits || 0, req.params.id, c.birthdate || '']
     );
+    if (cpf) await pool.query('SELECT loyalty_apply_tier($1)', [req.params.id]).catch(() => {});
     res.json({ success: true });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
@@ -2111,6 +2145,7 @@ app.listen(PORT, () => {
 
 initDB().then(() => {
   console.log('✅ Banco de dados conectado!');
+  loyalty.scheduleDailyJob(pool); // Cliente Black: expiração de saldo, níveis, avisos (03h BRT)
 }).catch(err => {
   console.error('❌ Falha ao inicializar banco:', err.message);
   // Não encerra o servidor — continua respondendo às requisições
