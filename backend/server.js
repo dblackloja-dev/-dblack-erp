@@ -619,8 +619,20 @@ app.post('/api/sales', async (req, res) => {
 
     await client.query('BEGIN');
 
+    // INSERT primeiro: se for replay da fila offline (mesmo id), rowCount=0 e o
+    // estoque NÃO baixa de novo (mesma classe de bug do incidente das trocas 10/09)
+    const ins = await client.query(
+      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
+       s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
+       JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
+       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null, s.discount_auth_by || null]
+    );
+
     // Baixa estoque com lock (FOR UPDATE) para evitar race condition em vendas simultâneas
-    if (s.items && s.stock_id) {
+    if (ins.rowCount > 0 && s.items && s.stock_id) {
       for (const item of s.items) {
         await client.query(
           'SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2 FOR UPDATE',
@@ -632,16 +644,6 @@ app.post('/api/sales', async (req, res) => {
         );
       }
     }
-
-    await client.query(
-      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       ON CONFLICT (id) DO NOTHING`,
-      [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
-       s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
-       JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
-       s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null, s.discount_auth_by || null]
-    );
 
     await client.query('COMMIT');
     res.json({ id, ...s });
@@ -735,6 +737,39 @@ app.put('/api/customers/:id', async (req, res) => {
     );
     res.json({ success: true });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+// Resgate de pontos (Fidelidade) — idempotente: o cliente manda o id do resgate;
+// replay (mesmo id) não desconta de novo. Saldo calculado no servidor.
+app.post('/api/customers/:id/redeem', async (req, res) => {
+  const client = await connectWithTimeout();
+  try {
+    const { id, points, reason } = req.body;
+    const pts = parseInt(points);
+    if (!pts || pts <= 0) return res.status(400).json({ error: 'points inválido' });
+
+    await client.query('BEGIN');
+    const ins = await client.query(
+      `INSERT INTO loyalty_redemptions (id, customer_id, points, reason, user_name)
+       VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+      [id || genId(), req.params.id, pts, reason || '', req.user?.name || '']
+    );
+    if (ins.rowCount > 0) {
+      await client.query(
+        'UPDATE customers SET points = GREATEST(0, points - $1) WHERE id = $2',
+        [pts, req.params.id]
+      );
+    }
+    const cust = await client.query('SELECT points FROM customers WHERE id = $1', [req.params.id]);
+    await client.query('COMMIT');
+    if (!cust.rows[0]) return res.status(404).json({ error: 'cliente não encontrado' });
+    res.json({ points: cust.rows[0].points, applied: ins.rowCount > 0 });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ═══════════════════════════════════════════

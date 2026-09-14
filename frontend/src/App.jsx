@@ -5927,7 +5927,13 @@ function FidelidadeModule({customers,setCustomers,showToast}){
   const tiers=[{name:"Bronze",min:0,max:99,color:"#CD7F32",benefit:"5% desc."},{name:"Prata",min:100,max:299,color:"#C0C0C0",benefit:"10% desc."},{name:"Ouro",min:300,max:499,color:C.gold,benefit:"15% + brindes"},{name:"Diamante",min:500,max:Infinity,color:C.blu,benefit:"20% + prioridade"}];
   const getTier=(pts)=>tiers.find(t=>pts>=t.min&&pts<=t.max)||tiers[0];
   const sorted=[...customers].sort((a,b)=>b.points-a.points);
-  const redeem=(cId,pts)=>{setCustomers(prev=>prev.map(c=>c.id===cId?{...c,points:Math.max(0,c.points-pts)}:c));showToast(pts+" pontos resgatados!");};
+  const redeem=(cId,pts)=>{
+    // Saldo é do servidor: o resgate persiste via endpoint idempotente e o estado local usa o saldo retornado
+    api.redeemPoints(cId,{id:genId(),points:pts}).then(r=>{
+      setCustomers(prev=>prev.map(c=>c.id===cId?{...c,points:r.points}:c));
+      showToast(pts+" pontos resgatados!");
+    }).catch(()=>showToast("Erro ao resgatar — verifique a conexão","error"));
+  };
   return(
     <div>
       <div style={S.card}><h3 style={S.cardTitle}>Programa de Fidelidade</h3><p style={{fontSize:12,color:C.dim,marginBottom:12}}>R$10 = 1 ponto</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>{tiers.map(t=><div key={t.name} style={{...S.card,borderColor:t.color+"44",textAlign:"center"}}><div style={{fontSize:20,fontWeight:900,color:t.color}}>{t.name}</div><div style={{fontSize:11,color:C.dim}}>{t.max===Infinity?t.min+"+ pts":t.min+"-"+t.max+" pts"}</div><div style={{fontSize:12,fontWeight:600}}>{t.benefit}</div></div>)}</div></div>

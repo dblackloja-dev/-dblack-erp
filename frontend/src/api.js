@@ -407,6 +407,7 @@ const api = {
   getCustomers: () => request('/customers'),
   createCustomer: (data) => request('/customers', { method: 'POST', body: data }),
   updateCustomer: (id, data) => request(`/customers/${id}`, { method: 'PUT', body: data }),
+  redeemPoints: (id, data) => request(`/customers/${id}/redeem`, { method: 'POST', body: data }),
 
   // Expenses
   getExpenses: (storeId) => request(`/expenses${storeId ? `?store_id=${storeId}` : ''}`),
