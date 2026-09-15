@@ -6,3 +6,5 @@ uploads/
 .vercel/
 
 .vercel
+backups/
+*backup*.json
