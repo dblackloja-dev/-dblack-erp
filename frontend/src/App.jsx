@@ -469,7 +469,8 @@ export default function App() {
           setSales(apiSales);
         }
       }
-      if(custs?.length) setCustomers(custs.map(custFromApi));
+      // Lista vazia é estado legítimo (CRM zerado 15/09) — só mantém o cache local se a API falhou
+      if(Array.isArray(custs)) setCustomers(custs.map(custFromApi));
       setExpenses(exps?.length ? expFromApi(exps) : {loja1:[],loja2:[],loja3:[],loja4:[]});
       if(emps?.length) setEmployees(emps.map(empFromApi));
       {
