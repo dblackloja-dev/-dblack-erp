@@ -5958,25 +5958,27 @@ function EtiquetasModule({storeProducts,showToast}){
   // Formata preço para etiqueta (sem símbolo, separado)
   const fmtPrecoEtiqueta=(v)=>{const n=parseFloat(v)||0;const parts=n.toFixed(2).split('.');return{inteiro:parts[0],decimal:parts[1]};};
 
-  // Renderiza uma etiqueta 40x40mm (151px ≈ 40mm a 96dpi)
+  // Renderiza uma etiqueta TAG VTAG 50x75mm (189x283px ≈ 50x75mm a 96dpi)
+  // Topo reserva ~9mm para o furo do pino (tag de cartão)
   const renderLabel=(prod,idx)=>{
     const preco=fmtPrecoEtiqueta(prod.price);
-    return <div key={prod.id+"-"+idx} className="etiqueta-40x40" style={{
-      width:151,height:151,padding:'6px 8px',background:'#fff',color:'#000',
+    return <div key={prod.id+"-"+idx} className="etiqueta-tag-50x75" style={{
+      width:189,height:283,padding:'34px 10px 10px',background:'#fff',color:'#000',
       fontFamily:"'Arial','Helvetica',sans-serif",display:'flex',flexDirection:'column',
       alignItems:'center',justifyContent:'space-between',boxSizing:'border-box',
-      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2,
+      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2,position:'relative',
       WebkitFontSmoothing:'antialiased',textRendering:'geometricPrecision'
     }}>
-      <div style={{fontSize:11,fontWeight:900,letterSpacing:1,textAlign:'center',marginTop:6}}>D'BLACK STORE</div>
-      <div style={{fontSize:9,fontWeight:700,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:22,width:'100%',wordBreak:'break-word'}}>
+      <div style={{position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',width:14,height:14,borderRadius:'50%',border:'1px dashed #bbb'}}/>
+      <div style={{fontSize:14,fontWeight:900,letterSpacing:2,textAlign:'center'}}>D'BLACK<br/>STORE</div>
+      <div style={{fontSize:11,fontWeight:700,textAlign:'center',lineHeight:1.2,overflow:'hidden',maxHeight:40,width:'100%',wordBreak:'break-word'}}>
         {prod.sku} {prod.name.toUpperCase()}
       </div>
       <div style={{textAlign:'center'}}>
-        <div style={{fontSize:22,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
-        <div style={{fontSize:8,fontWeight:700,marginTop:1}}>Ate 12x sem juros</div>
+        <div style={{fontSize:30,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
+        <div style={{fontSize:10,fontWeight:700,marginTop:4}}>Ate 12x sem juros</div>
       </div>
-      <BarcodeEAN ean={prod.ean||''} width={120} height={32}/>
+      <BarcodeEAN ean={prod.ean||''} width={155} height={42}/>
     </div>;
   };
 
@@ -5991,38 +5993,48 @@ function EtiquetasModule({storeProducts,showToast}){
     const printWin=window.open('','_blank','width=400,height=600');
     if(!printWin){showToast("Popup bloqueado! Permita popups.","error");return;}
 
-    const labelsHtml=labels.map(p=>{
+    // TAG VTAG 50x75mm em 2 colunas: cada página é um par lado a lado.
+    // Bobina: 2 colunas de 50mm + vão central de 3mm = 103mm de largura total
+    // (ajustar COL_GAP abaixo se a bobina tiver outro vão). Furo do pino no topo: ~9mm reservados.
+    const labelHtml=(p)=>{
+      if(!p)return '<div class="label"></div>';
       const preco=fmtPrecoEtiqueta(p.price);
       const data=ean13Encode(p.ean||'');
       let barcodeSvg='<div style="font-size:8px;color:#999">Sem EAN</div>';
       if(data){
-        let rects='';const bw=120/95;const barH=20;
+        let rects='';const bw=155/95;const barH=30;
         for(let i=0;i<data.bits.length;i++){
           if(data.bits[i]==='1')rects+=`<rect x="${i*bw}" y="0" width="${bw}" height="${barH}" fill="#000"/>`;
         }
-        barcodeSvg=`<svg width="120" height="32" viewBox="0 0 120 32" style="display:block">${rects}<text x="60" y="31" text-anchor="middle" fill="#000" font-size="9" font-family="Arial,Helvetica,sans-serif" font-weight="700">${data.digits}</text></svg>`;
+        barcodeSvg=`<svg width="155" height="42" viewBox="0 0 155 42" style="display:block">${rects}<text x="77.5" y="41" text-anchor="middle" fill="#000" font-size="10" font-family="Arial,Helvetica,sans-serif" font-weight="700">${data.digits}</text></svg>`;
       }
       return `<div class="label">
-        <div style="font-size:11px;font-weight:900;letter-spacing:1px;text-align:center;margin-top:4px">D'BLACK STORE</div>
-        <div style="font-size:9px;font-weight:700;text-align:center;line-height:1.15;overflow:hidden;max-height:22px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
+        <div style="font-size:14px;font-weight:900;letter-spacing:2px;text-align:center">D'BLACK<br>STORE</div>
+        <div style="font-size:11px;font-weight:700;text-align:center;line-height:1.2;overflow:hidden;max-height:40px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
         <div style="text-align:center">
-          <div style="font-size:22px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
-          <div style="font-size:8px;font-weight:700;margin-top:1px">Ate 12x sem juros</div>
+          <div style="font-size:30px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
+          <div style="font-size:10px;font-weight:700;margin-top:4px">Ate 12x sem juros</div>
         </div>
         <div style="display:flex;justify-content:center">${barcodeSvg}</div>
       </div>`;
-    }).join('');
+    };
+    const pagesHtml=[];
+    for(let i=0;i<labels.length;i+=2)pagesHtml.push(`<div class="page">${labelHtml(labels[i])}${labelHtml(labels[i+1])}</div>`);
 
     printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;900&display=swap" rel="stylesheet">
       <style>
-      @page{size:40mm 40mm;margin:0 !important;}
-      html,body{width:40mm;height:40mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
+      /* COL_GAP: vão central entre as 2 colunas da bobina */
+      :root{--col-gap:3mm;}
+      @page{size:103mm 75mm;margin:0 !important;}
+      html,body{width:103mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
       *{box-sizing:border-box;margin:0;padding:0;}
-      .label{width:40mm;height:40mm;padding:2mm 3mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;page-break-inside:avoid;line-height:1.2;}
-      .label:last-child{page-break-after:auto;}
-      @media screen{html,body{width:auto;height:auto;padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;}}
-    </style></head><body>${labelsHtml}</body></html>`);
+      .page{width:103mm;height:75mm;display:flex;page-break-after:always;page-break-inside:avoid;}
+      .page:last-child{page-break-after:auto;}
+      .label{width:50mm;height:75mm;padding:9mm 2.5mm 2.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;line-height:1.2;}
+      .label:first-child{margin-right:var(--col-gap);}
+      @media screen{html,body{width:auto;height:auto;padding:10px;}.page{margin-bottom:8px;}.label{border:1px solid #ccc;}}
+    </style></head><body>${pagesHtml.join('')}</body></html>`);
     printWin.document.close();
     setTimeout(()=>{
       printWin.print();
@@ -6034,7 +6046,7 @@ function EtiquetasModule({storeProducts,showToast}){
       <div style={{flex:1,minWidth:280}}>
         <div style={{...S.card,marginBottom:10,padding:12,display:"flex",alignItems:"center",gap:10,background:"rgba(255,215,64,.04)",borderColor:C.brdH}}>
           <span style={{fontSize:28}}>🏷️</span>
-          <div><div style={{fontSize:14,fontWeight:700}}>Etiquetas 40x40mm</div><div style={{fontSize:11,color:C.dim}}>Elgin L42 Pro Full — Térmica</div></div>
+          <div><div style={{fontSize:14,fontWeight:700}}>Etiquetas TAG 50x75mm</div><div style={{fontSize:11,color:C.dim}}>VTAG 2 colunas — Elgin L42 Pro Full</div></div>
         </div>
         <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU ou EAN..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:6,marginTop:10}}>
@@ -6053,7 +6065,7 @@ function EtiquetasModule({storeProducts,showToast}){
           <div style={{display:"flex",justifyContent:"center",padding:16,background:"#f5f5f5",borderRadius:8,border:`1px dashed ${C.brd}`}}>
             {renderLabel(queue.length>0?(storeProducts.find(p=>p.id===queue[0].pid)||sample):sample,0)}
           </div>
-          <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:6}}>40mm × 40mm — Tamanho real aproximado</div>
+          <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:6}}>50mm × 75mm — sai em pares (2 colunas)</div>
         </div>
         <div style={S.card}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
@@ -6267,8 +6279,8 @@ const CSS = `
       box-sizing: border-box !important;
     }
     #receipt-print svg { max-width: 66mm !important; height: auto !important; }
-    .etiqueta-40x40 {
-      width: 40mm !important; height: 40mm !important;
+    .etiqueta-tag-50x75 {
+      width: 50mm !important; height: 75mm !important;
       background: #fff !important; color: #000 !important;
       border: none !important; padding: 2mm !important;
       page-break-after: always !important;
