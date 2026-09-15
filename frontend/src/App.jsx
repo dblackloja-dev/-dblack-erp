@@ -6015,28 +6015,31 @@ function EtiquetasModule({storeProducts,showToast}){
   // Formata preço para etiqueta (sem símbolo, separado)
   const fmtPrecoEtiqueta=(v)=>{const n=parseFloat(v)||0;const parts=n.toFixed(2).split('.');return{inteiro:parts[0],decimal:parts[1]};};
 
-  // Renderiza uma etiqueta TAG VTAG 50x75mm (189x283px ≈ 50x75mm a 96dpi)
-  // Topo reserva ~9mm para o furo do pino (tag de cartão)
+  // Etiqueta TAG VTAG 50x75mm (189x283px ≈ 50x75mm a 96dpi) — layout aprovado 15/09:
+  // corpo de 50mm fica na peça (furo, marca, produto, TAM, código de barras);
+  // canhoto de 25mm abaixo do picote leva só o preço (destaca em venda de presente).
   const renderLabel=(prod,idx,size)=>{
     const preco=fmtPrecoEtiqueta(prod.price);
     return <div key={prod.id+"-"+idx} className="etiqueta-tag-50x75" style={{
-      width:189,height:283,padding:'34px 10px 10px',background:'#fff',color:'#000',
+      width:189,height:283,background:'#fff',color:'#000',
       fontFamily:"'Arial','Helvetica',sans-serif",display:'flex',flexDirection:'column',
-      alignItems:'center',justifyContent:'space-between',boxSizing:'border-box',
-      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2,position:'relative',
+      boxSizing:'border-box',border:'1px solid #ccc',flexShrink:0,overflow:'hidden',
+      lineHeight:1.2,position:'relative',
       WebkitFontSmoothing:'antialiased',textRendering:'geometricPrecision'
     }}>
       <div style={{position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',width:14,height:14,borderRadius:'50%',border:'1px dashed #bbb'}}/>
-      <div style={{fontSize:14,fontWeight:900,letterSpacing:2,textAlign:'center'}}>D'BLACK<br/>STORE</div>
-      <div style={{fontSize:11,fontWeight:700,textAlign:'center',lineHeight:1.2,overflow:'hidden',maxHeight:40,width:'100%',wordBreak:'break-word'}}>
-        {prod.sku} {prod.name.toUpperCase()}
+      <div style={{height:189,padding:'38px 9px 6px',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{fontSize:13,fontWeight:900,letterSpacing:1.5,textAlign:'center',whiteSpace:'nowrap'}}>D'BLACK STORE</div>
+        <div style={{fontSize:10,fontWeight:700,textAlign:'center',lineHeight:1.2,overflow:'hidden',maxHeight:32,width:'100%',wordBreak:'break-word'}}>
+          {prod.sku} {prod.name.toUpperCase()}
+        </div>
+        {size?<div style={{fontSize:14,fontWeight:900,border:'2px solid #000',borderRadius:6,padding:'1px 12px',letterSpacing:1}}>TAM {size}</div>:<div/>}
+        <BarcodeEAN ean={prod.ean||''} width={155} height={46}/>
       </div>
-      {size&&<div style={{fontSize:15,fontWeight:900,border:'2px solid #000',borderRadius:6,padding:'2px 14px',letterSpacing:1}}>TAM {size}</div>}
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:30,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
-        <div style={{fontSize:10,fontWeight:700,marginTop:4}}>Ate 12x sem juros</div>
+      <div style={{height:94,borderTop:'2px dashed #999',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}}>
+        <div style={{fontSize:26,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
+        <div style={{fontSize:9,fontWeight:700}}>Ate 12x sem juros</div>
       </div>
-      <BarcodeEAN ean={prod.ean||''} width={155} height={42}/>
     </div>;
   };
 
@@ -6054,6 +6057,9 @@ function EtiquetasModule({storeProducts,showToast}){
     // TAG VTAG 50x75mm em 2 colunas: cada página é um par lado a lado.
     // Bobina: 2 colunas de 50mm + vão central de 3mm = 103mm de largura total
     // (ajustar COL_GAP abaixo se a bobina tiver outro vão). Furo do pino no topo: ~9mm reservados.
+    // Layout aprovado 15/09: corpo (50mm, fica na peça) = marca 1 linha + produto +
+    // TAM + código de barras; canhoto (25mm, abaixo do picote da bobina) = só o preço,
+    // destacável em venda de presente. Nada de linha impressa no picote — ele é físico.
     const labelHtml=(item)=>{
       if(!item)return '<div class="label"></div>';
       const p=item.p,size=item.size;
@@ -6061,21 +6067,23 @@ function EtiquetasModule({storeProducts,showToast}){
       const data=ean13Encode(p.ean||'');
       let barcodeSvg='<div style="font-size:8px;color:#999">Sem EAN</div>';
       if(data){
-        let rects='';const bw=155/95;const barH=30;
+        let rects='';const bw=155/95;const barH=33;
         for(let i=0;i<data.bits.length;i++){
           if(data.bits[i]==='1')rects+=`<rect x="${i*bw}" y="0" width="${bw}" height="${barH}" fill="#000"/>`;
         }
-        barcodeSvg=`<svg width="155" height="42" viewBox="0 0 155 42" style="display:block">${rects}<text x="77.5" y="41" text-anchor="middle" fill="#000" font-size="10" font-family="Arial,Helvetica,sans-serif" font-weight="700">${data.digits}</text></svg>`;
+        barcodeSvg=`<svg width="155" height="46" viewBox="0 0 155 46" style="display:block">${rects}<text x="77.5" y="44" text-anchor="middle" fill="#000" font-size="10" font-family="Arial,Helvetica,sans-serif" font-weight="700">${data.digits}</text></svg>`;
       }
       return `<div class="label">
-        <div style="font-size:14px;font-weight:900;letter-spacing:2px;text-align:center">D'BLACK<br>STORE</div>
-        <div style="font-size:11px;font-weight:700;text-align:center;line-height:1.2;overflow:hidden;max-height:40px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
-        ${size?`<div style="font-size:15px;font-weight:900;border:2px solid #000;border-radius:6px;padding:2px 14px;letter-spacing:1px">TAM ${size}</div>`:''}
-        <div style="text-align:center">
-          <div style="font-size:30px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
-          <div style="font-size:10px;font-weight:700;margin-top:4px">Ate 12x sem juros</div>
+        <div class="corpo">
+          <div style="font-size:13px;font-weight:900;letter-spacing:1.5px;text-align:center;white-space:nowrap">D'BLACK STORE</div>
+          <div style="font-size:10px;font-weight:700;text-align:center;line-height:1.2;overflow:hidden;max-height:32px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
+          ${size?`<div style="font-size:14px;font-weight:900;border:2px solid #000;border-radius:6px;padding:1px 12px;letter-spacing:1px">TAM ${size}</div>`:'<div></div>'}
+          <div style="display:flex;justify-content:center">${barcodeSvg}</div>
         </div>
-        <div style="display:flex;justify-content:center">${barcodeSvg}</div>
+        <div class="canhoto">
+          <div style="font-size:26px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
+          <div style="font-size:9px;font-weight:700;margin-top:3px">Ate 12x sem juros</div>
+        </div>
       </div>`;
     };
     const pagesHtml=[];
@@ -6091,8 +6099,11 @@ function EtiquetasModule({storeProducts,showToast}){
       *{box-sizing:border-box;margin:0;padding:0;}
       .page{width:103mm;height:75mm;display:flex;page-break-after:always;page-break-inside:avoid;}
       .page:last-child{page-break-after:auto;}
-      .label{width:50mm;height:75mm;padding:9mm 2.5mm 2.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;line-height:1.2;}
+      .label{width:50mm;height:75mm;display:flex;flex-direction:column;overflow:hidden;line-height:1.2;}
       .label:first-child{margin-right:var(--col-gap);}
+      /* corpo fica na peça (acima do picote físico a 50mm); canhoto destacável leva o preço */
+      .corpo{height:50mm;padding:10mm 2.5mm 1.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;}
+      .canhoto{height:25mm;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;}
       @media screen{html,body{width:auto;height:auto;padding:10px;}.page{margin-bottom:8px;}.label{border:1px solid #ccc;}}
     </style></head><body>${pagesHtml.join('')}</body></html>`);
     printWin.document.close();
