@@ -2728,20 +2728,24 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const activeProducts=catalog.filter(p=>p.active).length;
   const avgMargin=catalog.length>0?(catalog.reduce((s,p)=>s+(p.margin||0),0)/catalog.length):0;
   const catCount={};catalog.forEach(p=>{catCount[p.category]=(catCount[p.category]||0)+1;});
+  // Lista única usada no cadastro, no filtro e no gerenciador: lista salva + categorias
+  // em uso nos produtos ATIVOS (os 1.666 legados OLD-/inativos ficam de fora)
+  const activeCatCount={};catalog.filter(p=>p.active!==false).forEach(p=>{if(p.category)activeCatCount[p.category]=(activeCatCount[p.category]||0)+1;});
+  const allCats=[...new Set([...categories,...Object.keys(activeCatCount).sort((a,b)=>a.localeCompare(b,'pt-BR'))])];
 
   return(
     <div>
       <div style={S.kpiRow}>
         <KPI icon={I.box} label="Produtos" value={totalProducts+""} sub={activeProducts+" ativos"} color={C.blu}/>
         {isAdmin&&<KPI icon={I.chart} label="Margem Média" value={pct(avgMargin)} sub="Preço vs Custo" color={C.grn}/>}
-        <KPI icon={I.money} label="Categorias" value={Object.keys(catCount).length+""} sub="No catálogo" color={C.gold}/>
+        <KPI icon={I.money} label="Categorias" value={Object.keys(activeCatCount).length+""} sub="No catálogo" color={C.gold}/>
       </div>
 
       <div style={S.toolbar}>
         <div style={{...S.searchBar,flex:1}}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU, EAN, referência..." value={search} onChange={e=>{setSearch(e.target.value);setVisibleCount(50);}}/></div>
         <select style={{...S.sel,minWidth:120}} value={filterCat} onChange={e=>{setFilterCat(e.target.value);setVisibleCount(50);}}>
           <option value="">Todas categorias</option>
-          {categories.map(c=><option key={c}>{c}</option>)}
+          {allCats.map(c=><option key={c}>{c}</option>)}
         </select>
         <button style={{...S.secBtn,...(showInactive?{borderColor:C.gold,color:C.gold}:{})}} onClick={()=>{setShowInactive(v=>!v);setVisibleCount(50);}}>{showInactive?"👁 Ocultar inativos":"🗂 Mostrar inativos"}</button>
         <button style={S.secBtn} onClick={()=>setShowCatManager(!showCatManager)}>📁 Categorias</button>
@@ -2753,7 +2757,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
       {showCatManager&&<div style={S.formCard}>
         <h3 style={S.formTitle}>Gerenciar Categorias</h3>
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
-          {[...new Set([...categories,...Object.keys(catCount)])].map(c=><span key={c} style={{padding:"4px 10px",borderRadius:6,background:C.s2,border:`1px solid ${C.brd}`,fontSize:12,fontWeight:600,color:C.txt,display:"flex",alignItems:"center",gap:5}}>
+          {allCats.map(c=><span key={c} style={{padding:"4px 10px",borderRadius:6,background:C.s2,border:`1px solid ${C.brd}`,fontSize:12,fontWeight:600,color:C.txt,display:"flex",alignItems:"center",gap:5}}>
             {editCat===c
               ?<>
                 <input autoFocus value={editCatVal} onChange={e=>setEditCatVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")renameCategory(c);if(e.key==="Escape")setEditCat(null);}} style={{...S.inp,padding:"2px 6px",fontSize:12,width:130}}/>
@@ -2761,9 +2765,9 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
                 <button onClick={()=>setEditCat(null)} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:11,padding:0}}>✕</button>
               </>
               :<>
-                {c}{catCount[c]>0&&<span style={{fontSize:10,color:C.dim}}>({catCount[c]})</span>}
+                {c}{activeCatCount[c]>0&&<span style={{fontSize:10,color:C.dim}}>({activeCatCount[c]})</span>}
                 <button title="Renomear (atualiza os produtos)" onClick={()=>{setEditCat(c);setEditCatVal(c);}} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:11,padding:0}}>✏️</button>
-                <button title={catCount[c]>0?"Há produtos nesta categoria — renomeie/mescle antes de excluir":"Excluir categoria"} onClick={()=>{if(catCount[c]>0)return showToast(`"${c}" tem ${catCount[c]} produto(s) — renomeie ou mescle antes de excluir`,"error");persistCats(categories.filter(x=>x!==c));}} style={{background:"none",border:"none",color:catCount[c]>0?C.dim:C.red,cursor:"pointer",fontSize:10,padding:0}}>✕</button>
+                <button title={activeCatCount[c]>0?"Há produtos nesta categoria — renomeie/mescle antes de excluir":"Excluir categoria"} onClick={()=>{if(activeCatCount[c]>0)return showToast(`"${c}" tem ${activeCatCount[c]} produto(s) — renomeie ou mescle antes de excluir`,"error");persistCats(categories.filter(x=>x!==c));}} style={{background:"none",border:"none",color:activeCatCount[c]>0?C.dim:C.red,cursor:"pointer",fontSize:10,padding:0}}>✕</button>
               </>}
           </span>)}
         </div>
@@ -2842,7 +2846,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
                 <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>SKU *</label><input style={{...S.inp,width:"100%"}} value={np.sku} onChange={e=>setNp(p=>({...p,sku:e.target.value}))} placeholder="CAM-001"/></div>
                 <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Código EAN (código de barras)</label><input style={{...S.inp,width:"100%"}} value={np.ean} onChange={e=>setNp(p=>({...p,ean:e.target.value}))} placeholder="7891234560011"/></div>
               </div>
-              <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Categoria</label><select style={{...S.sel,width:"100%"}} value={np.category} onChange={e=>setNp(p=>({...p,category:e.target.value}))}>{categories.map(c=><option key={c}>{c}</option>)}</select></div>
+              <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Categoria</label><select style={{...S.sel,width:"100%"}} value={np.category} onChange={e=>setNp(p=>({...p,category:e.target.value}))}>{allCats.map(c=><option key={c}>{c}</option>)}</select></div>
               <div>
                 <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Tamanhos da peça</label>
                 <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
