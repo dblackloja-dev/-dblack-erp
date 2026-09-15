@@ -207,7 +207,7 @@ CATALOG.forEach(p=>{p.margin=p.cost>0?((p.price-p.cost)/p.cost*100):0;});
 
 const CATEGORIES = ["Camisetas","Calças","Jaquetas","Acessórios","Calçados","Moletons","Bermudas","Vestidos","Conjuntos","Bolsas"];
 // Grade de tamanhos padrão da loja (letras + numeração 36–54)
-const SIZES = ["P","M","G","GG","EXG","G1","G2","G3","36","38","40","42","44","46","48","50","52","54"];
+const SIZES = ["Único","PP","P","M","G","GG","EXG","G1","G2","G3","36","38","40","42","44","46","48","50","52","54"];
 const EMOJIS = ["👕","👖","🧥","🧢","⛓️","👟","🧶","🩳","🕶️","⌚","👗","👜","🧤","🧣","👔","🩱","🎒","💍"];
 
 // ─── PER-STORE STOCK (uses stockId, not store id) ───
