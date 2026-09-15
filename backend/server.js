@@ -379,6 +379,16 @@ app.put('/api/products/:id', async (req, res) => {
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
 });
 
+// Renomeia/mescla categoria em massa (gerenciador de categorias do catálogo)
+app.post('/api/products/rename-category', requireRole('admin', 'gestor'), async (req, res) => {
+  try {
+    const { from, to } = req.body || {};
+    if (!from || !to || !String(to).trim()) return res.status(400).json({ error: 'from/to obrigatórios' });
+    const r = await pool.query('UPDATE products SET category = $2, updated_at = NOW() WHERE category = $1', [from, String(to).trim()]);
+    res.json({ updated: r.rowCount });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/api/products/:id', async (req, res) => {
   try {
     await queryRun('UPDATE products SET active = false WHERE id = $1', [req.params.id]);

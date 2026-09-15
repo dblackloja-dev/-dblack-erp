@@ -206,6 +206,8 @@ const CATALOG = [
 CATALOG.forEach(p=>{p.margin=p.cost>0?((p.price-p.cost)/p.cost*100):0;});
 
 const CATEGORIES = ["Camisetas","Calças","Jaquetas","Acessórios","Calçados","Moletons","Bermudas","Vestidos","Conjuntos","Bolsas"];
+// Grade de tamanhos padrão da loja (letras + numeração 36–54)
+const SIZES = ["P","M","G","GG","EXG","G1","G2","G3","36","38","40","42","44","46","48","50","52","54"];
 const EMOJIS = ["👕","👖","🧥","🧢","⛓️","👟","🧶","🩳","🕶️","⌚","👗","👜","🧤","🧣","👔","🩱","🎒","💍"];
 
 // ─── PER-STORE STOCK (uses stockId, not store id) ───
@@ -914,7 +916,7 @@ export default function App() {
           {tab==="pdv" && <PDVModule {...{storeProducts,storeSales,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}} />}
 
           {/* PRODUTOS (Cadastro) */}
-          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts,loggedUser}} />}
+          {tab==="produtos" && <ProdutosModule {...{catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts,loggedUser,appSettings}} />}
 
           {/* ESTOQUE */}
           {tab==="estoque" && <EstoqueModule {...{storeProducts,activeStore,stock,setStock,currentStore,catalog,showToast,activeStockId,isSharedStock,sharedStockStores,apiLoaded,loggedUser}} />}
@@ -2560,7 +2562,7 @@ function ReceiptComprovante({data,onClose}){
 // ═══════════════════════════════════
 // ═══  PRODUTOS MODULE (Cadastro) ═══
 // ═══════════════════════════════════
-function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts,loggedUser}){
+function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoaded,loadPhotosForProducts,loggedUser,appSettings}){
   // Custo é sigiloso: só admin vê/edita. Cadastro sem custo → servidor calcula pela margem padrão (Configurações).
   const isAdmin=loggedUser?.role==="admin";
   const [search,setSearch]=useState("");
@@ -2573,6 +2575,15 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const [categories,setCategories]=useState(CATEGORIES);
   const [newCat,setNewCat]=useState("");
   const [showCatManager,setShowCatManager]=useState(false);
+  const [editCat,setEditCat]=useState(null);
+  const [editCatVal,setEditCatVal]=useState("");
+
+  // Lista de categorias vive em settings.product_categories (vale p/ todas as lojas)
+  useEffect(()=>{const l=appSettings?.product_categories?.list;if(Array.isArray(l)&&l.length)setCategories(l);},[appSettings?.product_categories]);
+  const persistCats=(list)=>{
+    setCategories(list);
+    api.saveSetting('product_categories',{list}).catch(()=>showToast("Sem conexão — categorias não salvas no servidor","error"));
+  };
 
   // Auto-generate next SKU/REF/EAN — puramente derivado do catálogo (maior código não-legado + 1),
   // sem contador em localStorage: o contador antigo avançava a cada render do formulário e queimava
@@ -2692,8 +2703,24 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const addCategory=()=>{
     if(!newCat.trim())return;
     if(categories.includes(newCat.trim()))return showToast("Categoria já existe","error");
-    setCategories(prev=>[...prev,newCat.trim()]);
+    persistCats([...categories,newCat.trim()]);
     setNewCat("");showToast("Categoria adicionada!");
+  };
+
+  // Renomear/mesclar categoria — atualiza os produtos em massa no servidor
+  const renameCategory=async(oldName)=>{
+    const nn=editCatVal.trim();
+    if(!nn||nn===oldName){setEditCat(null);return;}
+    try{
+      const r=await api.renameProductCategory(oldName,nn);
+      if(r?.error)return showToast(r.error,"error");
+      setCatalog(prev=>prev.map(p=>p.category===oldName?{...p,category:nn}:p));
+      let list=categories.filter(c=>c!==oldName);
+      if(!list.includes(nn))list=[...list,nn];
+      persistCats(list);
+      setEditCat(null);
+      showToast(`"${oldName}" → "${nn}" — ${r?.updated||0} produto(s) atualizado(s).`);
+    }catch(e){showToast(e.message||"Erro ao renomear","error");}
   };
 
   // Stats
@@ -2726,11 +2753,21 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
       {showCatManager&&<div style={S.formCard}>
         <h3 style={S.formTitle}>Gerenciar Categorias</h3>
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
-          {categories.map(c=><span key={c} style={{padding:"4px 10px",borderRadius:6,background:C.s2,border:`1px solid ${C.brd}`,fontSize:12,fontWeight:600,color:C.txt,display:"flex",alignItems:"center",gap:4}}>
-            {c}
-            <button onClick={()=>setCategories(prev=>prev.filter(x=>x!==c))} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:10,padding:0}}>✕</button>
+          {[...new Set([...categories,...Object.keys(catCount)])].map(c=><span key={c} style={{padding:"4px 10px",borderRadius:6,background:C.s2,border:`1px solid ${C.brd}`,fontSize:12,fontWeight:600,color:C.txt,display:"flex",alignItems:"center",gap:5}}>
+            {editCat===c
+              ?<>
+                <input autoFocus value={editCatVal} onChange={e=>setEditCatVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")renameCategory(c);if(e.key==="Escape")setEditCat(null);}} style={{...S.inp,padding:"2px 6px",fontSize:12,width:130}}/>
+                <button onClick={()=>renameCategory(c)} style={{background:C.gold,border:"none",color:"#000",cursor:"pointer",fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:5,fontFamily:"inherit"}}>OK</button>
+                <button onClick={()=>setEditCat(null)} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:11,padding:0}}>✕</button>
+              </>
+              :<>
+                {c}{catCount[c]>0&&<span style={{fontSize:10,color:C.dim}}>({catCount[c]})</span>}
+                <button title="Renomear (atualiza os produtos)" onClick={()=>{setEditCat(c);setEditCatVal(c);}} style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:11,padding:0}}>✏️</button>
+                <button title={catCount[c]>0?"Há produtos nesta categoria — renomeie/mescle antes de excluir":"Excluir categoria"} onClick={()=>{if(catCount[c]>0)return showToast(`"${c}" tem ${catCount[c]} produto(s) — renomeie ou mescle antes de excluir`,"error");persistCats(categories.filter(x=>x!==c));}} style={{background:"none",border:"none",color:catCount[c]>0?C.dim:C.red,cursor:"pointer",fontSize:10,padding:0}}>✕</button>
+              </>}
           </span>)}
         </div>
+        <div style={{fontSize:10,color:C.dim,marginBottom:8}}>✏️ renomeia a categoria e move todos os produtos dela (usar um nome já existente mescla as duas). A lista fica salva no servidor para todas as lojas.</div>
         <div style={{display:"flex",gap:6}}>
           <input style={{...S.inp,flex:1}} placeholder="Nova categoria..." value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCategory()}/>
           <button style={S.primBtn} onClick={addCategory}>{I.plus} Adicionar</button>
@@ -2806,6 +2843,22 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
                 <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Código EAN (código de barras)</label><input style={{...S.inp,width:"100%"}} value={np.ean} onChange={e=>setNp(p=>({...p,ean:e.target.value}))} placeholder="7891234560011"/></div>
               </div>
               <div><label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Categoria</label><select style={{...S.sel,width:"100%"}} value={np.category} onChange={e=>setNp(p=>({...p,category:e.target.value}))}>{categories.map(c=><option key={c}>{c}</option>)}</select></div>
+              <div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Tamanhos da peça</label>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {SIZES.map(sz=>{
+                    const sel=String(np.variations||"").split(",").map(v=>v.trim()).filter(Boolean);
+                    const on=sel.includes(sz);
+                    return <button key={sz} type="button" onClick={()=>setNp(p=>{
+                      const cur=String(p.variations||"").split(",").map(v=>v.trim()).filter(Boolean);
+                      const next=on?cur.filter(x=>x!==sz):[...cur,sz];
+                      // mantém a ordem padrão da grade; extras digitados à mão ficam no fim
+                      const ordered=[...SIZES.filter(s=>next.includes(s)),...next.filter(s=>!SIZES.includes(s))];
+                      return{...p,variations:ordered.join(", ")};
+                    })} style={{padding:"4px 9px",borderRadius:6,border:`1px solid ${on?C.gold:C.brd}`,background:on?"rgba(255,215,64,.12)":"transparent",color:on?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>{sz}</button>;
+                  })}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -5916,8 +5969,12 @@ function ExchangeReceiptModal({ex,onClose}){
 // ═══════════════════════════════════
 function EtiquetasModule({storeProducts,showToast}){
   const [search,setSearch]=useState("");const [queue,setQueue]=useState([]);const [showPreview,setShowPreview]=useState(false);
+  const [pickProd,setPickProd]=useState(null); // produto aguardando escolha de tamanho
   const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search));
-  const addQ=(p)=>setQueue(prev=>{const ex=prev.find(q=>q.pid===p.id);if(ex)return prev.map(q=>q.pid===p.id?{...q,qty:q.qty+1}:q);return[...prev,{pid:p.id,qty:1}];});
+  // Fila por produto+tamanho — cada tamanho vira etiquetas próprias
+  const prodSizes=(p)=>(p.variations||[]).length?p.variations:(p.size?[p.size]:[]);
+  const addQ=(p,size)=>setQueue(prev=>{const ex=prev.find(q=>q.pid===p.id&&q.size===size);if(ex)return prev.map(q=>q.pid===p.id&&q.size===size?{...q,qty:q.qty+1}:q);return[...prev,{pid:p.id,size,qty:1}];});
+  const clickProd=(p)=>{const s=prodSizes(p);if(s.length===0)addQ(p,"");else if(s.length===1)addQ(p,s[0]);else setPickProd(p);};
   const totalLabels=queue.reduce((s,q)=>s+q.qty,0);
 
   // Gerador de código de barras EAN-13 real
@@ -5960,7 +6017,7 @@ function EtiquetasModule({storeProducts,showToast}){
 
   // Renderiza uma etiqueta TAG VTAG 50x75mm (189x283px ≈ 50x75mm a 96dpi)
   // Topo reserva ~9mm para o furo do pino (tag de cartão)
-  const renderLabel=(prod,idx)=>{
+  const renderLabel=(prod,idx,size)=>{
     const preco=fmtPrecoEtiqueta(prod.price);
     return <div key={prod.id+"-"+idx} className="etiqueta-tag-50x75" style={{
       width:189,height:283,padding:'34px 10px 10px',background:'#fff',color:'#000',
@@ -5974,6 +6031,7 @@ function EtiquetasModule({storeProducts,showToast}){
       <div style={{fontSize:11,fontWeight:700,textAlign:'center',lineHeight:1.2,overflow:'hidden',maxHeight:40,width:'100%',wordBreak:'break-word'}}>
         {prod.sku} {prod.name.toUpperCase()}
       </div>
+      {size&&<div style={{fontSize:15,fontWeight:900,border:'2px solid #000',borderRadius:6,padding:'2px 14px',letterSpacing:1}}>TAM {size}</div>}
       <div style={{textAlign:'center'}}>
         <div style={{fontSize:30,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
         <div style={{fontSize:10,fontWeight:700,marginTop:4}}>Ate 12x sem juros</div>
@@ -5987,7 +6045,7 @@ function EtiquetasModule({storeProducts,showToast}){
   // Função de imprimir que abre janela dedicada para impressora térmica
   const handlePrint=()=>{
     const labels=[];
-    queue.forEach(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return;for(let i=0;i<q.qty;i++)labels.push(p);});
+    queue.forEach(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return;for(let i=0;i<q.qty;i++)labels.push({p,size:q.size||""});});
     if(labels.length===0)return showToast("Fila vazia!","error");
 
     const printWin=window.open('','_blank','width=400,height=600');
@@ -5996,8 +6054,9 @@ function EtiquetasModule({storeProducts,showToast}){
     // TAG VTAG 50x75mm em 2 colunas: cada página é um par lado a lado.
     // Bobina: 2 colunas de 50mm + vão central de 3mm = 103mm de largura total
     // (ajustar COL_GAP abaixo se a bobina tiver outro vão). Furo do pino no topo: ~9mm reservados.
-    const labelHtml=(p)=>{
-      if(!p)return '<div class="label"></div>';
+    const labelHtml=(item)=>{
+      if(!item)return '<div class="label"></div>';
+      const p=item.p,size=item.size;
       const preco=fmtPrecoEtiqueta(p.price);
       const data=ean13Encode(p.ean||'');
       let barcodeSvg='<div style="font-size:8px;color:#999">Sem EAN</div>';
@@ -6011,6 +6070,7 @@ function EtiquetasModule({storeProducts,showToast}){
       return `<div class="label">
         <div style="font-size:14px;font-weight:900;letter-spacing:2px;text-align:center">D'BLACK<br>STORE</div>
         <div style="font-size:11px;font-weight:700;text-align:center;line-height:1.2;overflow:hidden;max-height:40px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
+        ${size?`<div style="font-size:15px;font-weight:900;border:2px solid #000;border-radius:6px;padding:2px 14px;letter-spacing:1px">TAM ${size}</div>`:''}
         <div style="text-align:center">
           <div style="font-size:30px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
           <div style="font-size:10px;font-weight:700;margin-top:4px">Ate 12x sem juros</div>
@@ -6050,8 +6110,8 @@ function EtiquetasModule({storeProducts,showToast}){
         </div>
         <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU ou EAN..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:6,marginTop:10}}>
-          {filtered.map(p=>{const inQ=queue.find(q=>q.pid===p.id);return <button key={p.id} onClick={()=>addQ(p)} style={{background:inQ?"rgba(255,215,64,.06)":C.s2,border:`1px solid ${inQ?C.brdH:C.brd}`,borderRadius:8,padding:8,cursor:"pointer",fontFamily:"inherit",color:C.txt,textAlign:"center",fontSize:10,position:"relative"}}>
-            {inQ&&<div style={{position:"absolute",top:3,right:3,background:C.gold,color:C.bg,fontSize:8,fontWeight:800,width:16,height:16,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>{inQ.qty}</div>}
+          {filtered.map(p=>{const inQty=queue.filter(q=>q.pid===p.id).reduce((s,q)=>s+q.qty,0);const inQ=inQty>0;return <button key={p.id} onClick={()=>clickProd(p)} style={{background:inQ?"rgba(255,215,64,.06)":C.s2,border:`1px solid ${inQ?C.brdH:C.brd}`,borderRadius:8,padding:8,cursor:"pointer",fontFamily:"inherit",color:C.txt,textAlign:"center",fontSize:10,position:"relative"}}>
+            {inQ&&<div style={{position:"absolute",top:3,right:3,background:C.gold,color:C.bg,fontSize:8,fontWeight:800,minWidth:16,height:16,padding:"0 3px",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>{inQty}</div>}
             <div style={{fontSize:20}}>{p.img}</div>
             <div style={{fontWeight:600,fontSize:11,marginTop:2}}>{p.name}</div>
             <div style={{fontSize:9,color:C.dim}}>{p.sku}</div>
@@ -6063,7 +6123,7 @@ function EtiquetasModule({storeProducts,showToast}){
         <div style={{...S.card,marginBottom:10}}>
           <h3 style={{fontSize:12,color:C.dim,marginBottom:8}}>Preview da Etiqueta</h3>
           <div style={{display:"flex",justifyContent:"center",padding:16,background:"#f5f5f5",borderRadius:8,border:`1px dashed ${C.brd}`}}>
-            {renderLabel(queue.length>0?(storeProducts.find(p=>p.id===queue[0].pid)||sample):sample,0)}
+            {renderLabel(queue.length>0?(storeProducts.find(p=>p.id===queue[0].pid)||sample):sample,0,queue.length>0?queue[0].size:"M")}
           </div>
           <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:6}}>50mm × 75mm — sai em pares (2 colunas)</div>
         </div>
@@ -6073,12 +6133,13 @@ function EtiquetasModule({storeProducts,showToast}){
           </div>
           {queue.length===0?<div style={{textAlign:"center",padding:20,color:C.dim,fontSize:11}}>🏷️ Clique nos produtos para adicionar</div>:
           <div>
-            {queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return <div key={q.pid} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
+            {queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;const same=(x)=>x.pid===q.pid&&x.size===q.size;return <div key={q.pid+"|"+q.size} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
               <span style={{fontSize:14}}>{p.img}</span>
               <div style={{flex:1}}><div style={{fontSize:10,fontWeight:600}}>{p.name}</div><div style={{fontSize:8,color:C.dim}}>{p.ean||'Sem EAN'}</div></div>
-              <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>x.pid===q.pid?(x.qty>1?{...x,qty:x.qty-1}:null):x).filter(Boolean))}>{I.minus}</button>
+              {q.size&&<span style={{padding:"2px 7px",borderRadius:5,border:`1px solid ${C.gold}`,color:C.gold,fontSize:10,fontWeight:800}}>{q.size}</span>}
+              <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>same(x)?(x.qty>1?{...x,qty:x.qty-1}:null):x).filter(Boolean))}>{I.minus}</button>
               <span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:"center"}}>{q.qty}</span>
-              <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>x.pid===q.pid?{...x,qty:x.qty+1}:x))}>{I.plus}</button>
+              <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>same(x)?{...x,qty:x.qty+1}:x))}>{I.plus}</button>
             </div>;})}
             <div style={{display:"flex",gap:6,marginTop:10}}>
               <button style={{...S.secBtn,flex:1,fontSize:10}} onClick={()=>setQueue([])}>Limpar</button>
@@ -6087,6 +6148,20 @@ function EtiquetasModule({storeProducts,showToast}){
           </div>}
         </div>
       </div>
+      {pickProd&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setPickProd(null)}>
+        <div style={{...S.card,width:340,maxWidth:"92%"}} onClick={e=>e.stopPropagation()}>
+          <h3 style={{margin:"0 0 4px",fontSize:14,fontWeight:700}}>{pickProd.name}</h3>
+          <div style={{fontSize:11,color:C.dim,marginBottom:10}}>Qual tamanho vai imprimir?</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+            {prodSizes(pickProd).map(sz=><button key={sz} onClick={()=>{addQ(pickProd,sz);setPickProd(null);}} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${C.gold}`,background:"rgba(255,215,64,.08)",color:C.gold,cursor:"pointer",fontSize:13,fontWeight:800,fontFamily:"inherit"}}>{sz}</button>)}
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>{prodSizes(pickProd).forEach(sz=>addQ(pickProd,sz));setPickProd(null);}} style={{...S.secBtn,flex:1,fontSize:11}}>1 de cada tamanho</button>
+            <button onClick={()=>{addQ(pickProd,"");setPickProd(null);}} style={{...S.secBtn,flex:1,fontSize:11}}>Sem tamanho</button>
+            <button onClick={()=>setPickProd(null)} style={{...S.secBtn,fontSize:11}}>Cancelar</button>
+          </div>
+        </div>
+      </div>}
       {showPreview&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:200,display:"flex",flexDirection:"column"}} onClick={()=>setShowPreview(false)}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 18px",background:C.s1,borderBottom:`1px solid ${C.brd}`}} onClick={e=>e.stopPropagation()}>
           <h3 style={{margin:0,fontSize:14,fontWeight:700,flex:1}}>{totalLabels} etiquetas</h3>
@@ -6094,7 +6169,7 @@ function EtiquetasModule({storeProducts,showToast}){
           <button style={{background:"none",border:"none",color:C.dim,cursor:"pointer"}} onClick={()=>setShowPreview(false)}>{I.x}</button>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexWrap:"wrap",gap:8,alignContent:"flex-start",justifyContent:"center"}} onClick={e=>e.stopPropagation()}>
-          {queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return Array.from({length:q.qty},(_,i)=>renderLabel(p,i));})}
+          {queue.map(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return null;return Array.from({length:q.qty},(_,i)=>renderLabel(p,q.size+"-"+i,q.size));})}
         </div>
       </div>}
     </div>

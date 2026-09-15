@@ -361,6 +361,7 @@ const api = {
   getProductPhoto: (id) => request(`/products/${id}/photo`),
   createProduct: (data) => request('/products', { method: 'POST', body: data }),
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PUT', body: data }),
+  renameProductCategory: (from, to) => request('/products/rename-category', { method: 'POST', body: { from, to } }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   uploadPhoto: async (id, file) => {
     if (!navigator.onLine) {
