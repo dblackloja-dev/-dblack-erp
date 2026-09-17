@@ -284,7 +284,7 @@ async function migrateLoyalty(pool) {
 
   // ─── Trigger principal: venda inserida ───
   // Mantém do sistema anterior: vincular cliente pelo WhatsApp e CRM (gasto/visitas).
-  // Novo: consumo de saldo, cashback por nível (dobro no aniversário), reavaliação de nível, recibo.
+  // Novo: consumo de saldo, cashback por nível, reavaliação de nível, recibo.
   await run(`
     CREATE OR REPLACE FUNCTION loyalty_sale_insert() RETURNS trigger AS $fn$
     DECLARE
@@ -337,7 +337,6 @@ async function migrateLoyalty(pool) {
 
       t := COALESCE(NULLIF((SELECT tier FROM customers WHERE id = cid),''),'BLACK');
       pct := loyalty_cfg_num('cashback_'||t);
-      IF t <> 'BLACK' AND loyalty_is_birthday_month(cid) THEN pct := pct * 2; END IF;
       cb := ROUND(COALESCE(NEW.total,0) * pct / 100, 2);
       IF cb > 0 THEN
         INSERT INTO cashback_ledger (id, customer_id, sale_id, type, amount, remaining, expires_at)

@@ -2074,7 +2074,7 @@ function CustomerSelector({customers,setCustomers,cartCustomer,setCartCustomer,s
               <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="WhatsApp c/ DDD *" value={qc.phone} onChange={e=>setQc(q=>({...q,phone:e.target.value}))}/>
               <input style={{...S.inp,fontSize:12,padding:"6px 10px"}} placeholder="CPF (ativa Cliente Black 🖤)" value={qc.cpf} onChange={e=>setQc(q=>({...q,cpf:e.target.value}))}/>
               <div style={{display:"flex",gap:5}}>
-                <input style={{...S.inp,fontSize:12,padding:"6px 10px",flex:1}} type="date" title="Aniversário (cashback em dobro no mês)" value={qc.birthdate} onChange={e=>setQc(q=>({...q,birthdate:e.target.value}))}/>
+                <input style={{...S.inp,fontSize:12,padding:"6px 10px",flex:1}} type="date" title="Aniversário" value={qc.birthdate} onChange={e=>setQc(q=>({...q,birthdate:e.target.value}))}/>
                 <input style={{...S.inp,fontSize:12,padding:"6px 10px",flex:1}} placeholder="Cidade" value={qc.city} onChange={e=>setQc(q=>({...q,city:e.target.value}))}/>
               </div>
             </div>

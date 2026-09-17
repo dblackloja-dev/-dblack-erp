@@ -189,11 +189,7 @@ async function quoteSale(pool, p) {
   const balanceUsed = round2(Math.min(Number(p.use_balance) || 0, balanceUsable));
   const totalPago = round2(afterDiscount - balanceUsed);
 
-  let cashbackPct = enrolled ? (Number(cfg['cashback_' + tier]) || 0) : 0;
-  if (enrolled && tier !== 'BLACK') {
-    const bd = (await pool.query('SELECT loyalty_is_birthday_month($1) b', [c.id])).rows[0].b;
-    if (bd) cashbackPct *= 2;
-  }
+  const cashbackPct = enrolled ? (Number(cfg['cashback_' + tier]) || 0) : 0;
   const cashbackValue = round2(totalPago * cashbackPct / 100);
 
   let prog = null;
@@ -214,7 +210,7 @@ async function quoteSale(pool, p) {
 // ─── Job diário (03h BRT; também disparável via POST /api/loyalty/daily-job) ───
 async function dailyJob(pool) {
   const cfg = await getConfig(pool);
-  const stats = { expired: 0, expiring_notified: 0, evaluated: 0, grace_notified: 0, birthdays: 0 };
+  const stats = { expired: 0, expiring_notified: 0, evaluated: 0, grace_notified: 0 };
 
   // 1) expira saldo vencido
   const ex = await pool.query(`
@@ -270,22 +266,7 @@ async function dailyJob(pool) {
     stats.grace_notified++;
   }
 
-  // 4) aniversariantes (dia 1: cashback em dobro no mês, para GOLD/DIAMOND)
   const t = todayBR();
-  if (t.slice(8, 10) === '01') {
-    const mm = t.slice(5, 7);
-    const bd = await pool.query(`
-      SELECT id FROM customers
-      WHERE length(regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')) = 11 AND tags NOT LIKE '%Interno%'
-        AND COALESCE(whatsapp,'') <> ''
-        AND (CASE WHEN birthdate ~ '^[0-9]{4}-' THEN substr(birthdate,6,2)
-                  WHEN birthdate ~ '^[0-9]{2}[-/]' THEN substr(birthdate,1,2) ELSE '' END) = $1`, [mm]);
-    for (const b of bd.rows) {
-      await pool.query(`SELECT loyalty_emit('birthday', $1, $2, '{}'::jsonb)`, [b.id, t.slice(0, 7)]);
-      stats.birthdays++;
-    }
-  }
-
   await pool.query(`INSERT INTO loyalty_config (key, value) VALUES ('last_daily_run', $1)
                     ON CONFLICT (key) DO UPDATE SET value = $1`, [t]);
   return stats;
