@@ -1447,11 +1447,28 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   }
   discountValue=Math.min(discountValue,cartSub); // não pode ser maior que o subtotal
 
+  // ── PROMO LEVE 4 PAGUE 3 (⚙️ Configurações) — a cada 4 peças do MESMO valor, 1 sai de brinde ──
+  // Aplica sozinha no período configurado; conta como promoção (desconto de nível não acumula).
+  const p43Cfg=appSettings?.promo_leve4;
+  const p43Today=localDateStr();
+  const promo43On=!!(p43Cfg?.active&&(!p43Cfg.from||p43Today>=p43Cfg.from)&&(!p43Cfg.to||p43Today<=p43Cfg.to));
+  var promo43Value=0,promo43Free=0,promo43Hint=0;
+  if(promo43On&&cart.length>0){
+    const byPrice={};
+    cart.forEach(i=>{const k=(Math.round(i.price*100)/100).toFixed(2);byPrice[k]=(byPrice[k]||0)+i.qty;});
+    Object.entries(byPrice).forEach(([price,qty])=>{
+      const free=Math.floor(qty/4);
+      if(free>0){promo43Free+=free;promo43Value+=free*(+price);}
+      if(qty%4===3&&!promo43Hint)promo43Hint=+price; // upsell: falta 1 peça pra fechar o brinde
+    });
+    promo43Value=Math.round(Math.min(promo43Value,Math.max(0,cartSub-discountValue))*100)/100;
+  }
+
   // ── CLIENTE BLACK (níveis + cashback) — cotação do servidor ──
   // O servidor decide desconto de nível (só à vista, fora de promoção) e saldo usável.
   // Sem internet a venda sai sem benefícios (o cashback ainda entra via trigger no banco).
   const custObjSel=customers.find(c=>c.name===cartCustomer);
-  const manualPct=cartSub>0?Math.round(discountValue/cartSub*10000)/100:0;
+  const manualPct=cartSub>0?Math.round((discountValue+promo43Value)/cartSub*10000)/100:0;
   const payMethodForQuote=payments.length?(payments.every(p=>["PIX","Dinheiro"].includes(p.method))?"PIX":"CREDITO"):((tab.currentMethod||"PIX").toUpperCase()==="DINHEIRO"?"DINHEIRO":(tab.currentMethod||"PIX").toUpperCase()==="PIX"?"PIX":"CREDITO");
   // quoteMatch: mesma elegibilidade (cliente/pagamento/promo) — o subtotal pode ter mudado;
   // o desconto escala localmente com o carrinho em vez de sumir até a cotação nova chegar.
@@ -1467,8 +1484,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const tierOverrideOn=tierEditable&&tab.tierOverride>0&&tab.tierOverrideCust===custObjSel?.id;
   const tierDiscountValue=tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,cartSub):tierAutoValue;
   const tierPctShown=cartSub>0&&tierDiscountValue>0?Math.round(tierDiscountValue/cartSub*1000)/10:0;
-  const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSub-discountValue-tierDiscountValue)*100)/100):0;
-  const cartTotal=Math.round(Math.max(0,cartSub-discountValue-tierDiscountValue-balanceUsed)*100)/100;
+  const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSub-discountValue-promo43Value-tierDiscountValue)*100)/100):0;
+  const cartTotal=Math.round(Math.max(0,cartSub-discountValue-promo43Value-tierDiscountValue-balanceUsed)*100)/100;
 
   // Cotação Cliente Black a cada mudança de cliente/carrinho/desconto/pagamento.
   // Primeira cotação do cliente sai na hora; as demais com debounce curto — a tela
@@ -1617,8 +1634,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const fullDiscountLabel=[discountValue>0?discountLabel:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
-    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:Math.round((discountValue+tierDiscountValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
+    const fullDiscountLabel=[promo43Value>0?`Leve 4 Pague 3 (${promo43Free} peça${promo43Free>1?"s":""} de brinde)`:"",discountValue>0?discountLabel:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:Math.round((discountValue+promo43Value+tierDiscountValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     // O saldo usado e o cashback são processados pelo servidor (trigger no banco);
     // balance_used vai na venda e é consumido de forma idempotente lá.
@@ -1835,6 +1852,11 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
             <span>Subtotal: {fmt(cartSub)}</span>
             <span style={{color:C.red}}>Desc: -{fmt(discountValue)}</span>
           </div>}
+          {promo43Value>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:2}}>
+            <span style={{color:C.gold,fontWeight:700}}>🎁 Leve 4 Pague 3 ({promo43Free} brinde{promo43Free>1?"s":""})</span>
+            <span style={{color:C.grn,fontWeight:700}}>-{fmt(promo43Value)}</span>
+          </div>}
+          {promo43On&&promo43Hint>0&&<div style={{fontSize:11,color:C.gold,fontWeight:600,marginBottom:2}}>🎁 Falta 1 peça de {fmt(promo43Hint)} pra levar 1 de brinde!</div>}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
             <span style={{fontSize:12,color:C.dim,letterSpacing:2}}>TOTAL</span>
             <span style={{fontSize:24,fontWeight:900,color:C.gold}}>{fmt(cartTotal)}</span>
@@ -5143,6 +5165,12 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
   const savedMargin=+(appSettings?.default_margin?.percent)||122;
   const [marginPct,setMarginPct]=useState(String(savedMargin));
   const [savingMargin,setSavingMargin]=useState(false);
+  // Promoção Leve 4 Pague 3 — o PDV aplica sozinho no período (peças do mesmo valor)
+  const p43Saved=appSettings?.promo_leve4||{};
+  const [p43Active,setP43Active]=useState(!!p43Saved.active);
+  const [p43From,setP43From]=useState(p43Saved.from||"");
+  const [p43To,setP43To]=useState(p43Saved.to||"");
+  const [p43Saving,setP43Saving]=useState(false);
   // Cliente Black — parâmetros do programa (loyalty_config no servidor)
   const [cbCfg,setCbCfg]=useState(null);
   const [cbSaving,setCbSaving]=useState(false);
@@ -5193,6 +5221,19 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
     }
   };
 
+  const saveP43=async()=>{
+    if(p43Active&&p43From&&p43To&&p43From>p43To)return showToast("Período inválido: início depois do fim.","error");
+    setP43Saving(true);
+    try{
+      const value={active:p43Active,from:p43From||"",to:p43To||""};
+      const r=await api.saveSetting('promo_leve4',value);
+      if(r?._offline)return showToast("Sem internet — tente novamente quando estiver online.","error");
+      setAppSettings(prev=>({...prev,promo_leve4:value}));
+      showToast(p43Active?"Promoção Leve 4 Pague 3 ativada!":"Promoção Leve 4 Pague 3 desativada.");
+    }catch(e){showToast("Erro ao salvar: "+e.message,"error");}
+    finally{setP43Saving(false);}
+  };
+
   return(
     <div>
       <div style={{marginBottom:16}}>
@@ -5233,6 +5274,31 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
         </div>
         <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
           Margem atual: <strong style={{color:C.gold}}>{savedMargin}%</strong>. Ex.: peça vendida a <strong style={{color:C.gold}}>{fmt(110.90)}</strong> → custo calculado <strong style={{color:C.gold}}>{fmt(110.90/(1+savedMargin/100))}</strong>.
+        </div>
+      </div>
+
+      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:520,marginTop:14}}>
+        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🎁 Promoção Leve 4 Pague 3</div>
+        <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
+          Cliente levando <strong style={{color:C.txt}}>4 peças do MESMO valor</strong>, 1 sai de brinde (a cada 4 iguais, 1 grátis).
+          O PDV aplica <strong style={{color:C.txt}}>sozinho</strong> no período abaixo, em todas as lojas, e avisa a vendedora quando faltar
+          1 peça para fechar o brinde. Conta como promoção: o desconto de nível do Cliente Black não acumula na mesma venda.
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            <input type="checkbox" checked={p43Active} onChange={e=>setP43Active(e.target.checked)}/>
+            Ativa
+          </label>
+          <span style={{fontSize:12,color:C.dim}}>de</span>
+          <input style={{...S.inp,fontSize:12,padding:"4px 6px"}} type="date" value={p43From} onChange={e=>setP43From(e.target.value)}/>
+          <span style={{fontSize:12,color:C.dim}}>até</span>
+          <input style={{...S.inp,fontSize:12,padding:"4px 6px"}} type="date" value={p43To} onChange={e=>setP43To(e.target.value)}/>
+          <button style={{...S.primBtn,opacity:p43Saving?.6:1}} disabled={p43Saving} onClick={saveP43}>{p43Saving?"Salvando...":"Salvar"}</button>
+        </div>
+        <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8}}>
+          {p43Saved.active
+            ?<>Promoção <strong style={{color:C.grn}}>ATIVA</strong>{p43Saved.from?<> de <strong style={{color:C.gold}}>{String(p43Saved.from).split("-").reverse().join("/")}</strong></>:null}{p43Saved.to?<> até <strong style={{color:C.gold}}>{String(p43Saved.to).split("-").reverse().join("/")}</strong></>:null}. Ex.: 4 peças de {fmt(99.90)} → cliente paga {fmt(3*99.90)}.</>
+            :<>Promoção desativada. Sem datas, fica ativa até desligar aqui.</>}
         </div>
       </div>
 
