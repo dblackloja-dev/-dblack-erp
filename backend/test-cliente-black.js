@@ -15,6 +15,8 @@ const PHONE2 = '5533999990003';      // cliente sem CPF
 const DIG2 = '33999990003';
 const CPF = '52998224725';           // CPF válido de teste
 const mm = String(new Date().getMonth() + 1).padStart(2, '0'); // aniversário no mês atual
+const dd = String(new Date().getDate()).padStart(2, '0');
+const ddOutro = String(new Date().getDate() === 15 ? 16 : 15).padStart(2, '0'); // dia ≠ hoje no mesmo mês
 const SALES = ['testcb-s1', 'testcb-s2', 'testcb-s3', 'testcb-s4', 'testcb-s5'];
 
 // gera CPF válido a partir de 9 dígitos
@@ -61,7 +63,7 @@ async function cleanup() {
   await cleanup();
 
   console.log('A) adesão com CPF');
-  let r = await api('POST', '/loyalty/enroll', { name: 'Cliente CB Teste', whatsapp: PHONE, cpf: CPF, birthdate: `1990-${mm}-15` });
+  let r = await api('POST', '/loyalty/enroll', { name: 'Cliente CB Teste', whatsapp: PHONE, cpf: CPF, birthdate: `1990-${mm}-${ddOutro}` });
   check('enroll 200 tier BLACK', r.status === 200 && r.body.tier === 'BLACK', r.body);
   let c = await getCust();
   check('cpf gravado', c && c.cpf === CPF);
@@ -75,7 +77,7 @@ async function cleanup() {
   console.log('B) cotação');
   r = await api('POST', '/sales/quote', { customer_id: c.id, subtotal: 200, payment_method: 'PIX', max_item_promo_pct: 0, use_balance: 0 });
   check('PIX: 10% de nível (−R$20)', r.body.tierDiscountPct === 10 && approx(r.body.tierDiscountValue, 20), r.body);
-  check('cashback 2% sobre 180 = 3,60', approx(r.body.cashbackValue, 3.6), r.body.cashbackValue);
+  check('cashback 1% sobre 180 = 1,80', approx(r.body.cashbackValue, 1.8), r.body.cashbackValue);
   r = await api('POST', '/sales/quote', { customer_id: c.id, subtotal: 200, payment_method: 'CREDITO' });
   check('crédito: sem desconto de nível', r.body.tierDiscountPct === 0, r.body);
   r = await api('POST', '/sales/quote', { customer_id: c.id, subtotal: 200, payment_method: 'PIX', max_item_promo_pct: 15 });
@@ -86,12 +88,12 @@ async function cleanup() {
   r = await api('POST', '/sales', { ...saleBase, id: SALES[0], subtotal: 200, discount: 20, tier_discount_pct: 10, tier_discount_value: 20, total: 180, cupom: 'CB-1' });
   check('POST /sales 200', r.status === 200, r);
   let led = (await pool.query(`SELECT * FROM cashback_ledger WHERE id='earn-'||$1`, [SALES[0]])).rows[0];
-  check('earn 3,60 no ledger', led && approx(led.amount, 3.6), led);
+  check('earn 1,80 no ledger', led && approx(led.amount, 1.8), led);
   let sale = (await pool.query('SELECT tier_at_sale, cashback_value FROM sales WHERE id=$1', [SALES[0]])).rows[0];
-  check('venda carimbada BLACK / 3,60', sale.tier_at_sale === 'BLACK' && approx(sale.cashback_value, 3.6), sale);
+  check('venda carimbada BLACK / 1,80', sale.tier_at_sale === 'BLACK' && approx(sale.cashback_value, 1.8), sale);
   check('evento sale_receipt', (await pool.query(`SELECT COUNT(*)::int n FROM loyalty_events WHERE customer_id=$1 AND event='sale_receipt'`, [c.id])).rows[0].n === 1);
   await api('POST', '/sales', { ...saleBase, id: SALES[0], subtotal: 200, discount: 20, total: 180, cupom: 'CB-1' });
-  check('replay: saldo continua 3,60', approx(await balance(c.id), 3.6), await balance(c.id));
+  check('replay: saldo continua 1,80', approx(await balance(c.id), 1.8), await balance(c.id));
 
   console.log('D) sobe para GOLD por valor (>= R$500 na janela)');
   await api('POST', '/sales', { ...saleBase, id: SALES[1], subtotal: 400, discount: 0, total: 400, cupom: 'CB-2', payments: [{ method: 'PIX', value: 400 }] });
@@ -99,23 +101,26 @@ async function cleanup() {
   check('tier GOLD', c.tier === 'GOLD', c.tier);
   check('evento tier_up', (await pool.query(`SELECT COUNT(*)::int n FROM loyalty_events WHERE customer_id=$1 AND event='tier_up'`, [c.id])).rows[0].n === 1);
 
-  console.log('E) aniversário NÃO dobra: GOLD no mês do aniversário segue 3%');
+  console.log('E) dobro SÓ no dia do aniversário (mês sozinho não dobra)');
   r = await api('POST', '/sales/quote', { customer_id: c.id, subtotal: 100, payment_method: 'PIX' });
-  check('quote 3% de volta', approx(r.body.cashbackPct, 3), r.body.cashbackPct);
+  check('mês do aniversário (dia ≠ hoje): 3%', approx(r.body.cashbackPct, 3), r.body.cashbackPct);
+  await pool.query('UPDATE customers SET birthdate=$1 WHERE id=$2', [`1990-${mm}-${dd}`, c.id]);
+  r = await api('POST', '/sales/quote', { customer_id: c.id, subtotal: 100, payment_method: 'PIX' });
+  check('dia do aniversário: 6%', approx(r.body.cashbackPct, 6), r.body.cashbackPct);
   await api('POST', '/sales', { ...saleBase, id: SALES[2], subtotal: 100, discount: 12, tier_discount_pct: 12, tier_discount_value: 12, total: 88, cupom: 'CB-3', payments: [{ method: 'PIX', value: 88 }] });
   led = (await pool.query(`SELECT * FROM cashback_ledger WHERE id='earn-'||$1`, [SALES[2]])).rows[0];
-  check('earn 88×3% = 2,64', led && approx(led.amount, 2.64), led && led.amount);
+  check('earn 88×6% = 5,28', led && approx(led.amount, 5.28), led && led.amount);
 
   console.log('F) usar saldo (libera resgate p/ teste)');
   await api('PUT', '/loyalty/config', { cashback_redeem_from: '2026-01-01' });
-  const balAntes = await balance(c.id); // 3,60 + 8,00 + 2,64 = 14,24
-  check('saldo acumulado 14,24', approx(balAntes, 14.24), balAntes);
+  const balAntes = await balance(c.id); // 1,80 + 4,00 + 5,28 = 11,08
+  check('saldo acumulado 11,08', approx(balAntes, 11.08), balAntes);
   r = await api('POST', '/sales/quote', { customer_id: c.id, subtotal: 50, payment_method: 'PIX', use_balance: 999999 });
-  check('quote usa todo saldo (14,24)', approx(r.body.balanceUsed, 14.24), r.body);
-  const total4 = Math.round((50 - 6 - 14.24) * 100) / 100; // 12% GOLD = 6
-  await api('POST', '/sales', { ...saleBase, id: SALES[3], subtotal: 50, discount: Math.round((6 + 14.24) * 100) / 100, tier_discount_pct: 12, tier_discount_value: 6, balance_used: 14.24, total: total4, cupom: 'CB-4', payments: [{ method: 'PIX', value: total4 }] });
-  const balDepois = await balance(c.id); // zerou e ganhou 29,76×3% = 0,89
-  check('saldo consumido e novo earn 0,89', approx(balDepois, 0.89), balDepois);
+  check('quote usa todo saldo (11,08)', approx(r.body.balanceUsed, 11.08), r.body);
+  const total4 = Math.round((50 - 6 - 11.08) * 100) / 100; // 12% GOLD = 6
+  await api('POST', '/sales', { ...saleBase, id: SALES[3], subtotal: 50, discount: Math.round((6 + 11.08) * 100) / 100, tier_discount_pct: 12, tier_discount_value: 6, balance_used: 11.08, total: total4, cupom: 'CB-4', payments: [{ method: 'PIX', value: total4 }] });
+  const balDepois = await balance(c.id); // zerou e ganhou 32,92×6% (dia do aniversário) = 1,98
+  check('saldo consumido e novo earn 1,98', approx(balDepois, 1.98), balDepois);
   check('redeem no ledger', (await pool.query(`SELECT COUNT(*)::int n FROM cashback_ledger WHERE id='redeem-'||$1`, [SALES[3]])).rows[0].n === 1);
 
   console.log('G) venda com saldo maior que o disponível é recusada');
@@ -124,8 +129,8 @@ async function cleanup() {
 
   console.log('H) cancelamento devolve saldo usado e estorna cashback');
   await api('PUT', '/sales/' + SALES[3], { status: 'Cancelada', canceled_by: 'teste', canceled_at: new Date().toISOString() });
-  const balCancel = await balance(c.id); // 0,89 estornado; 14,24 devolvido
-  check('saldo volta a 14,24', approx(balCancel, 14.24), balCancel);
+  const balCancel = await balance(c.id); // 1,98 estornado; 11,08 devolvido
+  check('saldo volta a 11,08', approx(balCancel, 11.08), balCancel);
   check('reversal no ledger', (await pool.query(`SELECT COUNT(*)::int n FROM cashback_ledger WHERE id='reversal-'||$1`, [SALES[3]])).rows[0].n === 1);
 
   console.log('I) job diário: expiração e aviso de vencimento');

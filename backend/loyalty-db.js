@@ -78,7 +78,7 @@ async function migrateLoyalty(pool) {
     diamond_min_sales: 12, diamond_min_value: 1000,
     grace_days: 30,
     discount_BLACK: 10, discount_GOLD: 12, discount_DIAMOND: 14,
-    cashback_BLACK: 2, cashback_GOLD: 3, cashback_DIAMOND: 5,
+    cashback_BLACK: 1, cashback_GOLD: 3, cashback_DIAMOND: 5,
     cashback_expiry_days: 90, min_redeem: 10, max_promo_discount_for_redeem: 30,
     cashback_redeem_from: '2026-10-01',
     promo_active: 0, promo_from: '', promo_to: '',
@@ -124,16 +124,16 @@ async function migrateLoyalty(pool) {
     $fn$ LANGUAGE sql STABLE;
   `, 'fn-enrolled');
 
-  // Mês de aniversário (birthdate 'YYYY-MM-DD' do CRM ou 'MM-DD')
+  // Dia do aniversário (birthdate 'YYYY-MM-DD' do CRM ou 'MM-DD'/'MM/DD')
   await run(`
-    CREATE OR REPLACE FUNCTION loyalty_is_birthday_month(cid TEXT) RETURNS BOOLEAN AS $fn$
+    CREATE OR REPLACE FUNCTION loyalty_is_birthday_day(cid TEXT) RETURNS BOOLEAN AS $fn$
       SELECT CASE
-        WHEN c.birthdate ~ '^[0-9]{4}-' THEN substr(c.birthdate,6,2)
-        WHEN c.birthdate ~ '^[0-9]{2}[-/]' THEN substr(c.birthdate,1,2)
-        ELSE '' END = to_char(NOW() AT TIME ZONE 'America/Sao_Paulo','MM')
+        WHEN c.birthdate ~ '^[0-9]{4}-' THEN substr(c.birthdate,6,5)
+        WHEN c.birthdate ~ '^[0-9]{2}[-/][0-9]{2}' THEN substr(c.birthdate,1,2)||'-'||substr(c.birthdate,4,2)
+        ELSE '' END = to_char(NOW() AT TIME ZONE 'America/Sao_Paulo','MM-DD')
       FROM customers c WHERE c.id = cid;
     $fn$ LANGUAGE sql STABLE;
-  `, 'fn-birthday');
+  `, 'fn-birthday-day');
 
   await run(`
     CREATE OR REPLACE FUNCTION loyalty_balance(cid TEXT) RETURNS NUMERIC AS $fn$
@@ -284,7 +284,7 @@ async function migrateLoyalty(pool) {
 
   // ─── Trigger principal: venda inserida ───
   // Mantém do sistema anterior: vincular cliente pelo WhatsApp e CRM (gasto/visitas).
-  // Novo: consumo de saldo, cashback por nível, reavaliação de nível, recibo.
+  // Novo: consumo de saldo, cashback por nível (dobro no dia do aniversário p/ GOLD+), reavaliação de nível, recibo.
   await run(`
     CREATE OR REPLACE FUNCTION loyalty_sale_insert() RETURNS trigger AS $fn$
     DECLARE
@@ -337,6 +337,7 @@ async function migrateLoyalty(pool) {
 
       t := COALESCE(NULLIF((SELECT tier FROM customers WHERE id = cid),''),'BLACK');
       pct := loyalty_cfg_num('cashback_'||t);
+      IF t <> 'BLACK' AND loyalty_is_birthday_day(cid) THEN pct := pct * 2; END IF;
       cb := ROUND(COALESCE(NEW.total,0) * pct / 100, 2);
       IF cb > 0 THEN
         INSERT INTO cashback_ledger (id, customer_id, sale_id, type, amount, remaining, expires_at)
