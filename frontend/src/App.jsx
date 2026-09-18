@@ -1416,14 +1416,34 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   }, [filtered.map(p=>p.id).join(',')]); // eslint-disable-line
   const cartSub=cart.reduce((s,i)=>s+i.price*i.qty,0);
 
-  // Discount calculation
+  // ── PROMO LEVE 4 PAGUE 3 (⚙️ Configurações) — a cada 4 peças do MESMO valor, 1 sai de brinde ──
+  // O brinde NÃO é desconto: sai da conta da venda (item a R$0 no registro, baixa estoque
+  // normal) e o subtotal da venda passa a ser só o que o cliente paga. Qualquer desconto
+  // (manual ou de nível) incide sobre esse valor pago (4×22,90 → paga 68,70; 10% = 6,87).
+  const p43Cfg=appSettings?.promo_leve4;
+  const p43Today=localDateStr();
+  const promo43On=!!(p43Cfg?.active&&(!p43Cfg.from||p43Today>=p43Cfg.from)&&(!p43Cfg.to||p43Today<=p43Cfg.to));
+  var promo43Value=0,promo43Free=0,promo43Hint=0;
+  if(promo43On&&cart.length>0){
+    const byPrice={};
+    cart.forEach(i=>{const k=(Math.round(i.price*100)/100).toFixed(2);byPrice[k]=(byPrice[k]||0)+i.qty;});
+    Object.entries(byPrice).forEach(([price,qty])=>{
+      const free=Math.floor(qty/4);
+      if(free>0){promo43Free+=free;promo43Value+=free*(+price);}
+      if(qty%4===3&&!promo43Hint)promo43Hint=+price; // upsell: falta 1 peça pra fechar o brinde
+    });
+    promo43Value=Math.round(Math.min(promo43Value,cartSub)*100)/100;
+  }
+  const cartSubAposPromo=Math.max(0,Math.round((cartSub-promo43Value)*100)/100);
+
+  // Discount calculation — % "na venda toda" incide sobre o subtotal sem o brinde
   var discountValue=0;
   var discountLabel="";
   var hasItemDiscounts=Object.values(itemDiscounts).some(function(v){return +v>0;});
   if((cartDiscount>0||hasItemDiscounts)&&cart.length>0){
     if(discountScope==="sale"){
       if(discountType==="percent"){
-        discountValue=cartSub*cartDiscount/100;
+        discountValue=cartSubAposPromo*cartDiscount/100;
         discountLabel=cartDiscount+"% na venda toda";
       } else {
         discountValue=cartDiscount;
@@ -1445,62 +1465,45 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       }
     }
   }
-  discountValue=Math.min(discountValue,cartSub); // não pode ser maior que o subtotal
-
-  // ── PROMO LEVE 4 PAGUE 3 (⚙️ Configurações) — a cada 4 peças do MESMO valor, 1 sai de brinde ──
-  // Aplica sozinha no período configurado; conta como promoção (desconto de nível não acumula).
-  const p43Cfg=appSettings?.promo_leve4;
-  const p43Today=localDateStr();
-  const promo43On=!!(p43Cfg?.active&&(!p43Cfg.from||p43Today>=p43Cfg.from)&&(!p43Cfg.to||p43Today<=p43Cfg.to));
-  var promo43Value=0,promo43Free=0,promo43Hint=0;
-  if(promo43On&&cart.length>0){
-    const byPrice={};
-    cart.forEach(i=>{const k=(Math.round(i.price*100)/100).toFixed(2);byPrice[k]=(byPrice[k]||0)+i.qty;});
-    Object.entries(byPrice).forEach(([price,qty])=>{
-      const free=Math.floor(qty/4);
-      if(free>0){promo43Free+=free;promo43Value+=free*(+price);}
-      if(qty%4===3&&!promo43Hint)promo43Hint=+price; // upsell: falta 1 peça pra fechar o brinde
-    });
-    promo43Value=Math.round(Math.min(promo43Value,Math.max(0,cartSub-discountValue))*100)/100;
-  }
+  discountValue=Math.min(discountValue,cartSubAposPromo); // não pode ser maior que o valor pago
 
   // ── CLIENTE BLACK (níveis + cashback) — cotação do servidor ──
   // O servidor decide desconto de nível (só à vista, fora de promoção) e saldo usável.
   // Sem internet a venda sai sem benefícios (o cashback ainda entra via trigger no banco).
   const custObjSel=customers.find(c=>c.name===cartCustomer);
-  const manualPct=cartSub>0?Math.round((discountValue+promo43Value)/cartSub*10000)/100:0;
+  const manualPct=cartSubAposPromo>0?Math.round(discountValue/cartSubAposPromo*10000)/100:0;
   const payMethodForQuote=payments.length?(payments.every(p=>["PIX","Dinheiro"].includes(p.method))?"PIX":"CREDITO"):((tab.currentMethod||"PIX").toUpperCase()==="DINHEIRO"?"DINHEIRO":(tab.currentMethod||"PIX").toUpperCase()==="PIX"?"PIX":"CREDITO");
   // quoteMatch: mesma elegibilidade (cliente/pagamento/promo) — o subtotal pode ter mudado;
   // o desconto escala localmente com o carrinho em vez de sumir até a cotação nova chegar.
   const quoteMatch=cbQuote&&cbQuote._custId===(custObjSel?.id||null)&&cbQuote.maxItemPromoPct===manualPct&&cbQuote._payMethod===payMethodForQuote;
-  const quoteFresh=quoteMatch&&cbQuote.subtotal===cartSub;
+  const quoteFresh=quoteMatch&&cbQuote.subtotal===cartSubAposPromo;
   const tierPctBase=quoteMatch?(cbQuote.tierDiscountPct||0):0;
-  const tierAutoValue=quoteFresh?(cbQuote.tierDiscountValue||0):Math.round(cartSub*tierPctBase)/100;
+  const tierAutoValue=quoteFresh?(cbQuote.tierDiscountValue||0):Math.round(cartSubAposPromo*tierPctBase)/100;
   // Só o nível BLACK permite ajustar o desconto (peça anunciada com preço arredondado);
   // GOLD/DIAMOND ficam travados nos 12/14%. Teto de 30% contra erro de digitação.
   const tierEditable=quoteMatch&&cbQuote.tier==="BLACK"&&tierPctBase>0;
-  const tierMaxEdit=Math.round(cartSub*30)/100;
+  const tierMaxEdit=Math.round(cartSubAposPromo*30)/100;
   // O ajuste fica amarrado ao cliente da comanda — trocou o cliente, volta ao padrão
   const tierOverrideOn=tierEditable&&tab.tierOverride>0&&tab.tierOverrideCust===custObjSel?.id;
-  const tierDiscountValue=tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,cartSub):tierAutoValue;
-  const tierPctShown=cartSub>0&&tierDiscountValue>0?Math.round(tierDiscountValue/cartSub*1000)/10:0;
-  const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSub-discountValue-promo43Value-tierDiscountValue)*100)/100):0;
-  const cartTotal=Math.round(Math.max(0,cartSub-discountValue-promo43Value-tierDiscountValue-balanceUsed)*100)/100;
+  const tierDiscountValue=tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,cartSubAposPromo):tierAutoValue;
+  const tierPctShown=cartSubAposPromo>0&&tierDiscountValue>0?Math.round(tierDiscountValue/cartSubAposPromo*1000)/10:0;
+  const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue)*100)/100):0;
+  const cartTotal=Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue-balanceUsed)*100)/100;
 
   // Cotação Cliente Black a cada mudança de cliente/carrinho/desconto/pagamento.
   // Primeira cotação do cliente sai na hora; as demais com debounce curto — a tela
   // não depende dela para mostrar o desconto (escala local via quoteMatch acima).
   useEffect(()=>{
-    if(!custObjSel?.id||cartSub<=0){setCbQuote(null);return;}
+    if(!custObjSel?.id||cartSubAposPromo<=0){setCbQuote(null);return;}
     const isNewCust=cbQuote?._custId!==custObjSel.id;
     const t=setTimeout(()=>{
-      api.quoteSale({customer_id:custObjSel.id,subtotal:cartSub,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0})
+      api.quoteSale({customer_id:custObjSel.id,subtotal:cartSubAposPromo,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0})
         .then(q=>{if(q&&!q._offline)setCbQuote({...q,_custId:custObjSel.id,_payMethod:payMethodForQuote});})
         .catch(()=>setCbQuote(null));
     },isNewCust?0:120);
     return ()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[custObjSel?.id,cartSub,manualPct,payMethodForQuote,tab.useBalance]);
+  },[custObjSel?.id,cartSubAposPromo,manualPct,payMethodForQuote,tab.useBalance]);
 
   // Fecha o editor do desconto ao trocar de cliente/comanda
   useEffect(()=>{setTierEditing(false);},[custObjSel?.id,activeTabIdx]);
@@ -1516,7 +1519,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   // Limite global em % sobre o subtotal; vale para desconto fixo e por item também.
   // Admin não tem limite. Acima do limite exige liberação com senha de gerente/gestor/admin.
   const discountLimitPct=+(appSettings?.discount_limit?.percent)||0; // 0 = sem limite
-  const discountPct=cartSub>0?discountValue/cartSub*100:0;
+  const discountPct=cartSubAposPromo>0?discountValue/cartSubAposPromo*100:0;
   const discountAuth=tab.discountAuth||null;
   // A liberação vale para o valor autorizado (ou menor) — se aumentar o desconto, pede senha de novo
   const discountAuthValid=discountAuth&&discountValue<=discountAuth.value+0.001;
@@ -1634,8 +1637,27 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const fullDiscountLabel=[promo43Value>0?`Leve 4 Pague 3 (${promo43Free} peça${promo43Free>1?"s":""} de brinde)`:"",discountValue>0?discountLabel:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
-    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id})),subtotal:cartSub,discount:Math.round((discountValue+promo43Value+tierDiscountValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
+    const fullDiscountLabel=[discountValue>0?discountLabel:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
+    // Leve 4 Pague 3: o brinde vira item de R$0 (baixa estoque, não entra na conta nem como desconto)
+    let saleItems=cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id}));
+    if(promo43Free>0){
+      const freeLeft={};
+      const byPrice={};
+      cart.forEach(i=>{const k=(Math.round(i.price*100)/100).toFixed(2);byPrice[k]=(byPrice[k]||0)+i.qty;});
+      Object.entries(byPrice).forEach(([p,q])=>{const f=Math.floor(q/4);if(f>0)freeLeft[p]=f;});
+      const out=[];
+      for(const it of saleItems){
+        const k=(Math.round(it.price*100)/100).toFixed(2);
+        const take=Math.min(freeLeft[k]||0,it.qty);
+        if(take>0){
+          freeLeft[k]-=take;
+          if(it.qty-take>0)out.push({...it,qty:it.qty-take});
+          out.push({...it,qty:take,price:0,name:it.name+" 🎁 BRINDE"});
+        } else out.push(it);
+      }
+      saleItems=out;
+    }
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:saleItems,subtotal:cartSubAposPromo,discount:Math.round((discountValue+tierDiscountValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     // O saldo usado e o cashback são processados pelo servidor (trigger no banco);
     // balance_used vai na venda e é consumido de forma idempotente lá.
