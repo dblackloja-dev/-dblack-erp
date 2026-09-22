@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Cliente Black — D'Black Store</title>
+  <meta name="description" content="Cadastre-se no Cliente Black e ganhe desconto à vista e cashback em todas as compras na D'Black Store.">
+  <meta property="og:title" content="Cliente Black 🖤 D'Black Store">
+  <meta property="og:description" content="Desconto à vista, cashback e mimo de aniversário. Cadastre-se grátis.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --card: #141414;
+      --card2: #1b1b1b;
+      --line: #2a2a2a;
+      --gold: #d4af37;
+      --gold-soft: #e8cd6f;
+      --diamond: #9ad7f5;
+      --text: #f2f2f2;
+      --muted: #9a9a9a;
+      --ok: #35c46f;
+      --err: #ff5b5b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: 'Archivo', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(212,175,55,.12), transparent);
+    }
+    .wrap { max-width: 460px; margin: 0 auto; padding: 28px 20px 60px; }
+
+    .logo { text-align: center; letter-spacing: .35em; font-weight: 900; font-size: 15px; color: var(--muted); }
+    .logo b { color: var(--text); }
+    h1 {
+      text-align: center; margin-top: 18px; font-size: 34px; font-weight: 900; line-height: 1.1;
+      letter-spacing: -.01em;
+    }
+    h1 .black { display: block; }
+    h1 .grad {
+      background: linear-gradient(90deg, #fff 0%, var(--gold-soft) 55%, var(--gold) 100%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .sub { text-align: center; color: var(--muted); margin-top: 10px; font-size: 15px; line-height: 1.5; }
+
+    .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 26px; }
+    .tier {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 14px 8px; text-align: center;
+    }
+    .tier .name { font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+    .tier .disc { font-size: 24px; font-weight: 900; margin-top: 6px; }
+    .tier .cb { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
+    .tier.t-black { border-color: #3a3a3a; }
+    .tier.t-gold { border-color: rgba(212,175,55,.55); }
+    .tier.t-gold .name, .tier.t-gold .disc { color: var(--gold-soft); }
+    .tier.t-diamond { border-color: rgba(154,215,245,.5); }
+    .tier.t-diamond .name, .tier.t-diamond .disc { color: var(--diamond); }
+    .tiers-note { text-align: center; color: var(--muted); font-size: 11.5px; margin-top: 8px; }
+
+    .perks { margin-top: 22px; display: grid; gap: 10px; }
+    .perk {
+      display: flex; gap: 12px; align-items: flex-start;
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px;
+    }
+    .perk .ico { font-size: 18px; line-height: 1.3; }
+    .perk .tx { font-size: 13.5px; line-height: 1.45; color: #d9d9d9; }
+    .perk .tx b { color: var(--text); }
+
+    .form-card {
+      margin-top: 28px; background: var(--card2); border: 1px solid var(--line);
+      border-radius: 18px; padding: 20px 18px 18px;
+    }
+    .form-card h2 { font-size: 17px; font-weight: 800; }
+    .form-card p.hint { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+    label { display: block; margin-top: 14px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: #cfcfcf; }
+    label .opt { color: var(--muted); font-weight: 400; }
+    input {
+      width: 100%; margin-top: 6px; padding: 13px 14px; border-radius: 12px;
+      border: 1px solid var(--line); background: #0f0f0f; color: var(--text);
+      font-size: 16px; font-family: inherit; outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: var(--gold); }
+    input::placeholder { color: #555; }
+    input[type="date"] { color-scheme: dark; min-height: 48px; }
+
+    button {
+      width: 100%; margin-top: 20px; padding: 15px; border: 0; border-radius: 12px;
+      background: linear-gradient(90deg, var(--gold) 0%, var(--gold-soft) 100%);
+      color: #111; font-family: inherit; font-size: 16px; font-weight: 800; letter-spacing: .02em;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .55; }
+    .lgpd { margin-top: 12px; color: #777; font-size: 11px; line-height: 1.5; text-align: center; }
+
+    .msg { margin-top: 14px; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; line-height: 1.45; display: none; }
+    .msg.err { display: block; background: rgba(255,91,91,.1); border: 1px solid rgba(255,91,91,.35); color: #ffb3b3; }
+
+    .success { display: none; text-align: center; padding-top: 40px; }
+    .success .heart { font-size: 54px; }
+    .success h2 { font-size: 26px; font-weight: 900; margin-top: 14px; }
+    .success .tier-badge {
+      display: inline-block; margin-top: 14px; padding: 8px 18px; border-radius: 999px;
+      border: 1px solid var(--gold); color: var(--gold-soft); font-weight: 800; letter-spacing: .12em; font-size: 13px;
+    }
+    .success p { color: var(--muted); margin-top: 16px; font-size: 14.5px; line-height: 1.6; }
+    .footer { text-align: center; color: #555; font-size: 11px; margin-top: 40px; letter-spacing: .2em; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <main id="main">
+      <div class="logo"><b>D'BLACK</b> STORE</div>
+      <h1><span class="black">CLIENTE</span><span class="grad">BLACK 🖤</span></h1>
+      <p class="sub">O programa de vantagens da D'Black.<br>Grátis, pra sempre, direto no seu WhatsApp.</p>
+
+      <div class="tiers">
+        <div class="tier t-black">
+          <div class="name">BLACK</div>
+          <div class="disc">10%</div>
+          <div class="cb">à vista<br>+ 1% cashback</div>
+        </div>
+        <div class="tier t-gold">
+          <div class="name">GOLD</div>
+          <div class="disc">12%</div>
+          <div class="cb">à vista<br>+ 3% cashback</div>
+        </div>
+        <div class="tier t-diamond">
+          <div class="name">DIAMOND</div>
+          <div class="disc">14%</div>
+          <div class="cb">à vista<br>+ 5% cashback</div>
+        </div>
+      </div>
+      <p class="tiers-note">Quanto mais você compra, mais você sobe de nível — automático.</p>
+
+      <div class="perks">
+        <div class="perk"><div class="ico">💸</div><div class="tx"><b>Desconto à vista</b> (Pix ou dinheiro) em toda compra fora de promoção.</div></div>
+        <div class="perk"><div class="ico">🪙</div><div class="tx"><b>Cashback em toda compra</b> — vira saldo pra abater nas próximas.</div></div>
+        <div class="perk"><div class="ico">🎂</div><div class="tx"><b>No dia do seu aniversário</b>, clientes GOLD e DIAMOND ganham cashback em <b>DOBRO</b>.</div></div>
+        <div class="perk"><div class="ico">📲</div><div class="tx">Tudo pelo <b>WhatsApp</b>: você recebe seu nível, saldo e novidades sem baixar nada.</div></div>
+      </div>
+
+      <div class="form-card">
+        <h2>Cadastre-se agora</h2>
+        <p class="hint">Leva menos de 1 minuto.</p>
+        <form id="form">
+          <label for="name">Nome completo</label>
+          <input id="name" name="name" type="text" autocomplete="name" placeholder="Seu nome" required maxlength="80">
+
+          <label for="whatsapp">WhatsApp (com DDD)</label>
+          <input id="whatsapp" name="whatsapp" type="tel" autocomplete="tel" inputmode="numeric" placeholder="(33) 99999-9999" required>
+
+          <label for="cpf">CPF</label>
+          <input id="cpf" name="cpf" type="text" inputmode="numeric" placeholder="000.000.000-00" required>
+
+          <label for="birthdate">Data de nascimento <span class="opt">(opcional — pro mimo de aniversário 🎁)</span></label>
+          <input id="birthdate" name="birthdate" type="date" max="2012-12-31" min="1920-01-01">
+
+          <button id="btn" type="submit">QUERO SER CLIENTE BLACK 🖤</button>
+          <div id="msg" class="msg err"></div>
+          <p class="lgpd">Ao se cadastrar você autoriza a D'Black Store a usar seus dados para o programa de fidelidade e a enviar mensagens sobre ele no seu WhatsApp. Para sair, basta responder SAIR a qualquer momento.</p>
+        </form>
+      </div>
+
+      <div class="footer">D'BLACK STORE</div>
+    </main>
+
+    <div id="success" class="success">
+      <div class="heart">🖤</div>
+      <h2>Bem-vindo ao<br>Cliente Black!</h2>
+      <div class="tier-badge" id="tierBadge">NÍVEL BLACK</div>
+      <p>Seu cadastro foi confirmado.<br>Você vai receber uma mensagem de boas-vindas<br>no seu <b>WhatsApp</b> em instantes. 📲</p>
+      <p>Seus descontos já valem na próxima compra —<br>é só informar seu nome ou CPF no caixa.</p>
+      <div class="footer">D'BLACK STORE</div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const digits = (s) => s.replace(/\D/g, '');
+
+    // Máscaras leves (formatam enquanto digita)
+    $('cpf').addEventListener('input', (e) => {
+      let v = digits(e.target.value).slice(0, 11);
+      v = v.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2');
+      e.target.value = v;
+    });
+    $('whatsapp').addEventListener('input', (e) => {
+      let v = digits(e.target.value).slice(0, 11);
+      if (v.length > 6) v = `(${v.slice(0, 2)}) ${v.slice(2, 7)}-${v.slice(7)}`;
+      else if (v.length > 2) v = `(${v.slice(0, 2)}) ${v.slice(2)}`;
+      e.target.value = v;
+    });
+
+    $('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('btn'), msg = $('msg');
+      msg.style.display = 'none';
+
+      const body = {
+        name: $('name').value.trim(),
+        whatsapp: digits($('whatsapp').value),
+        cpf: digits($('cpf').value),
+        birthdate: $('birthdate').value || '',
+      };
+      if (body.whatsapp.length < 10) { msg.textContent = 'Informe o WhatsApp com DDD (ex: 33 99999-9999).'; msg.style.display = 'block'; return; }
+      if (body.cpf.length !== 11) { msg.textContent = 'CPF incompleto — confira os 11 números.'; msg.style.display = 'block'; return; }
+
+      btn.disabled = true;
+      btn.textContent = 'CADASTRANDO...';
+      try {
+        const r = await fetch('/api/loyalty/public-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.ok) {
+          $('tierBadge').textContent = 'NÍVEL ' + (data.tier || 'BLACK');
+          $('main').style.display = 'none';
+          $('success').style.display = 'block';
+          window.scrollTo(0, 0);
+        } else {
+          msg.textContent = data.error || 'Não foi possível cadastrar agora. Tente de novo em instantes.';
+          msg.style.display = 'block';
+        }
+      } catch (err) {
+        msg.textContent = 'Falha de conexão — verifique sua internet e tente de novo.';
+        msg.style.display = 'block';
+      }
+      btn.disabled = false;
+      btn.textContent = 'QUERO SER CLIENTE BLACK 🖤';
+    });
+  </script>
+</body>
+</html>

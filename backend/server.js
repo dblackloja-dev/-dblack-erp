@@ -78,6 +78,8 @@ const authMiddleware = (req, res, next) => {
 // Pré-cadastro público do Cliente Black (link na bio) — único endpoint sem token, com rate limit
 const loyalty = require('./loyalty');
 app.post('/api/loyalty/public-signup', loyalty.publicSignupHandler(pool));
+// Página pública de adesão (link enviado pelo chat/bio) — mesma origem do endpoint acima
+app.get('/cliente-black', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cliente-black.html')));
 
 app.use('/api', authMiddleware);
 
