@@ -95,6 +95,67 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
 // ─── CLIENTE BLACK — quote, cadastro, config, dashboard, jobs ───
 app.use('/api', loyalty.router(pool, { requireRole }));
 
+// ─── LIBERAÇÃO REMOTA DE DESCONTO ───
+// O caixa pede a liberação de um desconto acima do limite e um admin/gestor/gerente
+// aprova de qualquer computador (sem digitar senha no PDV). Pedido expira em 15 min.
+const AUTH_REQ_TTL = "created_at > NOW() - interval '15 minutes'";
+
+app.post('/api/discount-auth', async (req, res) => {
+  try {
+    const { store_id, subtotal, discount_value, discount_pct, customer_name } = req.body;
+    if (!(Number(discount_value) > 0)) return res.status(400).json({ error: 'Desconto inválido' });
+    // Um pedido ativo por caixa — pedir de novo cancela o anterior
+    await queryRun("UPDATE discount_auth_requests SET status = 'canceled' WHERE status = 'pending' AND requested_by_id = $1", [req.user.id]);
+    const id = uuidv4();
+    await queryRun(
+      `INSERT INTO discount_auth_requests (id, store_id, requested_by_id, requested_by_name, subtotal, discount_value, discount_pct, customer_name, status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW())`,
+      [id, store_id || '', req.user.id, req.user.name || '', Number(subtotal) || 0, Number(discount_value), Number(discount_pct) || 0, customer_name || '']
+    );
+    res.json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Pendentes (sino do admin) — só dos últimos 15 min
+app.get('/api/discount-auth/pending', requireRole('admin', 'gestor', 'gerente'), async (req, res) => {
+  try {
+    const rows = await queryAll(`SELECT * FROM discount_auth_requests WHERE status = 'pending' AND ${AUTH_REQ_TTL} ORDER BY created_at`);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Status de um pedido (o PDV fica pollando enquanto aguarda)
+app.get('/api/discount-auth/:id', async (req, res) => {
+  try {
+    const r = await queryOne('SELECT * FROM discount_auth_requests WHERE id = $1', [req.params.id]);
+    if (!r) return res.status(404).json({ error: 'Pedido não encontrado' });
+    if (r.status === 'pending' && new Date(r.created_at).getTime() < Date.now() - 15 * 60 * 1000) r.status = 'expired';
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Decisão remota — fica registrado quem liberou/negou
+app.post('/api/discount-auth/:id/decide', requireRole('admin', 'gestor', 'gerente'), async (req, res) => {
+  try {
+    const approved = req.body.approved === true;
+    const result = await queryRun(
+      `UPDATE discount_auth_requests SET status = $1, decided_by_id = $2, decided_by_name = $3, decided_at = NOW()
+       WHERE id = $4 AND status = 'pending' AND ${AUTH_REQ_TTL}`,
+      [approved ? 'approved' : 'denied', req.user.id, req.user.name || '', req.params.id]
+    );
+    if (!result.rowCount) return res.status(409).json({ error: 'Pedido já decidido, cancelado ou expirado' });
+    res.json({ ok: true, status: approved ? 'approved' : 'denied' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Caixa desiste do pedido
+app.post('/api/discount-auth/:id/cancel', async (req, res) => {
+  try {
+    await queryRun("UPDATE discount_auth_requests SET status = 'canceled' WHERE id = $1 AND status = 'pending' AND requested_by_id = $2", [req.params.id, req.user.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Multer — upload de fotos de produtos
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -2155,8 +2216,24 @@ app.listen(PORT, () => {
   console.log(`D'BLACK ERP rodando na porta ${PORT}`);
 });
 
-initDB().then(() => {
+initDB().then(async () => {
   console.log('✅ Banco de dados conectado!');
+  // Liberação remota de desconto (caixa pede, admin aprova de outro computador)
+  await queryRun(`CREATE TABLE IF NOT EXISTS discount_auth_requests (
+    id TEXT PRIMARY KEY,
+    store_id TEXT DEFAULT '',
+    requested_by_id TEXT NOT NULL,
+    requested_by_name TEXT DEFAULT '',
+    subtotal NUMERIC DEFAULT 0,
+    discount_value NUMERIC NOT NULL,
+    discount_pct NUMERIC DEFAULT 0,
+    customer_name TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by_id TEXT,
+    decided_by_name TEXT,
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(err => console.error('discount_auth_requests:', err.message));
   loyalty.scheduleDailyJob(pool); // Cliente Black: expiração de saldo, níveis, avisos (03h BRT)
 }).catch(err => {
   console.error('❌ Falha ao inicializar banco:', err.message);

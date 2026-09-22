@@ -349,6 +349,24 @@ const api = {
     return res.json();
   },
 
+  // Liberação remota de desconto (caixa pede, admin aprova de outro computador).
+  // Fetch direto sem fila offline — pedido/decisão atrasados não fazem sentido.
+  _directFetch: async (path, options = {}) => {
+    const res = await fetch(`${BASE}${path}`, {
+      method: options.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Erro na requisição');
+    return data;
+  },
+  requestDiscountAuth(data) { return this._directFetch('/discount-auth', { method: 'POST', body: data }); },
+  getDiscountAuth(id) { return this._directFetch(`/discount-auth/${id}`); },
+  getPendingDiscountAuths() { return this._directFetch('/discount-auth/pending'); },
+  decideDiscountAuth(id, approved) { return this._directFetch(`/discount-auth/${id}/decide`, { method: 'POST', body: { approved } }); },
+  cancelDiscountAuth(id) { return this._directFetch(`/discount-auth/${id}/cancel`, { method: 'POST' }); },
+
   // Users
   getUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: data }),

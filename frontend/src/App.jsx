@@ -264,6 +264,71 @@ const C = { bg:"#0A0A0C", s1:"#111114", s2:"#18181C", s3:"#1F1F24", brd:"rgba(25
 // ════════════════════════════════════════
 // ═══  MAIN APP — LOGIN + MULTISTORE  ═══
 // ════════════════════════════════════════
+// ─── SINO DE LIBERAÇÕES REMOTAS ───
+// Admin/gestor/gerente vê os pedidos de desconto acima do limite feitos nos caixas
+// e aprova/nega daqui, de qualquer computador. Polling leve a cada 10s.
+function RemoteAuthBell({loggedUser,showToast}){
+  const [pending,setPending]=useState([]);
+  const [open,setOpen]=useState(false);
+  const [deciding,setDeciding]=useState(null);
+  const canDecide=["admin","gestor","gerente"].includes(loggedUser?.role);
+  const prevCount=useRef(0);
+  useEffect(()=>{
+    if(!canDecide)return;
+    let alive=true;
+    const load=async()=>{
+      try{
+        const rows=await api.getPendingDiscountAuths();
+        if(!alive||!Array.isArray(rows))return;
+        if(rows.length>prevCount.current)setOpen(true); // pedido novo abre o painel sozinho
+        prevCount.current=rows.length;
+        setPending(rows);
+      }catch{}
+    };
+    load();
+    const t=setInterval(load,10000);
+    return()=>{alive=false;clearInterval(t);};
+  },[canDecide]);
+  if(!canDecide||pending.length===0)return null;
+  const decide=async(id,approved)=>{
+    setDeciding(id);
+    try{
+      await api.decideDiscountAuth(id,approved);
+      setPending(p=>p.filter(r=>r.id!==id));
+      prevCount.current=Math.max(0,prevCount.current-1);
+      showToast(approved?"Desconto liberado! O caixa já pode finalizar.":"Pedido negado.");
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setDeciding(null);
+  };
+  const storeName=(id)=>STORES.find(s=>s.id===id)?.name||id||"?";
+  return(
+    <div style={{position:"relative"}}>
+      <button onClick={()=>setOpen(o=>!o)} title="Pedidos de liberação de desconto"
+        style={{position:"relative",padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,143,0,.5)",background:"rgba(255,143,0,.12)",color:"#FF8F00",cursor:"pointer",fontSize:12,fontWeight:800,fontFamily:"inherit",animation:"pulse 1.5s infinite"}}>
+        🔓 {pending.length} liberação{pending.length>1?"ões":""}
+      </button>
+      {open&&<div style={{position:"absolute",top:"110%",right:0,zIndex:300,width:320,maxWidth:"90vw",background:C.s1,border:`1px solid ${C.brd}`,borderRadius:12,padding:10,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
+        <div style={{fontSize:11,fontWeight:800,color:C.dim,letterSpacing:1,marginBottom:8}}>🔓 PEDIDOS DE LIBERAÇÃO DE DESCONTO</div>
+        {pending.map(r=>(
+          <div key={r.id} style={{padding:"8px 10px",borderRadius:8,background:C.s2,border:`1px solid ${C.brd}`,marginBottom:6}}>
+            <div style={{fontSize:12,fontWeight:700}}>{r.requested_by_name||"Caixa"} — {storeName(r.store_id)}</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:2}}>
+              {r.customer_name?<>Cliente: {r.customer_name} · </>:null}
+              Subtotal {fmt(r.subtotal)} · Desconto <strong style={{color:"#FF8F00"}}>{fmt(r.discount_value)} ({Number(r.discount_pct).toFixed(1)}%)</strong>
+            </div>
+            <div style={{display:"flex",gap:6,marginTop:6}}>
+              <button disabled={deciding===r.id} onClick={()=>decide(r.id,true)}
+                style={{flex:1,padding:"7px",borderRadius:7,border:"none",background:C.grn,color:"#000",cursor:"pointer",fontSize:11,fontWeight:800,fontFamily:"inherit",opacity:deciding===r.id?.6:1}}>✓ Liberar</button>
+              <button disabled={deciding===r.id} onClick={()=>decide(r.id,false)}
+                style={{flex:1,padding:"7px",borderRadius:7,border:`1px solid ${C.red}`,background:"transparent",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,fontFamily:"inherit",opacity:deciding===r.id?.6:1}}>✕ Negar</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
 export default function App() {
   // Auth
   const [loggedUser, setLoggedUser] = useState(null);
@@ -901,6 +966,7 @@ export default function App() {
             <span style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:currentStore.color+"18",color:currentStore.color,fontWeight:700,border:`1px solid ${currentStore.color}33`}}>{currentStore.name}</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <RemoteAuthBell loggedUser={loggedUser} showToast={showToast}/>
             <div style={{fontSize:11,color:C.dim,display:"flex",alignItems:"center",gap:4}}>{I.store} <span>{loggedUser.name}</span></div>
           </div>
         </header>
@@ -1240,6 +1306,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   const [showDiscountPanel,setShowDiscountPanel]=useState(false);
   const [authPassInput,setAuthPassInput]=useState("");
   const [authVerifying,setAuthVerifying]=useState(false);
+  const [remoteAuthReq,setRemoteAuthReq]=useState(null); // {id} — pedido de liberação remota aguardando decisão
   const [showShortcuts,setShowShortcuts]=useState(false);
   const [lastReceipt,setLastReceipt]=useState(null);
   const [autoFlow,setAutoFlow]=useState(false);
@@ -1545,6 +1612,41 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       setAuthVerifying(false);
     }
   };
+
+  // ── Liberação REMOTA: o caixa pede e um admin/gestor/gerente aprova de outro computador ──
+  const requestRemoteAuth=async()=>{
+    if(!navigator.onLine)return showToast("Sem internet — não é possível pedir liberação remota.","error");
+    try{
+      const r=await api.requestDiscountAuth({store_id:activeStore,subtotal:cartSubAposPromo,discount_value:discountValue,discount_pct:Math.round(discountPct*10)/10,customer_name:custObjSel?.name||tab.customer||""});
+      setRemoteAuthReq({id:r.id,value:discountValue});
+      showToast("Pedido enviado! Aguardando liberação do gerente...");
+    }catch(e){showToast("Erro ao pedir liberação: "+e.message,"error");}
+  };
+  const cancelRemoteAuth=()=>{
+    if(remoteAuthReq?.id)api.cancelDiscountAuth(remoteAuthReq.id).catch(()=>{});
+    setRemoteAuthReq(null);
+  };
+  // Polla o pedido a cada 3s enquanto aguarda a decisão
+  useEffect(()=>{
+    if(!remoteAuthReq?.id)return;
+    const t=setInterval(async()=>{
+      try{
+        const r=await api.getDiscountAuth(remoteAuthReq.id);
+        if(!r||r.status==="pending")return;
+        setRemoteAuthReq(null);
+        if(r.status==="approved"){
+          upTab({discountAuth:{by:(r.decided_by_name||"Gerente")+" (remoto)",id:r.decided_by_id||"",value:Number(remoteAuthReq.value)||discountValue}});
+          showToast("Desconto liberado remotamente por "+(r.decided_by_name||"gerente")+"!");
+        }else if(r.status==="denied"){
+          showToast("Liberação NEGADA por "+(r.decided_by_name||"gerente")+".","error");
+        }else{
+          showToast("Pedido de liberação expirou — peça de novo.","error");
+        }
+      }catch{}
+    },3000);
+    return()=>clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[remoteAuthReq?.id]);
 
   // Payment calculations
   const totalPaid=payments.reduce((s,p)=>s+p.value,0);
@@ -1853,11 +1955,17 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                 {/* Limite de desconto excedido — pede liberação de gerente */}
                 {discountBlocked&&<div style={{marginTop:6,padding:"8px 10px",background:"rgba(255,143,0,.08)",border:"1px solid rgba(255,143,0,.35)",borderRadius:8}}>
                   <div style={{fontSize:11,fontWeight:700,color:C.org,marginBottom:4}}>🔒 Desconto acima do limite de {discountLimitPct}%</div>
-                  <div style={{fontSize:10,color:C.dim,marginBottom:6}}>Este desconto é de {discountPct.toFixed(1)}%. Peça a um gerente para digitar a senha e liberar esta venda.</div>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:6}}>Este desconto é de {discountPct.toFixed(1)}%. Peça a um gerente para digitar a senha, ou peça a liberação remota.</div>
                   <div style={{display:"flex",gap:4}}>
                     <input style={{...S.inp,flex:1,fontSize:12}} type="password" placeholder="Senha do gerente" value={authPassInput} onChange={e=>setAuthPassInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&releaseDiscount()}/>
                     <button style={{padding:"6px 12px",borderRadius:7,border:"none",background:C.org,color:"#000",cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit",opacity:authVerifying?.6:1}} disabled={authVerifying} onClick={releaseDiscount}>{authVerifying?"...":"Liberar"}</button>
                   </div>
+                  {remoteAuthReq
+                    ?<div style={{marginTop:6,display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:11,color:C.gold,fontWeight:600,flex:1}}>⏳ Aguardando liberação remota do gerente...</span>
+                      <button style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${C.brd}`,background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}} onClick={cancelRemoteAuth}>✕ Cancelar</button>
+                    </div>
+                    :<button style={{width:"100%",marginTop:6,padding:"8px",borderRadius:7,border:`1px solid ${C.org}`,background:"transparent",color:C.org,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}} onClick={requestRemoteAuth}>📡 Pedir liberação remota (gerente aprova de outro computador)</button>}
                 </div>}
                 {discountValue>0&&discountAuthValid&&<div style={{marginTop:6,padding:"6px 8px",background:"rgba(0,230,118,.08)",border:"1px solid rgba(0,230,118,.3)",borderRadius:6,fontSize:11,color:C.grn,fontWeight:600}}>✓ Desconto liberado por {discountAuth.by}</div>}
 
