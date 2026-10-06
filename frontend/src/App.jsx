@@ -207,7 +207,7 @@ CATALOG.forEach(p=>{p.margin=p.cost>0?((p.price-p.cost)/p.cost*100):0;});
 
 const CATEGORIES = ["Camisetas","Calças","Jaquetas","Acessórios","Calçados","Moletons","Bermudas","Vestidos","Conjuntos","Bolsas"];
 // Grade de tamanhos padrão da loja (letras + numeração 36–54)
-const SIZES = ["Único","PP","P","M","G","GG","EXG","G1","G2","G3","36","38","40","42","44","46","48","50","52","54"];
+const SIZES = ["Único","PP","P","M","P/M","G","GG","G/GG","EXG","G1","G2","G3","36","38","40","42","44","46","48","50","52","54"];
 const EMOJIS = ["👕","👖","🧥","🧢","⛓️","👟","🧶","🩳","🕶️","⌚","👗","👜","🧤","🧣","👔","🩱","🎒","💍"];
 
 // ─── PER-STORE STOCK (uses stockId, not store id) ───
@@ -1299,7 +1299,7 @@ function GestorPanel({sales,expenses,stock,catalog,customers,investments,cashSta
 // ═══════════════════════════════════
 function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,customers,setCustomers,users,storeCash,cashState,setCashState,catalog,loggedUser,showToast,activeStockId,receiptSale,setReceiptSale,employees,loadPhotosForProducts,appSettings}){
   // ── MULTI-TAB SALES ──
-  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false});
+  const emptyTab=()=>({id:genId(),label:"Venda 1",cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false,coupon:""});
   const [saleTabs,setSaleTabs]=useState([emptyTab()]);
   const [activeTabIdx,setActiveTabIdx]=useState(0);
   const [search,setSearch]=useState("");
@@ -1459,14 +1459,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       e.preventDefault();
       switch(e.key){
         case "F1": if(searchRef.current){searchRef.current.focus();searchRef.current.select();} break;
-        case "F2": setShowDiscountPanel(p=>!p); break;
+        case "F2": if(!couponApplied)setShowDiscountPanel(p=>!p); break;
         case "F3": quickPay("PIX"); break;
         case "F4": quickPay("Dinheiro"); break;
         case "F5": quickPay("Crédito"); break;
         case "F6": quickPay("Débito"); break;
         case "F7": finalizeSale(); break;
         case "F8": setCart([]);setPayments([]);setShowPayPanel(false);showToast("Carrinho limpo!"); break;
-        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
+        case "F9": upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false,coupon:""});setShowDiscountPanel(false);showToast("Venda cancelada!"); break;
         case "F10": if(lastReceipt)setReceiptSale(lastReceipt); else showToast("Nenhum cupom anterior","error"); break;
         case "F12": setShowShortcuts(p=>!p); break;
         default: break;
@@ -1539,38 +1539,54 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   // Sem internet a venda sai sem benefícios (o cashback ainda entra via trigger no banco).
   const custObjSel=customers.find(c=>c.name===cartCustomer);
   const manualPct=cartSubAposPromo>0?Math.round(discountValue/cartSubAposPromo*10000)/100:0;
-  const payMethodForQuote=payments.length?(payments.every(p=>["PIX","Dinheiro"].includes(p.method))?"PIX":"CREDITO"):((tab.currentMethod||"PIX").toUpperCase()==="DINHEIRO"?"DINHEIRO":(tab.currentMethod||"PIX").toUpperCase()==="PIX"?"PIX":"CREDITO");
+  // PIX Chave também é à vista — conta como PIX pra cotação (cupom e desconto de nível)
+  const payMethodForQuote=payments.length?(payments.every(p=>["PIX","PIX Chave","Dinheiro"].includes(p.method))?"PIX":"CREDITO"):((tab.currentMethod||"PIX").toUpperCase()==="DINHEIRO"?"DINHEIRO":(tab.currentMethod||"PIX").toUpperCase().startsWith("PIX")?"PIX":"CREDITO");
   // quoteMatch: mesma elegibilidade (cliente/pagamento/promo) — o subtotal pode ter mudado;
   // o desconto escala localmente com o carrinho em vez de sumir até a cotação nova chegar.
-  const quoteMatch=cbQuote&&cbQuote._custId===(custObjSel?.id||null)&&cbQuote.maxItemPromoPct===manualPct&&cbQuote._payMethod===payMethodForQuote;
+  const couponTyped=(tab.coupon||"").trim().toUpperCase();
+  const quoteMatch=cbQuote&&cbQuote._custId===(custObjSel?.id||null)&&cbQuote.maxItemPromoPct===manualPct&&cbQuote._payMethod===payMethodForQuote&&(cbQuote._coupon||"")===couponTyped;
   const quoteFresh=quoteMatch&&cbQuote.subtotal===cartSubAposPromo;
   const tierPctBase=quoteMatch?(cbQuote.tierDiscountPct||0):0;
   const tierAutoValue=quoteFresh?(cbQuote.tierDiscountValue||0):Math.round(cartSubAposPromo*tierPctBase)/100;
+  // Cupom de campanha (vem validado do servidor; substitui o desconto de nível)
+  const couponApplied=quoteMatch&&cbQuote.coupon?cbQuote.coupon:null;
+  const couponPctBase=couponApplied?(cbQuote.couponPct||0):0;
+  const couponValue=quoteFresh?(cbQuote.couponValue||0):Math.round(cartSubAposPromo*couponPctBase)/100;
+  const couponError=couponTyped&&quoteMatch&&!couponApplied?(cbQuote.warnings||[]).find(w=>/cupom/i.test(w)):null;
   // Só o nível BLACK permite ajustar o desconto (peça anunciada com preço arredondado);
   // GOLD/DIAMOND ficam travados nos 12/14%. Teto de 30% contra erro de digitação.
   const tierEditable=quoteMatch&&cbQuote.tier==="BLACK"&&tierPctBase>0;
   const tierMaxEdit=Math.round(cartSubAposPromo*30)/100;
   // O ajuste fica amarrado ao cliente da comanda — trocou o cliente, volta ao padrão
-  const tierOverrideOn=tierEditable&&tab.tierOverride>0&&tab.tierOverrideCust===custObjSel?.id;
-  const tierDiscountValue=tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,cartSubAposPromo):tierAutoValue;
+  const tierOverrideOn=tierEditable&&tab.tierOverride>0&&tab.tierOverrideCust===custObjSel?.id&&!couponApplied;
+  const tierDiscountValue=couponApplied?0:(tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,cartSubAposPromo):tierAutoValue);
   const tierPctShown=cartSubAposPromo>0&&tierDiscountValue>0?Math.round(tierDiscountValue/cartSubAposPromo*1000)/10:0;
-  const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue)*100)/100):0;
-  const cartTotal=Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue-balanceUsed)*100)/100;
+  const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue-couponValue)*100)/100):0;
+  const cartTotal=Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue-couponValue-balanceUsed)*100)/100;
 
   // Cotação Cliente Black a cada mudança de cliente/carrinho/desconto/pagamento.
   // Primeira cotação do cliente sai na hora; as demais com debounce curto — a tela
   // não depende dela para mostrar o desconto (escala local via quoteMatch acima).
   useEffect(()=>{
-    if(!custObjSel?.id||cartSubAposPromo<=0){setCbQuote(null);return;}
-    const isNewCust=cbQuote?._custId!==custObjSel.id;
+    // Cupom digitado também dispara cotação sem cliente selecionado — o servidor
+    // identifica o dono do cupom e a tela seleciona o cliente sozinha.
+    if((!custObjSel?.id&&!couponTyped)||cartSubAposPromo<=0){setCbQuote(null);return;}
+    const isNewCust=cbQuote?._custId!==(custObjSel?.id||null);
     const t=setTimeout(()=>{
-      api.quoteSale({customer_id:custObjSel.id,subtotal:cartSubAposPromo,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0})
-        .then(q=>{if(q&&!q._offline)setCbQuote({...q,_custId:custObjSel.id,_payMethod:payMethodForQuote});})
+      api.quoteSale({customer_id:custObjSel?.id||"",subtotal:cartSubAposPromo,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0,coupon_code:couponTyped})
+        .then(q=>{
+          if(!q||q._offline)return;
+          setCbQuote({...q,_custId:custObjSel?.id||null,_payMethod:payMethodForQuote,_coupon:couponTyped});
+          if(!custObjSel&&q.coupon&&q.customer){
+            const m=customers.find(c=>c.id===q.customer.id);
+            if(m)setCartCustomer(m.name);
+          }
+        })
         .catch(()=>setCbQuote(null));
     },isNewCust?0:120);
     return ()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[custObjSel?.id,cartSubAposPromo,manualPct,payMethodForQuote,tab.useBalance]);
+  },[custObjSel?.id,cartSubAposPromo,manualPct,payMethodForQuote,tab.useBalance,couponTyped]);
 
   // Fecha o editor do desconto ao trocar de cliente/comanda
   useEffect(()=>{setTierEditing(false);},[custObjSel?.id,activeTabIdx]);
@@ -1739,7 +1755,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const fullDiscountLabel=[discountValue>0?discountLabel:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
+    const fullDiscountLabel=[discountValue>0?discountLabel:"",couponValue>0?`Cupom ${couponApplied?.code||couponTyped} ${couponPctBase}%`:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
     // Leve 4 Pague 3: o brinde vira item de R$0 (baixa estoque, não entra na conta nem como desconto)
     let saleItems=cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id}));
     if(promo43Free>0){
@@ -1759,12 +1775,13 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       }
       saleItems=out;
     }
-    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:saleItems,subtotal:cartSubAposPromo,discount:Math.round((discountValue+tierDiscountValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
+    const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:saleItems,subtotal:cartSubAposPromo,discount:Math.round((discountValue+tierDiscountValue+couponValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     // O saldo usado e o cashback são processados pelo servidor (trigger no banco);
     // balance_used vai na venda e é consumido de forma idempotente lá.
     api.createSale({ ...newSale, store_id: newSale.storeId, customer_id: newSale.customerId||'', customer_whatsapp: newSale.customerWhatsapp||'', seller_id: newSale.sellerId||'', discount_label: newSale.discountLabel||'', stock_id: activeStockId, emp_id: newSale.empId||'', discount_auth_by: newSale.discountAuthBy||'',
-      tier_discount_pct: tierDiscountValue>0?tierPctShown:0, tier_discount_value: tierDiscountValue, balance_used: balanceUsed, max_item_promo_pct: manualPct }).then(r=>{
+      tier_discount_pct: tierDiscountValue>0?tierPctShown:0, tier_discount_value: tierDiscountValue, balance_used: balanceUsed, max_item_promo_pct: manualPct,
+      coupon_code: couponValue>0?(couponApplied?.code||couponTyped):'', coupon_discount_pct: couponValue>0?couponPctBase:0, coupon_discount_value: couponValue }).then(r=>{
       if(r?.error) showToast(r.error,"error");
     }).catch(e=>{
       // Garante que a venda nunca se perca — loga o erro mas a venda já está no estado local
@@ -1780,7 +1797,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     if(saleTabs.length>1){
       closeSaleTab(activeTabIdx);
     } else {
-      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false});
+      upTab({cart:[],customer:"",discount:0,discountType:"fixed",discountScope:"sale",discountItemIds:[],itemDiscounts:{},payments:[],showPayPanel:false,currentMethod:"PIX",currentValue:"",cashReceived:"",discountAuth:null,useBalance:false,coupon:""});
     }
     setShowDiscountPanel(false);
     setFolhaEmpId("");
@@ -1855,6 +1872,17 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`}}>
           <CustomerSelector customers={customers} setCustomers={setCustomers} cartCustomer={cartCustomer} setCartCustomer={setCartCustomer} showToast={showToast}/>
         </div>
+        {/* Cupom de campanha — identifica o cliente sozinho e substitui o desconto de nível */}
+        <div style={{padding:"5px 10px",borderBottom:`1px solid ${C.brd}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:10,color:C.dim,fontWeight:700,letterSpacing:.5}}>🎟️ CUPOM</span>
+            <input value={tab.coupon||""} onChange={e=>upTab({coupon:e.target.value.toUpperCase()})} placeholder="ex: BLK20-X7K4"
+              style={{flex:1,minWidth:0,padding:"4px 8px",borderRadius:7,border:`1px solid ${couponApplied?C.grn:couponError?"#ffb74d":C.brd}`,background:"transparent",color:"#fff",fontSize:11,fontFamily:"inherit",letterSpacing:1,textTransform:"uppercase"}}/>
+            {couponApplied&&<span style={{fontSize:11,color:C.grn,fontWeight:800,whiteSpace:"nowrap"}}>✓ −{couponPctBase}% (−{fmt(couponValue)})</span>}
+            {couponTyped&&<button onClick={()=>upTab({coupon:""})} title="Remover cupom" style={{padding:"3px 7px",borderRadius:6,border:`1px solid ${C.brd}`,background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>✕</button>}
+          </div>
+          {couponError&&<div style={{fontSize:9,color:"#ffb74d",marginTop:3}}>{couponError}</div>}
+        </div>
         {custObjSel&&quoteMatch&&cbQuote.customer&&
           <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`,background:"rgba(255,215,64,.04)"}}>
             {cbQuote.customer.enrolled?<>
@@ -1901,7 +1929,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
           {/* Discount toggle button */}
           <div style={{marginBottom:8}}>
             {!showDiscountPanel?
-              <button style={{width:"100%",padding:"6px",borderRadius:7,border:`1px dashed ${discountValue>0?"rgba(255,82,82,.4)":C.brd}`,background:discountValue>0?"rgba(255,82,82,.06)":"transparent",color:discountValue>0?C.red:C.dim,cursor:"pointer",fontSize:11,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:4}} onClick={()=>setShowDiscountPanel(true)}>
+              <button disabled={!!couponApplied} title={couponApplied?"Cupom aplicado — não acumula com desconto manual":undefined} style={{width:"100%",padding:"6px",borderRadius:7,border:`1px dashed ${discountValue>0?"rgba(255,82,82,.4)":C.brd}`,background:discountValue>0?"rgba(255,82,82,.06)":"transparent",color:discountValue>0?C.red:C.dim,cursor:couponApplied?"not-allowed":"pointer",opacity:couponApplied?0.5:1,fontSize:11,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:4}} onClick={()=>{if(!couponApplied)setShowDiscountPanel(true);}}>
                 {discountValue>0?("🏷️ Desconto: -"+fmt(discountValue)+" ("+discountLabel+") ✎"):("🏷️ Adicionar desconto")}
               </button>
             :
