@@ -78,6 +78,10 @@ const authMiddleware = (req, res, next) => {
 // Pré-cadastro público do Cliente Black (link na bio) — único endpoint sem token, com rate limit
 const loyalty = require('./loyalty');
 app.post('/api/loyalty/public-signup', loyalty.publicSignupHandler(pool));
+// Cupom de campanha p/ o checkout (banco separado): checar e resgatar, com rate limit
+const publicCoupons = loyalty.publicCouponHandlers(pool);
+app.post('/api/loyalty/public-coupon-check', publicCoupons.check);
+app.post('/api/loyalty/public-coupon-redeem', publicCoupons.redeem);
 // Página pública de adesão (link enviado pelo chat/bio) — mesma origem do endpoint acima
 app.get('/cliente-black', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cliente-black.html')));
 
@@ -707,19 +711,27 @@ app.post('/api/sales', async (req, res) => {
       }
     }
 
+    // Cupom de campanha: revalida ANTES de gravar (o trigger só marca o resgate)
+    if (String(s.coupon_code || '').trim()) {
+      const cust = await loyalty.findCustomer(pool, s.customer_id ? { id: s.customer_id } : { phone: s.customer_whatsapp });
+      const chk = await loyalty.checkCoupon(pool, { code: s.coupon_code, customer: cust, subtotal: s.subtotal });
+      if (chk.error) return res.status(409).json({ error: chk.error + ' Refaça a cotação.' });
+    }
+
     await client.query('BEGIN');
 
     // INSERT primeiro: se for replay da fila offline (mesmo id), rowCount=0 e o
     // estoque NÃO baixa de novo (mesma classe de bug do incidente das trocas 10/09)
     const ins = await client.query(
-      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by, tier_discount_pct, tier_discount_value, balance_used, max_item_promo_pct)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+      `INSERT INTO sales (id, store_id, date, customer, customer_id, customer_whatsapp, seller, seller_id, items, subtotal, discount, discount_label, total, payment, payments, status, cupom, emp_id, discount_auth_by, tier_discount_pct, tier_discount_value, balance_used, max_item_promo_pct, coupon_code, coupon_discount_pct, coupon_discount_value)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
        ON CONFLICT (id) DO NOTHING`,
       [id, s.store_id, s.date || today(), s.customer || 'Avulso', s.customer_id || '',
        s.customer_whatsapp || '', s.seller || '', s.seller_id || '',
        JSON.stringify(s.items), s.subtotal || 0, s.discount || 0, s.discount_label || '',
        s.total, s.payment || '', JSON.stringify(s.payments || []), s.status || 'Concluída', s.cupom || '', s.emp_id || null, s.discount_auth_by || null,
-       s.tier_discount_pct || 0, s.tier_discount_value || 0, s.balance_used || 0, s.max_item_promo_pct || 0]
+       s.tier_discount_pct || 0, s.tier_discount_value || 0, s.balance_used || 0, s.max_item_promo_pct || 0,
+       String(s.coupon_code || '').trim().toUpperCase(), s.coupon_discount_pct || 0, s.coupon_discount_value || 0]
     );
 
     // Baixa estoque com lock (FOR UPDATE) para evitar race condition em vendas simultâneas

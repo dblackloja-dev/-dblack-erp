@@ -50,6 +50,27 @@ async function migrateLoyalty(pool) {
     CREATE INDEX IF NOT EXISTS idx_loyalty_events_pending ON loyalty_events(created_at) WHERE notified_at IS NULL;
   `, 'tables');
 
+  // Cupons de campanha: código único por cliente, 1 uso, substitui o desconto de nível.
+  // UNIQUE (campaign, customer_id) → gerar de novo não duplica (idempotente).
+  await run(`
+    CREATE TABLE IF NOT EXISTS coupons (
+      id TEXT PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      campaign TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      pct NUMERIC NOT NULL,
+      min_subtotal NUMERIC NOT NULL DEFAULT 0,
+      valid_from TEXT NOT NULL,        -- YYYY-MM-DD local BR, como promo_from/to
+      valid_to TEXT NOT NULL,
+      redeemed_at TIMESTAMP,
+      redeemed_sale_id TEXT,
+      sent_at TIMESTAMP,               -- quando o WhatsApp da campanha foi enviado
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (campaign, customer_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_coupons_campaign ON coupons(campaign);
+  `, 'coupons');
+
   // ─── Colunas novas ───
   await run(`
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS lgpd_consent_at TIMESTAMP;
@@ -66,6 +87,9 @@ async function migrateLoyalty(pool) {
     ALTER TABLE sales ADD COLUMN IF NOT EXISTS cashback_value NUMERIC NOT NULL DEFAULT 0;
     ALTER TABLE sales ADD COLUMN IF NOT EXISTS balance_used NUMERIC NOT NULL DEFAULT 0;
     ALTER TABLE sales ADD COLUMN IF NOT EXISTS max_item_promo_pct NUMERIC NOT NULL DEFAULT 0;
+    ALTER TABLE sales ADD COLUMN IF NOT EXISTS coupon_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE sales ADD COLUMN IF NOT EXISTS coupon_discount_pct NUMERIC NOT NULL DEFAULT 0;
+    ALTER TABLE sales ADD COLUMN IF NOT EXISTS coupon_discount_value NUMERIC NOT NULL DEFAULT 0;
   `, 'columns');
 
   // CPF único quando preenchido (cadastros sem CPF continuam permitidos, sem benefícios)
@@ -292,6 +316,13 @@ async function migrateLoyalty(pool) {
     BEGIN
       IF COALESCE(NEW.status,'') = 'Cancelada' THEN RETURN NULL; END IF;
 
+      -- 0) cupom de campanha: marca o resgate (1 uso). Antes de qualquer RETURN para
+      -- cobrir vendas sem cliente vinculável; a validação de dono/validade é da cotação.
+      IF COALESCE(NEW.coupon_code,'') <> '' THEN
+        UPDATE coupons SET redeemed_at = NOW(), redeemed_sale_id = NEW.id
+        WHERE upper(code) = upper(NEW.coupon_code) AND redeemed_at IS NULL;
+      END IF;
+
       -- 1) achar/criar cliente pelo WhatsApp (mesma lógica do sistema de pontos)
       digits := regexp_replace(COALESCE(NEW.customer_whatsapp,''), '[^0-9]', '', 'g');
       IF length(digits) >= 12 AND digits LIKE '55%' THEN digits := substr(digits, 3); END IF;
@@ -363,6 +394,10 @@ async function migrateLoyalty(pool) {
     CREATE OR REPLACE FUNCTION loyalty_sale_cancel() RETURNS trigger AS $fn$
     DECLARE e RECORD; used NUMERIC;
     BEGIN
+      IF COALESCE(OLD.status,'') <> 'Cancelada' AND NEW.status = 'Cancelada' THEN
+        -- devolve o cupom da campanha (a janela de validade continua valendo no reuso)
+        UPDATE coupons SET redeemed_at = NULL, redeemed_sale_id = NULL WHERE redeemed_sale_id = OLD.id;
+      END IF;
       IF COALESCE(OLD.status,'') <> 'Cancelada' AND NEW.status = 'Cancelada' AND COALESCE(OLD.customer_id,'') <> '' THEN
         UPDATE customers SET total_spent = GREATEST(0, total_spent - COALESCE(OLD.total,0)), visits = GREATEST(0, visits - 1)
         WHERE id = OLD.customer_id;
