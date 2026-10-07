@@ -1872,17 +1872,6 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`}}>
           <CustomerSelector customers={customers} setCustomers={setCustomers} cartCustomer={cartCustomer} setCartCustomer={setCartCustomer} showToast={showToast}/>
         </div>
-        {/* Cupom de campanha — identifica o cliente sozinho e substitui o desconto de nível */}
-        <div style={{padding:"5px 10px",borderBottom:`1px solid ${C.brd}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:10,color:C.dim,fontWeight:700,letterSpacing:.5}}>🎟️ CUPOM</span>
-            <input value={tab.coupon||""} onChange={e=>upTab({coupon:e.target.value.toUpperCase()})} placeholder="ex: BLK20-X7K4"
-              style={{flex:1,minWidth:0,padding:"4px 8px",borderRadius:7,border:`1px solid ${couponApplied?C.grn:couponError?"#ffb74d":C.brd}`,background:"transparent",color:"#fff",fontSize:11,fontFamily:"inherit",letterSpacing:1,textTransform:"uppercase"}}/>
-            {couponApplied&&<span style={{fontSize:11,color:C.grn,fontWeight:800,whiteSpace:"nowrap"}}>✓ −{couponPctBase}% (−{fmt(couponValue)})</span>}
-            {couponTyped&&<button onClick={()=>upTab({coupon:""})} title="Remover cupom" style={{padding:"3px 7px",borderRadius:6,border:`1px solid ${C.brd}`,background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>✕</button>}
-          </div>
-          {couponError&&<div style={{fontSize:9,color:"#ffb74d",marginTop:3}}>{couponError}</div>}
-        </div>
         {custObjSel&&quoteMatch&&cbQuote.customer&&
           <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`,background:"rgba(255,215,64,.04)"}}>
             {cbQuote.customer.enrolled?<>
