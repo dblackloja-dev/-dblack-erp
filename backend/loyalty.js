@@ -184,11 +184,10 @@ function couponAmount(cp, subtotal) {
 async function quoteSale(pool, p) {
   const cfg = await getConfig(pool);
   const couponCode = String(p.coupon_code || '').trim();
-  // cupom identifica o cliente quando o caixa ainda não buscou por CPF/telefone
-  const cpRow = couponCode ? (await pool.query('SELECT * FROM coupons WHERE upper(code) = upper($1)', [couponCode])).rows[0] : null;
+  // Trava de CPF (14/10): o cupom NÃO identifica mais o cliente sozinho — o caixa
+  // precisa buscar o cliente pelo CPF e o cadastro tem que bater com o dono do código.
   const c = p.customer_id ? await findCustomer(pool, { id: p.customer_id })
-    : p.phone ? await findCustomer(pool, { phone: p.phone })
-    : cpRow ? await findCustomer(pool, { id: cpRow.customer_id }) : null;
+    : p.phone ? await findCustomer(pool, { phone: p.phone }) : null;
   const enrolled = isEnrolled(c);
   const tier = enrolled ? (c.tier || 'BLACK') : null;
   const subtotal = round2(Number(p.subtotal) || 0);
@@ -202,7 +201,9 @@ async function quoteSale(pool, p) {
   let couponPct = 0;
   let couponFixed = 0;
   if (couponCode) {
-    const chk = await checkCoupon(pool, { code: couponCode, customer: c, subtotal });
+    const chk = !c
+      ? { error: 'Busque o cliente pelo CPF para aplicar o cupom — o código é travado no CPF do titular.' }
+      : await checkCoupon(pool, { code: couponCode, customer: c, subtotal });
     if (chk.error) warnings.push(chk.error);
     else if (!cash) warnings.push('Cupom só vale à vista (PIX/Dinheiro).');
     else if (maxPromo > 0) warnings.push('Cupom não acumula com desconto manual — remova o desconto para aplicar.');
@@ -489,7 +490,9 @@ function router(pool, { requireRole }) {
     try {
       const p = req.body || {};
       const c = p.customer_id ? await findCustomer(pool, { id: p.customer_id })
-        : p.phone ? await findCustomer(pool, { phone: p.phone }) : null;
+        : p.phone ? await findCustomer(pool, { phone: p.phone })
+        : p.cpf ? await findCustomer(pool, { cpf: p.cpf }) : null;
+      if (!c) return res.json({ valid: false, error: 'Identifique o cliente (CPF ou telefone) para validar o cupom — o código é travado no CPF do titular.' });
       const chk = await checkCoupon(pool, { code: p.code || '', customer: c, subtotal: p.subtotal });
       if (chk.error) return res.json({ valid: false, error: chk.error });
       const subtotal = round2(Number(p.subtotal) || 0);
