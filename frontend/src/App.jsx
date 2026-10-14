@@ -1551,7 +1551,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   // Cupom de campanha (vem validado do servidor; substitui o desconto de nível)
   const couponApplied=quoteMatch&&cbQuote.coupon?cbQuote.coupon:null;
   const couponPctBase=couponApplied?(cbQuote.couponPct||0):0;
-  const couponValue=quoteFresh?(cbQuote.couponValue||0):Math.round(cartSubAposPromo*couponPctBase)/100;
+  const couponValue=quoteFresh?(cbQuote.couponValue||0):(couponPctBase>0?Math.round(cartSubAposPromo*couponPctBase)/100:Math.min(+(couponApplied?.value)||0,cartSubAposPromo));
   const couponError=couponTyped&&quoteMatch&&!couponApplied?(cbQuote.warnings||[]).find(w=>/cupom/i.test(w)):null;
   // Só o nível BLACK permite ajustar o desconto (peça anunciada com preço arredondado);
   // GOLD/DIAMOND ficam travados nos 12/14%. Teto de 30% contra erro de digitação.
@@ -1755,7 +1755,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     const paymentDesc=payments.map(p=>p.method+": "+fmt(p.value)).join(" + ");
     const custObj=customers.find(c=>c.name===cartCustomer);
     const empIdAtual=folhaEmpIdRef.current||folhaEmpId||"";
-    const fullDiscountLabel=[discountValue>0?discountLabel:"",couponValue>0?`Cupom ${couponApplied?.code||couponTyped} ${couponPctBase}%`:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
+    const fullDiscountLabel=[discountValue>0?discountLabel:"",couponValue>0?`Cupom ${couponApplied?.code||couponTyped} ${couponPctBase>0?couponPctBase+"%":fmt(couponValue)}`:"",tierDiscountValue>0?`Cliente Black ${cbQuote?.customer?.tier_label||""} ${tierPctShown}%${tierOverrideOn?" ajustado":""} à vista`:"",balanceUsed>0?`Saldo Cliente Black (${fmt(balanceUsed)})`:""].filter(Boolean).join(" + ");
     // Leve 4 Pague 3: o brinde vira item de R$0 (baixa estoque, não entra na conta nem como desconto)
     let saleItems=cart.map(i=>({name:i.name,qty:i.qty,price:i.price,id:i.id}));
     if(promo43Free>0){
@@ -1871,6 +1871,17 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         {!storeCash.open&&<div style={{padding:"10px 14px",background:"rgba(255,82,82,.08)",color:C.red,fontSize:12,display:"flex",alignItems:"center",gap:6}}>{I.lock} Abra o caixa primeiro</div>}
         <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`}}>
           <CustomerSelector customers={customers} setCustomers={setCustomers} cartCustomer={cartCustomer} setCartCustomer={setCartCustomer} showToast={showToast}/>
+        </div>
+        {/* Cupom/Vale de campanha — identifica o cliente sozinho e substitui o desconto de nível */}
+        <div style={{padding:"5px 10px",borderBottom:`1px solid ${C.brd}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:10,color:C.dim,fontWeight:700,letterSpacing:.5}}>🎟️ VALE</span>
+            <input value={tab.coupon||""} onChange={e=>upTab({coupon:e.target.value.toUpperCase()})} placeholder="ex: BLK-X7K4"
+              style={{flex:1,minWidth:0,padding:"4px 8px",borderRadius:7,border:`1px solid ${couponApplied?C.grn:couponError?"#ffb74d":C.brd}`,background:"transparent",color:"#fff",fontSize:11,fontFamily:"inherit",letterSpacing:1,textTransform:"uppercase"}}/>
+            {couponApplied&&<span style={{fontSize:11,color:C.grn,fontWeight:800,whiteSpace:"nowrap"}}>✓ {couponPctBase>0?`−${couponPctBase}% `:""}(−{fmt(couponValue)})</span>}
+            {couponTyped&&<button onClick={()=>upTab({coupon:""})} title="Remover cupom" style={{padding:"3px 7px",borderRadius:6,border:`1px solid ${C.brd}`,background:"transparent",color:C.dim,cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>✕</button>}
+          </div>
+          {couponError&&<div style={{fontSize:9,color:"#ffb74d",marginTop:3}}>{couponError}</div>}
         </div>
         {custObjSel&&quoteMatch&&cbQuote.customer&&
           <div style={{padding:"6px 10px",borderBottom:`1px solid ${C.brd}`,background:"rgba(255,215,64,.04)"}}>

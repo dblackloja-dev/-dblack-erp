@@ -167,9 +167,17 @@ async function checkCoupon(pool, { code, customer, subtotal }) {
   if (t < cp.valid_from) return { coupon: cp, error: `Cupom válido a partir de ${fmtBRDate(cp.valid_from)}.` };
   if (t > cp.valid_to) return { coupon: cp, error: `Cupom venceu em ${fmtBRDate(cp.valid_to)}.` };
   if (customer && customer.id !== cp.customer_id) return { coupon: cp, error: 'Cupom pertence a outro cliente — confira o cadastro.' };
-  if (round2(Number(subtotal) || 0) <= Number(cp.min_subtotal))
-    return { coupon: cp, error: `Cupom vale para compras acima de ${fmtBRL(cp.min_subtotal)}.` };
+  if (round2(Number(subtotal) || 0) < Number(cp.min_subtotal))
+    return { coupon: cp, error: `Cupom vale para compras a partir de ${fmtBRL(cp.min_subtotal)}.` };
   return { coupon: cp };
+}
+
+// Desconto do cupom: valor fixo (value) tem prioridade sobre percentual (pct)
+function couponAmount(cp, subtotal) {
+  const sub = round2(Number(subtotal) || 0);
+  const fixed = Number(cp.value) || 0;
+  if (fixed > 0) return round2(Math.min(fixed, sub));
+  return round2(sub * (Number(cp.pct) || 0) / 100);
 }
 
 // ─── Cotação (PDV chama a cada mudança de carrinho/pagamento) ───
@@ -192,6 +200,7 @@ async function quoteSale(pool, p) {
   // cupom só à vista (PIX/Dinheiro), como o desconto de nível — e substitui o de nível
   let coupon = null;
   let couponPct = 0;
+  let couponFixed = 0;
   if (couponCode) {
     const chk = await checkCoupon(pool, { code: couponCode, customer: c, subtotal });
     if (chk.error) warnings.push(chk.error);
@@ -200,19 +209,20 @@ async function quoteSale(pool, p) {
     else {
       coupon = chk.coupon;
       couponPct = Number(coupon.pct) || 0;
+      couponFixed = Number(coupon.value) || 0;
     }
   }
 
   let discountPct = 0;
-  if (enrolled && cash && !promo && !couponPct) discountPct = Number(cfg['discount_' + tier]) || 0;
+  if (enrolled && cash && !promo && !couponPct && !couponFixed) discountPct = Number(cfg['discount_' + tier]) || 0;
   if (!c) warnings.push('Cadastre o cliente (CPF) para desconto à vista e cashback.');
   else if (!enrolled) warnings.push('Cliente sem CPF — cadastre o CPF para ativar os benefícios Cliente Black.');
-  if (couponPct) warnings.push(`Cupom ${coupon.code} aplicado: ${couponPct}% (substitui o desconto de nível).`);
+  if (couponPct || couponFixed) warnings.push(`Cupom ${coupon.code} aplicado: ${couponFixed > 0 ? fmtBRL(couponFixed) : couponPct + '%'} (substitui o desconto de nível).`);
   else {
     if (enrolled && promo && cash) warnings.push('Promoção ativa: desconto de nível não se aplica nesta venda.');
     if (enrolled && !cash) warnings.push('Desconto de nível só à vista (PIX/Dinheiro).');
   }
-  const couponValue = round2(subtotal * couponPct / 100);
+  const couponValue = coupon ? couponAmount(coupon, subtotal) : 0;
   const discountValue = round2(subtotal * discountPct / 100);
   const afterDiscount = round2(subtotal - discountValue - couponValue);
 
@@ -260,22 +270,23 @@ function randCode(len) {
   return s;
 }
 
-async function generateCoupons(pool, { campaign, prefix, pct, min_subtotal, valid_from, valid_to }) {
-  if (!campaign || !pct || !valid_from || !valid_to) throw Object.assign(new Error('campaign, pct, valid_from e valid_to são obrigatórios'), { status: 400 });
+async function generateCoupons(pool, { campaign, prefix, pct, value, min_subtotal, valid_from, valid_to, created_before }) {
+  if (!campaign || (!pct && !value) || !valid_from || !valid_to) throw Object.assign(new Error('campaign, pct OU value, valid_from e valid_to são obrigatórios'), { status: 400 });
   const pfx = String(prefix || 'BLK').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const members = await pool.query(`
     SELECT id FROM customers
-    WHERE length(regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')) = 11 AND tags NOT LIKE '%Interno%'`);
+    WHERE length(regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')) = 11 AND tags NOT LIKE '%Interno%'
+      ${created_before ? 'AND created_at < $1' : ''}`, created_before ? [created_before] : []);
   let created = 0, existing = 0;
   for (const m of members.rows) {
     for (let attempt = 0; ; attempt++) {
       const code = `${pfx}-${randCode(4)}`;
       try {
         const r = await pool.query(
-          `INSERT INTO coupons (id, code, campaign, customer_id, pct, min_subtotal, valid_from, valid_to)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+          `INSERT INTO coupons (id, code, campaign, customer_id, pct, value, min_subtotal, valid_from, valid_to)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            ON CONFLICT (campaign, customer_id) DO NOTHING`,
-          [genId(), code, campaign, m.id, Number(pct), Number(min_subtotal) || 0, valid_from, valid_to]);
+          [genId(), code, campaign, m.id, Number(pct) || 0, Number(value) || 0, Number(min_subtotal) || 0, valid_from, valid_to]);
         r.rowCount > 0 ? created++ : existing++;
         break;
       } catch (e) {
@@ -483,7 +494,7 @@ function router(pool, { requireRole }) {
       if (chk.error) return res.json({ valid: false, error: chk.error });
       const subtotal = round2(Number(p.subtotal) || 0);
       const pct = Number(chk.coupon.pct) || 0;
-      res.json({ valid: true, code: chk.coupon.code, pct, value: round2(subtotal * pct / 100),
+      res.json({ valid: true, code: chk.coupon.code, pct, value: couponAmount(chk.coupon, subtotal),
                  customer: { id: chk.coupon.customer_id } });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -557,7 +568,7 @@ function publicCouponHandlers(pool) {
         if (chk.error) return res.json({ valid: false, error: chk.error });
         const subtotal = round2(Number(p.subtotal) || 0);
         const pct = Number(chk.coupon.pct) || 0;
-        res.json({ valid: true, code: chk.coupon.code, pct, value: round2(subtotal * pct / 100) });
+        res.json({ valid: true, code: chk.coupon.code, pct, value: couponAmount(chk.coupon, subtotal) });
       } catch (e) { res.status(500).json({ error: e.message }); }
     },
     redeem: async (req, res) => {

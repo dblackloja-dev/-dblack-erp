@@ -73,6 +73,7 @@ async function migrateLoyalty(pool) {
 
   // ─── Colunas novas ───
   await run(`
+    ALTER TABLE coupons ADD COLUMN IF NOT EXISTS value NUMERIC NOT NULL DEFAULT 0;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS lgpd_consent_at TIMESTAMP;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp_opt_out INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'BLACK';
