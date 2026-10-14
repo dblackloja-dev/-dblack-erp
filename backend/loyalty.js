@@ -565,8 +565,9 @@ function publicCouponHandlers(pool) {
         // só à vista: no site, cupom vale apenas no PIX
         if (p.payment_method && !CASH_METHODS.has(String(p.payment_method).toUpperCase()))
           return res.json({ valid: false, error: 'Cupom só vale à vista — escolha PIX para usar o desconto.' });
-        const c = p.phone ? await findCustomer(pool, { phone: p.phone }) : null;
-        if (p.phone && !c) return res.json({ valid: false, error: 'Use o WhatsApp cadastrado no Cliente Black (o que recebeu o cupom).' });
+        if (!p.phone) return res.json({ valid: false, error: 'Preencha seu WhatsApp acima para validar o cupom.' });
+        const c = await findCustomer(pool, { phone: p.phone });
+        if (!c) return res.json({ valid: false, error: 'Use o WhatsApp cadastrado no Cliente Black (o que recebeu o cupom).' });
         const chk = await checkCoupon(pool, { code: p.code || '', customer: c, subtotal: p.subtotal });
         if (chk.error) return res.json({ valid: false, error: chk.error });
         const subtotal = round2(Number(p.subtotal) || 0);
