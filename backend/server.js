@@ -807,7 +807,7 @@ app.put('/api/sales/:id', async (req, res) => {
 app.get('/api/customers', async (req, res) => {
   try {
     const { limit } = req.query;
-    const lim = Math.min(parseInt(limit) || 1000, 5000);
+    const lim = Math.min(parseInt(limit) || 10000, 10000);
     const customers = await queryAll('SELECT * FROM customers ORDER BY name LIMIT $1', [lim]);
     customers.forEach(c => {
       try { c.tags = JSON.parse(c.tags || '[]'); } catch { c.tags = []; }
