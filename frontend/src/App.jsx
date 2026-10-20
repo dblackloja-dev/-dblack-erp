@@ -2814,24 +2814,33 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const [visibleCount,setVisibleCount]=useState(50);
   const [showInactive,setShowInactive]=useState(false);
 
-  // ── 🔥 OFERTAS: marcar produto EXISTENTE (com nome/descrição de verdade) sem abrir o formulário ──
-  const [offerSearch,setOfferSearch]=useState("");
-  const [offerDraft,setOfferDraft]=useState({}); // id -> preço à vista digitado
+  // ── 🔥 OFERTAS: cadastro RÁPIDO de produto NOVO em oferta (sempre produto novo, com
+  // nome/descrição própria — nunca "produto oferta" genérico nem produto já existente) ──
+  const [offerNew,setOfferNew]=useState({name:"",category:"",avista:"",card:"",sizes:""});
+  const [offerSaving,setOfferSaving]=useState(false);
   const offersList=catalog.filter(p=>p.active!==false&&+p.priceAvista>0);
-  const offerMatches=offerSearch.trim().length>=2?catalog.filter(p=>{
-    if(p.active===false||+p.priceAvista>0)return false;
-    const q=offerSearch.toLowerCase();
-    return p.name.toLowerCase().includes(q)||p.sku.toLowerCase().includes(q)||(p.ean||"").includes(offerSearch.trim());
-  }).slice(0,8):[];
-  const saveOffer=(p,val)=>{
-    const v=Math.round((parseFloat(String(val).replace(",","."))||0)*100)/100;
-    if(!(v>0))return showToast("Digite o preço à vista!","error");
-    if(v>=p.price)return showToast("Preço à vista ("+fmt(v)+") deve ser MENOR que o cartão ("+fmt(p.price)+")!","error");
-    const updated={...p,priceAvista:v,offer:true};
-    setCatalog(prev=>prev.map(x=>x.id===p.id?updated:x));
-    api.updateProduct(p.id,prodToApi(updated)).catch(e=>showToast("Erro ao salvar oferta: "+e.message,"error"));
-    setOfferDraft(d=>({...d,[p.id]:""}));
-    showToast("🔥 "+p.name+" em oferta: "+fmt(v)+" à vista / "+fmt(p.price)+" cartão");
+  const saveOfferNew=async()=>{
+    const name=offerNew.name.trim();
+    const av=Math.round((parseFloat(String(offerNew.avista).replace(",","."))||0)*100)/100;
+    const card=Math.round((parseFloat(String(offerNew.card).replace(",","."))||0)*100)/100;
+    if(!name)return showToast("Digite o nome/descrição da peça!","error");
+    if(!(av>0)||!(card>0))return showToast("Preencha os DOIS preços (à vista e cartão)!","error");
+    if(av>=card)return showToast("Preço à vista ("+fmt(av)+") deve ser MENOR que o cartão ("+fmt(card)+")!","error");
+    if(offerSaving)return;
+    setOfferSaving(true);
+    const vars=offerNew.sizes?offerNew.sizes.split(",").map(v=>v.trim()).filter(Boolean):[];
+    const newProd={id:genId(),name,sku:getNextSku(),ean:getNextEan(),ref:getNextRef(),category:offerNew.category||"FEMININO",brand:"D'Black",supplier:"",size:"",color:"",price:card,priceAvista:av,cost:0,margin:0,minStock:0,img:"🔥",photo:"",variations:vars,active:true,offer:true};
+    try{
+      await api.createProduct(prodToApi(newProd));
+      setCatalog(prev=>[newProd,...prev]);
+      setStock(prev=>{const n={...prev};Object.keys(n).forEach(sid=>{n[sid]={...n[sid],[newProd.id]:0};});return n;});
+      setOfferNew(o=>({...o,name:"",avista:"",card:"",sizes:""}));
+      showToast("🔥 "+name+" cadastrado: "+fmt(av)+" à vista / "+fmt(card)+" cartão ("+newProd.sku+")");
+    }catch(e){
+      showToast("ERRO ao cadastrar: "+(e.message||"tente novamente"),"error");
+    }finally{
+      setOfferSaving(false);
+    }
   };
   const clearOffer=(p)=>{
     const updated={...p,priceAvista:0,offer:false};
@@ -3188,21 +3197,37 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
           <span style={{fontSize:20}}>🔥</span>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:800}}>Ofertas da semana ({offersList.length})</div>
-            <div style={{fontSize:11,color:C.dim}}>Busque o produto JÁ CADASTRADO (com a descrição dele) e digite o preço à vista — sem abrir o formulário. Etiqueta e PDV aplicam sozinhos.</div>
+            <div style={{fontSize:11,color:C.dim}}>Cadastro rápido de produto NOVO em oferta — dê um nome/descrição próprio pra cada peça (nunca "produto oferta"). SKU e EAN saem sozinhos; etiqueta e PDV aplicam os 2 preços.</div>
           </div>
         </div>
-        <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar produto p/ colocar em oferta (nome, SKU ou EAN)..." value={offerSearch} onChange={e=>setOfferSearch(e.target.value)}/></div>
-        {offerMatches.length>0&&<div style={{marginTop:6}}>
-          {offerMatches.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 4px",borderBottom:`1px solid ${C.brd}`}}>
-            <span style={{flex:1,fontSize:12,fontWeight:600}}>{p.name} <span style={{fontSize:10,color:C.dim}}>{p.sku}</span></span>
-            <span style={{fontSize:11,color:C.gold,fontFamily:"monospace"}}>{fmt(p.price)} cartão</span>
-            <input type="number" placeholder="à vista" value={offerDraft[p.id]||""} onChange={e=>setOfferDraft(d=>({...d,[p.id]:e.target.value}))}
-              onKeyDown={e=>{if(e.key==="Enter")saveOffer(p,offerDraft[p.id]);}}
-              style={{...S.inp,width:90,padding:"5px 8px",fontSize:13,fontWeight:700,textAlign:"center",borderColor:C.grn+"66"}}/>
-            <button style={{...S.primBtn,padding:"5px 12px",fontSize:11}} onClick={()=>saveOffer(p,offerDraft[p.id])}>🔥 Marcar</button>
-          </div>)}
-        </div>}
-        {offerSearch.trim().length>=2&&offerMatches.length===0&&<div style={{fontSize:11,color:C.dim,padding:"8px 4px"}}>Nenhum produto encontrado (ou já está em oferta). Produto novo? Cadastre primeiro com nome/descrição completos.</div>}
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:6}}>
+          <div>
+            <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Nome / Descrição da peça *</label>
+            <input style={{...S.inp,width:"100%"}} value={offerNew.name} onChange={e=>setOfferNew(o=>({...o,name:e.target.value}))} placeholder="ex: VESTIDO MID ALÇA JEANS" onKeyDown={e=>{if(e.key==="Enter")saveOfferNew();}}/>
+          </div>
+          <div>
+            <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Categoria</label>
+            <select style={{...S.inp,width:"100%"}} value={offerNew.category} onChange={e=>setOfferNew(o=>({...o,category:e.target.value}))}>
+              <option value="">FEMININO</option>
+              {Object.keys(catCount).sort().map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"end",flexWrap:"wrap"}}>
+          <div>
+            <label style={{fontSize:10,color:C.grn,display:"block",marginBottom:2,fontWeight:700}}>À VISTA R$ *</label>
+            <input type="number" style={{...S.inp,width:100,fontSize:15,fontWeight:700,textAlign:"center",borderColor:C.grn+"66"}} value={offerNew.avista} onChange={e=>setOfferNew(o=>({...o,avista:e.target.value}))} placeholder="89.90" onKeyDown={e=>{if(e.key==="Enter")saveOfferNew();}}/>
+          </div>
+          <div>
+            <label style={{fontSize:10,color:C.gold,display:"block",marginBottom:2,fontWeight:700}}>CARTÃO R$ *</label>
+            <input type="number" style={{...S.inp,width:100,fontSize:15,fontWeight:700,textAlign:"center",borderColor:C.gold+"66"}} value={offerNew.card} onChange={e=>setOfferNew(o=>({...o,card:e.target.value}))} placeholder="99.90" onKeyDown={e=>{if(e.key==="Enter")saveOfferNew();}}/>
+          </div>
+          <div style={{flex:1,minWidth:140}}>
+            <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Tamanhos (opcional, vírgula)</label>
+            <input style={{...S.inp,width:"100%"}} value={offerNew.sizes} onChange={e=>setOfferNew(o=>({...o,sizes:e.target.value}))} placeholder="P, M, G, GG" onKeyDown={e=>{if(e.key==="Enter")saveOfferNew();}}/>
+          </div>
+          <button style={{...S.primBtn,padding:"9px 18px",fontSize:13,opacity:offerSaving?.5:1}} disabled={offerSaving} onClick={saveOfferNew}>{offerSaving?"⏳":"🔥 Cadastrar oferta"}</button>
+        </div>
         {offersList.length>0&&<div style={{marginTop:10}}>
           <div style={{fontSize:10,color:C.dim,fontWeight:700,letterSpacing:1,marginBottom:4}}>EM OFERTA AGORA</div>
           <div style={{display:"flex",flexDirection:"column",gap:2,maxHeight:220,overflowY:"auto"}}>
