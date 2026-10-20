@@ -366,7 +366,7 @@ app.get('/api/products', async (req, res) => {
     // A coluna photo NÃO pode ser lida aqui: com fotos base64 multi-MB no banco, qualquer
     // expressão sobre ela (até um LIKE) descomprime TODAS as fotos e a listagem trava por
     // minutos (tabela chegou a 3GB em 2026-08-19). Fotos vêm em lote via /products/photos.
-    const products = await queryAll(`SELECT id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img,
+    const products = await queryAll(`SELECT id, name, sku, ean, ref, category, brand, supplier, size, color, price, price_avista, cost, margin, min_stock, img,
       NULL as photo,
       variations, active, created_at, updated_at FROM products ORDER BY created_at DESC`);
     products.forEach(p => {
