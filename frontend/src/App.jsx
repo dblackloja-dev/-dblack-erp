@@ -1316,7 +1316,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
 
   // Current tab data
   const tab=saleTabs[activeTabIdx]||emptyTab();
-  const cart=tab.cart;
+  const cartRaw=tab.cart;
+  // ── OFERTA (2 preços): à vista (PIX/PIX Chave/Dinheiro) cobra priceAvista; qualquer outra
+  // forma (ou mix) cobra price (cartão). Preço é FIXO: nenhum desconto incide sobre ofertas.
+  const _avMethods=["PIX","PIX Chave","Dinheiro"];
+  const payIsAvista=(tab.payments||[]).length
+    ?(tab.payments||[]).every(p=>_avMethods.includes(p.method))
+    :(m=>m==="DINHEIRO"||m.startsWith("PIX"))((tab.currentMethod||"PIX").toUpperCase());
+  const cart=cartRaw.map(i=>(+i.priceAvista>0?{...i,offer:true,price:payIsAvista?+i.priceAvista:+i.price}:i));
   const cartCustomer=tab.customer;
   const cartDiscount=tab.discount;
   const discountType=tab.discountType;
@@ -1411,7 +1418,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
         // If cart has items but no payment panel, open payment with PIX
         if(cart.length>0 && !showPayPanel && !isFullyPaid){
           setShowPayPanel(true);
-          setPayments([{method:"PIX",value:cartTotal}]);
+          setPayments([{method:"PIX",value:cartTotalFor("PIX")}]);
           e.preventDefault();return;
         }
         // If cart empty and search empty, focus search
@@ -1493,7 +1500,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   var promo43Value=0,promo43Free=0,promo43Hint=0;
   if(promo43On&&cart.length>0){
     const byPrice={};
-    cart.forEach(i=>{const k=(Math.round(i.price*100)/100).toFixed(2);byPrice[k]=(byPrice[k]||0)+i.qty;});
+    cart.forEach(i=>{if(i.offer)return;const k=(Math.round(i.price*100)/100).toFixed(2);byPrice[k]=(byPrice[k]||0)+i.qty;});
     Object.entries(byPrice).forEach(([price,qty])=>{
       const free=Math.floor(qty/4);
       if(free>0){promo43Free+=free;promo43Value+=free*(+price);}
@@ -1502,6 +1509,9 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     promo43Value=Math.round(Math.min(promo43Value,cartSub)*100)/100;
   }
   const cartSubAposPromo=Math.max(0,Math.round((cartSub-promo43Value)*100)/100);
+  // Ofertas têm preço fixo: ficam fora da base de QUALQUER desconto (manual, nível, cupom)
+  const offerSub=cart.reduce((s,i)=>s+(i.offer?i.price*i.qty:0),0);
+  const discountableSub=Math.max(0,Math.round((cartSubAposPromo-offerSub)*100)/100);
 
   // Discount calculation — % "na venda toda" incide sobre o subtotal sem o brinde
   var discountValue=0;
@@ -1510,14 +1520,14 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   if((cartDiscount>0||hasItemDiscounts)&&cart.length>0){
     if(discountScope==="sale"){
       if(discountType==="percent"){
-        discountValue=cartSubAposPromo*cartDiscount/100;
+        discountValue=discountableSub*cartDiscount/100;
         discountLabel=cartDiscount+"% na venda toda";
       } else {
         discountValue=cartDiscount;
         discountLabel=fmt(cartDiscount)+" na venda toda";
       }
     } else if(discountScope==="item"){
-      var activeItems=cart.filter(function(i){return (itemDiscounts[i.id]||0)>0;});
+      var activeItems=cart.filter(function(i){return (itemDiscounts[i.id]||0)>0&&!i.offer;});
       if(activeItems.length>0){
         activeItems.forEach(function(i){
           var val=itemDiscounts[i.id]||0;
@@ -1532,37 +1542,41 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       }
     }
   }
-  discountValue=Math.min(discountValue,cartSubAposPromo); // não pode ser maior que o valor pago
+  discountValue=Math.min(discountValue,discountableSub); // não pode passar da base sem ofertas
 
   // ── CLIENTE BLACK (níveis + cashback) — cotação do servidor ──
   // O servidor decide desconto de nível (só à vista, fora de promoção) e saldo usável.
   // Sem internet a venda sai sem benefícios (o cashback ainda entra via trigger no banco).
   const custObjSel=customers.find(c=>c.name===cartCustomer);
-  const manualPct=cartSubAposPromo>0?Math.round(discountValue/cartSubAposPromo*10000)/100:0;
+  const manualPct=discountableSub>0?Math.round(discountValue/discountableSub*10000)/100:0;
   // PIX Chave também é à vista — conta como PIX pra cotação (cupom e desconto de nível)
   const payMethodForQuote=payments.length?(payments.every(p=>["PIX","PIX Chave","Dinheiro"].includes(p.method))?"PIX":"CREDITO"):((tab.currentMethod||"PIX").toUpperCase()==="DINHEIRO"?"DINHEIRO":(tab.currentMethod||"PIX").toUpperCase().startsWith("PIX")?"PIX":"CREDITO");
   // quoteMatch: mesma elegibilidade (cliente/pagamento/promo) — o subtotal pode ter mudado;
   // o desconto escala localmente com o carrinho em vez de sumir até a cotação nova chegar.
   const couponTyped=(tab.coupon||"").trim().toUpperCase();
   const quoteMatch=cbQuote&&cbQuote._custId===(custObjSel?.id||null)&&cbQuote.maxItemPromoPct===manualPct&&cbQuote._payMethod===payMethodForQuote&&(cbQuote._coupon||"")===couponTyped;
-  const quoteFresh=quoteMatch&&cbQuote.subtotal===cartSubAposPromo;
+  const quoteFresh=quoteMatch&&cbQuote.subtotal===discountableSub;
   const tierPctBase=quoteMatch?(cbQuote.tierDiscountPct||0):0;
-  const tierAutoValue=quoteFresh?(cbQuote.tierDiscountValue||0):Math.round(cartSubAposPromo*tierPctBase)/100;
+  const tierAutoValue=quoteFresh?(cbQuote.tierDiscountValue||0):Math.round(discountableSub*tierPctBase)/100;
   // Cupom de campanha (vem validado do servidor; substitui o desconto de nível)
   const couponApplied=quoteMatch&&cbQuote.coupon?cbQuote.coupon:null;
   const couponPctBase=couponApplied?(cbQuote.couponPct||0):0;
-  const couponValue=quoteFresh?(cbQuote.couponValue||0):(couponPctBase>0?Math.round(cartSubAposPromo*couponPctBase)/100:Math.min(+(couponApplied?.value)||0,cartSubAposPromo));
+  const couponValue=quoteFresh?(cbQuote.couponValue||0):(couponPctBase>0?Math.round(discountableSub*couponPctBase)/100:Math.min(+(couponApplied?.value)||0,discountableSub));
   const couponError=couponTyped&&quoteMatch&&!couponApplied?(cbQuote.warnings||[]).find(w=>/cupom/i.test(w)):null;
   // Só o nível BLACK permite ajustar o desconto (peça anunciada com preço arredondado);
   // GOLD/DIAMOND ficam travados nos 12/14%. Teto de 30% contra erro de digitação.
   const tierEditable=quoteMatch&&cbQuote.tier==="BLACK"&&tierPctBase>0;
-  const tierMaxEdit=Math.round(cartSubAposPromo*30)/100;
+  const tierMaxEdit=Math.round(discountableSub*30)/100;
   // O ajuste fica amarrado ao cliente da comanda — trocou o cliente, volta ao padrão
   const tierOverrideOn=tierEditable&&tab.tierOverride>0&&tab.tierOverrideCust===custObjSel?.id&&!couponApplied;
-  const tierDiscountValue=couponApplied?0:(tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,cartSubAposPromo):tierAutoValue);
-  const tierPctShown=cartSubAposPromo>0&&tierDiscountValue>0?Math.round(tierDiscountValue/cartSubAposPromo*1000)/10:0;
+  const tierDiscountValue=couponApplied?0:(tierOverrideOn?Math.min(tab.tierOverride,tierMaxEdit,discountableSub):tierAutoValue);
+  const tierPctShown=discountableSub>0&&tierDiscountValue>0?Math.round(tierDiscountValue/discountableSub*1000)/10:0;
   const balanceUsed=quoteMatch&&tab.useBalance?Math.min(cbQuote.balanceUsed||0,Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue-couponValue)*100)/100):0;
   const cartTotal=Math.round(Math.max(0,cartSubAposPromo-discountValue-tierDiscountValue-couponValue-balanceUsed)*100)/100;
+  // Total recalculado para uma forma específica (ofertas trocam de preço entre à vista e cartão)
+  const _offAv=cartRaw.reduce((s,i)=>s+(+i.priceAvista>0?(+i.priceAvista)*i.qty:0),0);
+  const _offCard=cartRaw.reduce((s,i)=>s+(+i.priceAvista>0?(+i.price)*i.qty:0),0);
+  const cartTotalFor=(method)=>Math.round((cartTotal-(payIsAvista?_offAv:_offCard)+(_avMethods.includes(method)?_offAv:_offCard))*100)/100;
 
   // Cotação Cliente Black a cada mudança de cliente/carrinho/desconto/pagamento.
   // Primeira cotação do cliente sai na hora; as demais com debounce curto — a tela
@@ -1570,10 +1584,10 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   useEffect(()=>{
     // Cupom digitado também dispara cotação sem cliente selecionado — o servidor
     // identifica o dono do cupom e a tela seleciona o cliente sozinha.
-    if((!custObjSel?.id&&!couponTyped)||cartSubAposPromo<=0){setCbQuote(null);return;}
+    if((!custObjSel?.id&&!couponTyped)||discountableSub<=0){setCbQuote(null);return;}
     const isNewCust=cbQuote?._custId!==(custObjSel?.id||null);
     const t=setTimeout(()=>{
-      api.quoteSale({customer_id:custObjSel?.id||"",subtotal:cartSubAposPromo,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0,coupon_code:couponTyped})
+      api.quoteSale({customer_id:custObjSel?.id||"",subtotal:discountableSub,max_item_promo_pct:manualPct,payment_method:payMethodForQuote,use_balance:tab.useBalance?999999:0,coupon_code:couponTyped})
         .then(q=>{
           if(!q||q._offline)return;
           setCbQuote({...q,_custId:custObjSel?.id||null,_payMethod:payMethodForQuote,_coupon:couponTyped});
@@ -1586,7 +1600,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     },isNewCust?0:120);
     return ()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[custObjSel?.id,cartSubAposPromo,manualPct,payMethodForQuote,tab.useBalance,couponTyped]);
+  },[custObjSel?.id,discountableSub,manualPct,payMethodForQuote,tab.useBalance,couponTyped]);
 
   // Fecha o editor do desconto ao trocar de cliente/comanda
   useEffect(()=>{setTierEditing(false);},[custObjSel?.id,activeTabIdx]);
@@ -1602,7 +1616,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
   // Limite global em % sobre o subtotal; vale para desconto fixo e por item também.
   // Admin não tem limite. Acima do limite exige liberação com senha de gerente/gestor/admin.
   const discountLimitPct=+(appSettings?.discount_limit?.percent)||0; // 0 = sem limite
-  const discountPct=cartSubAposPromo>0?discountValue/cartSubAposPromo*100:0;
+  const discountPct=discountableSub>0?discountValue/discountableSub*100:0;
   const discountAuth=tab.discountAuth||null;
   // A liberação vale para o valor autorizado (ou menor) — se aumentar o desconto, pede senha de novo
   const discountAuthValid=discountAuth&&discountValue<=discountAuth.value+0.001;
@@ -1720,11 +1734,11 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     }
     if(method==="Dinheiro"){
       setCurrentMethod("Dinheiro");
-      setCurrentValue(String(cartTotal));
+      setCurrentValue(String(cartTotalFor("Dinheiro")));
       setShowPayPanel(true);
       return;
     }
-    setPayments([{method,value:cartTotal}]);
+    setPayments([{method,value:cartTotalFor(method)}]);
     setShowPayPanel(true);
   };
 
@@ -1740,7 +1754,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       const rest=cartTotal-alreadyPaid;
       if(rest>0) setPayments(prev=>[...prev,{method:"Desc. em Folha ("+emp.name+")",value:rest}]);
     } else {
-      setPayments([{method:"Desc. em Folha ("+emp.name+")",value:cartTotal}]);
+      setPayments([{method:"Desc. em Folha ("+emp.name+")",value:cartTotalFor("Desc. em Folha")}]);
     }
     setShowPayPanel(true);
     setShowFolhaSelect(false);
@@ -1861,7 +1875,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
             }
             <div style={{fontSize:11,fontWeight:600,lineHeight:1.2}}>{p.name}</div>
             <div style={{fontSize:9,color:C.dim}}>{p.size} • {p.color}</div>
-            <div style={{fontSize:14,fontWeight:800,color:C.gold}}>{fmt(p.price)}</div>
+            <div style={{fontSize:14,fontWeight:800,color:C.gold}}>{+p.priceAvista>0?<>🔥 {fmt(p.priceAvista)} <span style={{fontSize:9,color:C.dim,fontWeight:600}}>à vista / {fmt(p.price)} cartão</span></>:fmt(p.price)}</div>
             <div style={{fontSize:10,color:p.stock<=p.minStock?C.red:C.grn}}>{p.stock} un.</div>
           </button>)}
         </div>
@@ -1913,8 +1927,8 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
           </div>}
         <div style={{flex:1,overflowY:"auto",padding:8}}>
           {cart.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.dim,fontSize:12}}>🛒 Carrinho vazio</div>:
-          cart.map(item=>{const itemDisc=discountScope==="item"&&(itemDiscounts[item.id]||0)>0?(discountType==="percent"?Math.round(item.price*item.qty*(itemDiscounts[item.id]||0)/100*100)/100:Math.min(itemDiscounts[item.id]||0,item.price*item.qty)):0;return <div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(itemDisc>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>{item.photo?<img src={item.photo} alt={item.name} style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>:<span style={{fontSize:28,lineHeight:1}}>{item.img}</span>}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:600}}>{item.name}</div>{itemDisc>0&&<div style={{fontSize:9,color:C.red}}>🏷️ -{fmt(itemDisc)}</div>}</div></div>
+          cart.map(item=>{const itemDisc=!item.offer&&discountScope==="item"&&(itemDiscounts[item.id]||0)>0?(discountType==="percent"?Math.round(item.price*item.qty*(itemDiscounts[item.id]||0)/100*100)/100:Math.min(itemDiscounts[item.id]||0,item.price*item.qty)):0;return <div key={item.id} style={{background:C.s2,borderRadius:8,padding:8,marginBottom:5,...(itemDisc>0?{border:"1px solid rgba(255,82,82,.3)",background:"rgba(255,82,82,.04)"}:{})}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>{item.photo?<img src={item.photo} alt={item.name} style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>:<span style={{fontSize:28,lineHeight:1}}>{item.img}</span>}<div style={{flex:1}}><div style={{fontSize:11,fontWeight:600}}>{item.name}</div>{item.offer&&<div style={{fontSize:9,color:"#FF8A65",fontWeight:700}}>🔥 OFERTA — preço fixo {payIsAvista?"à vista":"cartão"} (sem desconto)</div>}{itemDisc>0&&<div style={{fontSize:9,color:C.red}}>🏷️ -{fmt(itemDisc)}</div>}</div></div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <button style={S.qBtn} onClick={()=>setCart(prev=>prev.map(i=>i.id===item.id?(i.qty>1?{...i,qty:i.qty-1}:null):i).filter(Boolean))}>{I.minus}</button>
               <span style={{fontSize:14,fontWeight:700,minWidth:24,textAlign:"center"}}>{item.qty}</span>
@@ -1956,13 +1970,15 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
                   <div style={{fontSize:10,color:C.dim,marginBottom:6,fontWeight:600}}>Desconto por produto ({discountType==="percent"?"%":"R$"}):</div>
                   {cart.map(i=>{
                     const val=itemDiscounts[i.id]||"";
-                    const disc=+val>0?(discountType==="percent"?Math.round(i.price*i.qty*+val/100*100)/100:Math.min(+val,i.price*i.qty)):0;
+                    const disc=!i.offer&&+val>0?(discountType==="percent"?Math.round(i.price*i.qty*+val/100*100)/100:Math.min(+val,i.price*i.qty)):0;
                     return <div key={i.id} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 0",borderBottom:`1px solid ${C.brd}`}}>
-                      <span style={{flex:1,fontSize:11}}>{i.name}</span>
+                      <span style={{flex:1,fontSize:11}}>{i.offer?"🔥 ":""}{i.name}</span>
                       <span style={{fontSize:10,color:C.dim,fontFamily:"monospace"}}>{fmt(i.price*i.qty)}</span>
-                      <input type="number" placeholder="0" value={val} onChange={e=>setItemDiscount(i.id,e.target.value)}
+                      {i.offer
+                        ?<span style={{fontSize:9,color:"#FF8A65",fontWeight:700}}>preço fixo</span>
+                        :<><input type="number" placeholder="0" value={val} onChange={e=>setItemDiscount(i.id,e.target.value)}
                         style={{...S.inp,width:64,padding:"3px 6px",fontSize:12,textAlign:"center"}} min={0}/>
-                      <span style={{fontSize:10,color:C.dim,minWidth:14}}>{discountType==="percent"?"%":"R$"}</span>
+                      <span style={{fontSize:10,color:C.dim,minWidth:14}}>{discountType==="percent"?"%":"R$"}</span></>}
                       {disc>0&&<span style={{fontSize:10,color:C.red,fontFamily:"monospace",minWidth:48}}>-{fmt(disc)}</span>}
                     </div>;
                   })}
