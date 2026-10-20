@@ -2813,6 +2813,32 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
 
   const [visibleCount,setVisibleCount]=useState(50);
   const [showInactive,setShowInactive]=useState(false);
+
+  // ── 🔥 OFERTAS: marcar produto EXISTENTE (com nome/descrição de verdade) sem abrir o formulário ──
+  const [offerSearch,setOfferSearch]=useState("");
+  const [offerDraft,setOfferDraft]=useState({}); // id -> preço à vista digitado
+  const offersList=catalog.filter(p=>p.active!==false&&+p.priceAvista>0);
+  const offerMatches=offerSearch.trim().length>=2?catalog.filter(p=>{
+    if(p.active===false||+p.priceAvista>0)return false;
+    const q=offerSearch.toLowerCase();
+    return p.name.toLowerCase().includes(q)||p.sku.toLowerCase().includes(q)||(p.ean||"").includes(offerSearch.trim());
+  }).slice(0,8):[];
+  const saveOffer=(p,val)=>{
+    const v=Math.round((parseFloat(String(val).replace(",","."))||0)*100)/100;
+    if(!(v>0))return showToast("Digite o preço à vista!","error");
+    if(v>=p.price)return showToast("Preço à vista ("+fmt(v)+") deve ser MENOR que o cartão ("+fmt(p.price)+")!","error");
+    const updated={...p,priceAvista:v,offer:true};
+    setCatalog(prev=>prev.map(x=>x.id===p.id?updated:x));
+    api.updateProduct(p.id,prodToApi(updated)).catch(e=>showToast("Erro ao salvar oferta: "+e.message,"error"));
+    setOfferDraft(d=>({...d,[p.id]:""}));
+    showToast("🔥 "+p.name+" em oferta: "+fmt(v)+" à vista / "+fmt(p.price)+" cartão");
+  };
+  const clearOffer=(p)=>{
+    const updated={...p,priceAvista:0,offer:false};
+    setCatalog(prev=>prev.map(x=>x.id===p.id?updated:x));
+    api.updateProduct(p.id,prodToApi(updated)).catch(e=>showToast("Erro: "+e.message,"error"));
+    showToast(p.name+" saiu da oferta");
+  };
   const filtered=catalog.filter(p=>{
     if(!showInactive&&p.active===false)return false;
     const matchSearch=p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search)||(p.ref||"").toLowerCase().includes(search.toLowerCase());
@@ -3155,6 +3181,41 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
           <button style={{...S.primBtn,opacity:saving?.5:1}} onClick={saveProduct} disabled={saving}>{saving?"⏳ Salvando...":(<>{I.check} {editId?"Salvar Alterações":"Cadastrar Produto"}</>)}</button>
         </div>
       </div>}
+
+      {/* 🔥 OFERTAS DA SEMANA — gerenciador rápido (produto real, com descrição) */}
+      <div style={{...S.card,marginBottom:12,border:"1px solid rgba(255,82,82,.35)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <span style={{fontSize:20}}>🔥</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:800}}>Ofertas da semana ({offersList.length})</div>
+            <div style={{fontSize:11,color:C.dim}}>Busque o produto JÁ CADASTRADO (com a descrição dele) e digite o preço à vista — sem abrir o formulário. Etiqueta e PDV aplicam sozinhos.</div>
+          </div>
+        </div>
+        <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar produto p/ colocar em oferta (nome, SKU ou EAN)..." value={offerSearch} onChange={e=>setOfferSearch(e.target.value)}/></div>
+        {offerMatches.length>0&&<div style={{marginTop:6}}>
+          {offerMatches.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 4px",borderBottom:`1px solid ${C.brd}`}}>
+            <span style={{flex:1,fontSize:12,fontWeight:600}}>{p.name} <span style={{fontSize:10,color:C.dim}}>{p.sku}</span></span>
+            <span style={{fontSize:11,color:C.gold,fontFamily:"monospace"}}>{fmt(p.price)} cartão</span>
+            <input type="number" placeholder="à vista" value={offerDraft[p.id]||""} onChange={e=>setOfferDraft(d=>({...d,[p.id]:e.target.value}))}
+              onKeyDown={e=>{if(e.key==="Enter")saveOffer(p,offerDraft[p.id]);}}
+              style={{...S.inp,width:90,padding:"5px 8px",fontSize:13,fontWeight:700,textAlign:"center",borderColor:C.grn+"66"}}/>
+            <button style={{...S.primBtn,padding:"5px 12px",fontSize:11}} onClick={()=>saveOffer(p,offerDraft[p.id])}>🔥 Marcar</button>
+          </div>)}
+        </div>}
+        {offerSearch.trim().length>=2&&offerMatches.length===0&&<div style={{fontSize:11,color:C.dim,padding:"8px 4px"}}>Nenhum produto encontrado (ou já está em oferta). Produto novo? Cadastre primeiro com nome/descrição completos.</div>}
+        {offersList.length>0&&<div style={{marginTop:10}}>
+          <div style={{fontSize:10,color:C.dim,fontWeight:700,letterSpacing:1,marginBottom:4}}>EM OFERTA AGORA</div>
+          <div style={{display:"flex",flexDirection:"column",gap:2,maxHeight:220,overflowY:"auto"}}>
+            {offersList.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 4px",borderBottom:`1px solid ${C.brd}`}}>
+              <span style={{flex:1,fontSize:12}}>🔥 {p.name} <span style={{fontSize:10,color:C.dim}}>{p.sku}</span></span>
+              <span style={{fontSize:12,fontWeight:800,color:C.grn,fontFamily:"monospace"}}>{fmt(p.priceAvista)}</span>
+              <span style={{fontSize:10,color:C.dim,fontFamily:"monospace"}}>/ {fmt(p.price)} cartão</span>
+              <button title="Tirar da oferta" style={{...S.smBtn,color:C.red}} onClick={()=>clearOffer(p)}>✕</button>
+            </div>)}
+          </div>
+          <div style={{fontSize:10,color:C.dim,marginTop:6}}>Fim da semana de ofertas: é só clicar ✕ em cada uma (ou me pedir pra tirar todas de uma vez).</div>
+        </div>}
+      </div>
 
       {/* Product Table */}
       {!catalogLoaded&&catalog.length===0&&<div style={{textAlign:"center",padding:40,color:C.dim,fontSize:16,fontWeight:700}}>Carregando produtos do servidor...</div>}
