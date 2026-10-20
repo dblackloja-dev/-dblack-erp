@@ -142,8 +142,8 @@ const lsSave = (key, val) => {
 })();
 
 // ─── TRANSFORMAÇÕES API ↔ FRONTEND ───
-const prodFromApi = p => ({ ...p, minStock: parseInt(p.min_stock)||0, price: parseFloat(p.price)||0, cost: parseFloat(p.cost)||0, margin: parseFloat(p.margin)||0, variations: typeof p.variations === 'string' ? JSON.parse(p.variations||'[]') : (p.variations||[]) });
-const prodToApi = p => ({ ...p, min_stock: p.minStock, variations: Array.isArray(p.variations) ? p.variations : [] });
+const prodFromApi = p => ({ ...p, minStock: parseInt(p.min_stock)||0, price: parseFloat(p.price)||0, priceAvista: parseFloat(p.price_avista)||0, cost: parseFloat(p.cost)||0, margin: parseFloat(p.margin)||0, variations: typeof p.variations === 'string' ? JSON.parse(p.variations||'[]') : (p.variations||[]) });
+const prodToApi = p => ({ ...p, min_stock: p.minStock, price_avista: (+p.priceAvista > 0 ? +p.priceAvista : null), variations: Array.isArray(p.variations) ? p.variations : [] });
 const custFromApi = c => ({ ...c, totalSpent: parseFloat(c.total_spent||0), lastVisit: c.last_visit||'-', tags: typeof c.tags === 'string' ? JSON.parse(c.tags||'["Novo"]') : (c.tags||['Novo']) });
 const custToApi = c => ({ ...c, total_spent: c.totalSpent||0, last_visit: c.lastVisit||'-' });
 // Vendas do Chat gravam itens como {product_id, quantity} (PDV grava {id, qty}) — sem
@@ -2788,7 +2788,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
     return "REF-"+String(Math.max(0,...refNums)+1).padStart(3,"0");
   };
 
-  const newEmpty=()=>({name:"",sku:getNextSku(),ean:getNextEan(),ref:getNextRef(),category:"Camisetas",brand:"D'Black",supplier:"",size:"",color:"",price:"",cost:"",minStock:"0",img:"👕",photo:"",variations:"",active:true});
+  const newEmpty=()=>({name:"",sku:getNextSku(),ean:getNextEan(),ref:getNextRef(),category:"Camisetas",brand:"D'Black",supplier:"",size:"",color:"",price:"",cost:"",minStock:"0",img:"👕",photo:"",variations:"",active:true,offer:false,priceAvista:""});
   const [np,setNp]=useState(()=>newEmpty());
 
   // Margin calc (markup sobre custo)
@@ -2816,18 +2816,20 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
   const saveProduct=async()=>{
     if(!np.name||!np.sku)return showToast("Preencha nome e SKU!","error");
     if(!np.price)return showToast(isAdmin?"Preencha o preço!":"Preencha o preço de venda!","error");
+    if(np.offer&&!(+np.priceAvista>0))return showToast("Oferta marcada: preencha o preço à vista (aba 🔥 Oferta)!","error");
     if(saving)return;
     setSaving(true);
     const vars=np.variations?np.variations.split(",").map(v=>v.trim()).filter(Boolean):[];
     const margin=npCost>0?((npPrice-npCost)/npCost*100):0;
+    const avista=np.offer?(+np.priceAvista||0):0;
     try{
       if(editId){
-        const updated = {...np,price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
+        const updated = {...np,price:npPrice,priceAvista:avista,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
         await api.updateProduct(editId, prodToApi(updated));
         setCatalog(prev=>prev.map(p=>p.id===editId?{...p,...updated}:p));
         setEditId(null);showToast("Produto atualizado!");
       } else {
-        const newProd={...np,id:genId(),price:npPrice,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
+        const newProd={...np,id:genId(),price:npPrice,priceAvista:avista,cost:npCost,margin,minStock:+np.minStock||0,variations:vars};
         // Espera o servidor confirmar ANTES de adicionar ao estado
         await api.createProduct(prodToApi(newProd));
         setCatalog(prev=>[newProd,...prev]);
@@ -2844,7 +2846,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
 
   // Edit
   const startEdit=(p)=>{
-    setNp({...p,price:String(p.price),cost:String(p.cost),minStock:String(p.minStock),variations:(p.variations||[]).join(", ")});
+    setNp({...p,price:String(p.price),cost:String(p.cost),minStock:String(p.minStock),variations:(p.variations||[]).join(", "),offer:+p.priceAvista>0,priceAvista:+p.priceAvista>0?String(p.priceAvista):""});
     setEditId(p.id);setShowForm(true);setFormTab("essencial");
   };
 
@@ -2977,6 +2979,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
         <div style={{display:"flex",gap:4,marginBottom:14}}>
           <button onClick={()=>setFormTab("essencial")} style={{flex:1,padding:"8px",borderRadius:8,border:"1px solid "+(formTab==="essencial"?C.gold:C.brd),background:formTab==="essencial"?"rgba(255,215,64,.08)":C.s2,color:formTab==="essencial"?C.gold:C.dim,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>📋 Essencial</button>
           <button onClick={()=>setFormTab("detalhes")} style={{flex:1,padding:"8px",borderRadius:8,border:"1px solid "+(formTab==="detalhes"?C.blu:C.brd),background:formTab==="detalhes"?"rgba(64,196,255,.08)":C.s2,color:formTab==="detalhes"?C.blu:C.dim,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>📝 Detalhes Adicionais</button>
+          <button onClick={()=>setFormTab("oferta")} style={{flex:1,padding:"8px",borderRadius:8,border:"1px solid "+(formTab==="oferta"?C.red:C.brd),background:formTab==="oferta"?"rgba(255,82,82,.08)":C.s2,color:formTab==="oferta"?C.red:C.dim,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>🔥 Oferta{np.offer?" ✓":""}</button>
         </div>
 
         {/* TAB 1: ESSENCIAL */}
@@ -3086,6 +3089,32 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
           </div>
         </div>}
 
+        {/* TAB 3: OFERTA (2 preços na etiqueta) */}
+        {formTab==="oferta"&&<div>
+          <div style={{padding:14,background:"rgba(255,82,82,.04)",borderRadius:12,border:`1px solid ${np.offer?C.red+"66":C.brd}`}}>
+            <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",userSelect:"none"}}>
+              <input type="checkbox" checked={!!np.offer} onChange={e=>setNp(p=>({...p,offer:e.target.checked}))} style={{width:18,height:18,accentColor:"#FF5252",cursor:"pointer"}}/>
+              <div>
+                <div style={{fontSize:14,fontWeight:800}}>🔥 Produto em OFERTA</div>
+                <div style={{fontSize:11,color:C.dim}}>A etiqueta sai com 2 preços: à vista (PIX/Dinheiro) e cartão</div>
+              </div>
+            </label>
+            {np.offer&&<div style={{marginTop:14,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"end"}}>
+              <div>
+                <label style={{fontSize:10,color:C.grn,display:"block",marginBottom:2,fontWeight:700}}>À VISTA — PIX/Dinheiro R$ *</label>
+                <input style={{...S.inp,width:"100%",fontSize:16,fontWeight:700,borderColor:C.grn+"66"}} type="number" value={np.priceAvista} onChange={e=>setNp(p=>({...p,priceAvista:e.target.value}))} placeholder="89.90"/>
+              </div>
+              <div>
+                <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>CARTÃO até 12x (= Preço de Venda)</label>
+                <div style={{padding:"10px 12px",borderRadius:8,background:C.s1,border:`1px solid ${C.brd}`,fontSize:16,fontWeight:800,color:C.gold,textAlign:"center"}}>{npPrice>0?fmt(npPrice):"—"}</div>
+              </div>
+            </div>}
+            {np.offer&&+np.priceAvista>0&&npPrice>0&&(+np.priceAvista<npPrice
+              ?<div style={{marginTop:8,fontSize:11,color:C.grn,textAlign:"center",fontWeight:700}}>Economia à vista: {fmt(npPrice-(+np.priceAvista))} ({Math.round((1-(+np.priceAvista)/npPrice)*100)}% off)</div>
+              :<div style={{marginTop:8,fontSize:11,color:"#ffb74d",textAlign:"center",fontWeight:700}}>⚠️ O preço à vista está maior ou igual ao do cartão — confira!</div>)}
+          </div>
+        </div>}
+
         {/* Preview (always visible) */}
         {np.name&&<div style={{marginTop:14,padding:12,background:C.s2,borderRadius:10,display:"flex",alignItems:"center",gap:12,border:`1px solid ${C.brd}`}}>
           {np.photo
@@ -3127,7 +3156,7 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
         <td style={{...S.td,fontSize:11}}>{p.brand||"-"}</td>
         <td style={S.td}>{p.size}</td>
         <td style={{...S.td,fontSize:11}}>{p.color}</td>
-        <td style={{...S.td,...S.tdM}}>{fmt(p.price)}</td>
+        <td style={{...S.td,...S.tdM}}>{+p.priceAvista>0?<span title="Oferta — à vista / cartão">🔥 {fmt(p.priceAvista)} <span style={{fontSize:10,color:C.dim}}>/ {fmt(p.price)}</span></span>:fmt(p.price)}</td>
         {isAdmin&&<td style={{...S.td,opacity:.6,fontSize:11}}>{fmt(p.cost)}</td>}
         {isAdmin&&<td style={{...S.td,fontWeight:700,color:(p.margin||0)>=100?C.grn:(p.margin||0)>=50?C.gold:C.red}}>{pct(p.margin||0)}</td>}
         <td style={S.td}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.variations||[]).length>0?(p.variations||[]).map((v,i)=><span key={i} style={{padding:"1px 5px",borderRadius:3,background:C.s2,fontSize:9,border:`1px solid ${C.brd}`}}>{v}</span>):<span style={{fontSize:10,color:C.dim}}>-</span>}</div></td>
@@ -6256,18 +6285,22 @@ function EtiquetasModule({storeProducts,showToast}){
       WebkitFontSmoothing:'antialiased',textRendering:'geometricPrecision'
     }}>
       <div style={{position:'absolute',top:10,left:'50%',transform:'translateX(-50%)',width:14,height:14,borderRadius:'50%',border:'1px dashed #bbb'}}/>
-      <div style={{height:189,padding:'38px 9px 6px',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{fontSize:13,fontWeight:900,letterSpacing:1.5,textAlign:'center',whiteSpace:'nowrap'}}>D'BLACK STORE</div>
+      <div style={{height:189,padding:'25px 9px 6px',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'space-between'}}>
+        <img src="/logo-etiqueta-db.png" alt="D'Black Store" style={{height:53,width:'auto',display:'block'}}/>
         <div style={{fontSize:10,fontWeight:700,textAlign:'center',lineHeight:1.2,overflow:'hidden',maxHeight:32,width:'100%',wordBreak:'break-word'}}>
           {prod.sku} {prod.name.toUpperCase()}
         </div>
         {size?<div style={{fontSize:14,fontWeight:900,border:'2px solid #000',borderRadius:6,padding:'1px 12px',letterSpacing:1}}>TAM {size}</div>:<div/>}
         <BarcodeEAN ean={prod.ean||''} width={155} height={46}/>
       </div>
-      <div style={{height:94,borderTop:'2px dashed #999',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}}>
+      {(+prod.priceAvista>0)?(()=>{const av=fmtPrecoEtiqueta(prod.priceAvista);return <div style={{height:94,borderTop:'2px dashed #999',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2}}>
+        <div style={{fontSize:8,fontWeight:800,letterSpacing:.5}}>A VISTA • PIX/DINHEIRO</div>
+        <div style={{fontSize:24,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {av.inteiro},{av.decimal}</div>
+        <div style={{fontSize:11,fontWeight:800,marginTop:2}}>CARTAO R$ {preco.inteiro},{preco.decimal} <span style={{fontWeight:700,fontSize:9}}>ate 12x</span></div>
+      </div>;})():<div style={{height:94,borderTop:'2px dashed #999',boxSizing:'border-box',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}}>
         <div style={{fontSize:26,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
         <div style={{fontSize:9,fontWeight:700}}>Ate 12x sem juros</div>
-      </div>
+      </div>}
     </div>;
   };
 
@@ -6303,14 +6336,18 @@ function EtiquetasModule({storeProducts,showToast}){
       }
       return `<div class="label">
         <div class="corpo">
-          <div style="font-size:13px;font-weight:900;letter-spacing:1.5px;text-align:center;white-space:nowrap">D'BLACK STORE</div>
+          <img src="${window.location.origin}/logo-etiqueta-db.png" alt="" style="height:14mm;width:auto;display:block;margin:0 auto">
           <div style="font-size:10px;font-weight:700;text-align:center;line-height:1.2;overflow:hidden;max-height:32px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
           ${size?`<div style="font-size:14px;font-weight:900;border:2px solid #000;border-radius:6px;padding:1px 12px;letter-spacing:1px">TAM ${size}</div>`:'<div></div>'}
           <div style="display:flex;justify-content:center">${barcodeSvg}</div>
         </div>
         <div class="canhoto">
+          ${(+p.priceAvista>0)?(()=>{const av=fmtPrecoEtiqueta(p.priceAvista);return `
+          <div style="font-size:8px;font-weight:800;letter-spacing:.5px">A VISTA &bull; PIX/DINHEIRO</div>
+          <div style="font-size:24px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif;margin-top:2px">R$ ${av.inteiro},${av.decimal}</div>
+          <div style="font-size:11px;font-weight:800;margin-top:3px">CARTAO R$ ${preco.inteiro},${preco.decimal} <span style="font-weight:700;font-size:9px">ate 12x</span></div>`;})():`
           <div style="font-size:26px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
-          <div style="font-size:9px;font-weight:700;margin-top:3px">Ate 12x sem juros</div>
+          <div style="font-size:9px;font-weight:700;margin-top:3px">Ate 12x sem juros</div>`}
         </div>
       </div>`;
     };
@@ -6330,14 +6367,19 @@ function EtiquetasModule({storeProducts,showToast}){
       .label{width:50mm;height:75mm;display:flex;flex-direction:column;overflow:hidden;line-height:1.2;}
       .label:first-child{margin-right:var(--col-gap);}
       /* corpo fica na peça (acima do picote físico a 50mm); canhoto destacável leva o preço */
-      .corpo{height:50mm;padding:10mm 2.5mm 1.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;}
+      .corpo{height:50mm;padding:6.5mm 2.5mm 1.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;}
       .canhoto{height:25mm;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;}
       @media screen{html,body{width:auto;height:auto;padding:10px;}.page{margin-bottom:8px;}.label{border:1px solid #ccc;}}
     </style></head><body>${pagesHtml.join('')}</body></html>`);
     printWin.document.close();
-    setTimeout(()=>{
-      printWin.print();
-    },500);
+    // espera a logo (e fontes) carregarem antes de imprimir; cap de ~3s
+    let tries=0;
+    const doPrint=()=>{
+      const imgs=Array.from(printWin.document.images||[]);
+      if(imgs.every(im=>im.complete)||tries++>14){printWin.print();return;}
+      setTimeout(doPrint,200);
+    };
+    setTimeout(doPrint,400);
   };
 
   return(

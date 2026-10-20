@@ -410,11 +410,11 @@ app.post('/api/products', async (req, res) => {
     const margin = cost > 0 ? ((p.price - cost) / cost * 100) : 0;
     const vars = JSON.stringify(p.variations || []);
     await queryRun(
-      `INSERT INTO products (id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img, photo, variations, active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      `INSERT INTO products (id, name, sku, ean, ref, category, brand, supplier, size, color, price, cost, margin, min_stock, img, photo, variations, active, price_avista)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [id, p.name, p.sku, p.ean || '', p.ref || '', p.category || 'Camisetas', p.brand || "D'Black",
        p.supplier || '', p.size || '', p.color || '', p.price, cost, margin, p.min_stock ?? 0,
-       p.img || '👕', p.photo || '', vars, p.active !== false]
+       p.img || '👕', p.photo || '', vars, p.active !== false, (+p.price_avista > 0 ? +p.price_avista : null)]
     );
 
     // Inicializa estoque em todos os stock_ids
@@ -438,9 +438,9 @@ app.put('/api/products/:id', async (req, res) => {
     const vars = JSON.stringify(p.variations || []);
     await queryRun(
       `UPDATE products SET name=$1, sku=$2, ean=$3, ref=$4, category=$5, brand=$6, supplier=$7, size=$8, color=$9,
-       price=$10, cost=$11, margin=$12, min_stock=$13, img=$14, photo=$15, variations=$16, active=$17, updated_at=NOW() WHERE id=$18`,
+       price=$10, cost=$11, margin=$12, min_stock=$13, img=$14, photo=$15, variations=$16, active=$17, price_avista=$18, updated_at=NOW() WHERE id=$19`,
       [p.name, p.sku, p.ean || '', p.ref || '', p.category, p.brand, p.supplier || '', p.size || '',
-       p.color || '', p.price, cost, margin, p.min_stock ?? 0, p.img || '👕', p.photo || '', vars, p.active !== false, req.params.id]
+       p.color || '', p.price, cost, margin, p.min_stock ?? 0, p.img || '👕', p.photo || '', vars, p.active !== false, (+p.price_avista > 0 ? +p.price_avista : null), req.params.id]
     );
     res.json({ success: true, cost, margin });
   } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }

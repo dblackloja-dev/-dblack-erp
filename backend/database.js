@@ -378,6 +378,8 @@ async function initDB() {
     pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS session_id TEXT`).catch(()=>{}),
     pool.query(`ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS created_by TEXT`).catch(()=>{}),
     pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_auth_by TEXT`).catch(()=>{}),
+    // Oferta 2 preços: price = cartão (12x), price_avista = PIX/dinheiro (null = sem oferta)
+    pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS price_avista NUMERIC`).catch(()=>{}),
   ]);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_state_store_user ON cash_state(store_id, user_id)`).catch(()=>{});
 
