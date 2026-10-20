@@ -3222,11 +3222,22 @@ function ProdutosModule({catalog,setCatalog,stock,setStock,showToast,catalogLoad
             <label style={{fontSize:10,color:C.gold,display:"block",marginBottom:2,fontWeight:700}}>CARTÃO R$ *</label>
             <input type="number" style={{...S.inp,width:100,fontSize:15,fontWeight:700,textAlign:"center",borderColor:C.gold+"66"}} value={offerNew.card} onChange={e=>setOfferNew(o=>({...o,card:e.target.value}))} placeholder="99.90" onKeyDown={e=>{if(e.key==="Enter")saveOfferNew();}}/>
           </div>
-          <div style={{flex:1,minWidth:140}}>
-            <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:2}}>Tamanhos (opcional, vírgula)</label>
-            <input style={{...S.inp,width:"100%"}} value={offerNew.sizes} onChange={e=>setOfferNew(o=>({...o,sizes:e.target.value}))} placeholder="P, M, G, GG" onKeyDown={e=>{if(e.key==="Enter")saveOfferNew();}}/>
-          </div>
           <button style={{...S.primBtn,padding:"9px 18px",fontSize:13,opacity:offerSaving?.5:1}} disabled={offerSaving} onClick={saveOfferNew}>{offerSaving?"⏳":"🔥 Cadastrar oferta"}</button>
+        </div>
+        <div style={{marginTop:8}}>
+          <label style={{fontSize:10,color:C.dim,display:"block",marginBottom:4}}>Tamanhos (clique pra marcar)</label>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {SIZES.map(sz=>{
+              const sel=offerNew.sizes?offerNew.sizes.split(",").map(v=>v.trim()).filter(Boolean):[];
+              const on=sel.includes(sz);
+              return <button key={sz} onClick={()=>setOfferNew(o=>{
+                const cur=o.sizes?o.sizes.split(",").map(v=>v.trim()).filter(Boolean):[];
+                const next=on?cur.filter(s=>s!==sz):[...cur,sz];
+                const ordered=[...SIZES.filter(s=>next.includes(s)),...next.filter(s=>!SIZES.includes(s))];
+                return{...o,sizes:ordered.join(", ")};
+              })} style={{padding:"4px 9px",borderRadius:6,border:`1px solid ${on?C.gold:C.brd}`,background:on?"rgba(255,215,64,.12)":"transparent",color:on?C.gold:C.dim,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>{sz}</button>;
+            })}
+          </div>
         </div>
         {offersList.length>0&&<div style={{marginTop:10}}>
           <div style={{fontSize:10,color:C.dim,fontWeight:700,letterSpacing:1,marginBottom:4}}>EM OFERTA AGORA</div>
