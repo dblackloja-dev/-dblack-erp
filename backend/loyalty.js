@@ -607,31 +607,45 @@ function publicCouponHandlers(pool) {
       if (limited(req, res)) return;
       try {
         const p = req.body || {};
-        // só à vista: no site, cupom vale apenas no PIX
-        if (p.payment_method && !CASH_METHODS.has(String(p.payment_method).toUpperCase()))
-          return res.json({ valid: false, error: 'Cupom só vale à vista — escolha PIX para usar o desconto.' });
         if (!p.phone) return res.json({ valid: false, error: 'Preencha seu WhatsApp acima para validar o cupom.' });
         const c = await findCustomer(pool, { phone: p.phone });
         if (!c) return res.json({ valid: false, error: 'Use o WhatsApp cadastrado no Cliente Black (o que recebeu o cupom).' });
         const chk = await checkCoupon(pool, { code: p.code || '', customer: c, subtotal: p.subtotal });
         if (chk.error) return res.json({ valid: false, error: chk.error });
-        if (String(chk.coupon.gift_label || '').trim())
-          return res.json({ valid: false, error: 'Este cupom é um brinde para retirar na loja — apresente o código no caixa.' });
+        const gift = String(chk.coupon.gift_label || '').trim();
+        // só à vista: no site, cupom de DESCONTO vale apenas no PIX; brinde vale em qualquer pagamento
+        if (!gift && p.payment_method && !CASH_METHODS.has(String(p.payment_method).toUpperCase()))
+          return res.json({ valid: false, error: 'Cupom só vale à vista — escolha PIX para usar o desconto.' });
         const subtotal = round2(Number(p.subtotal) || 0);
         const pct = Number(chk.coupon.pct) || 0;
-        res.json({ valid: true, code: chk.coupon.code, pct, value: couponAmount(chk.coupon, subtotal) });
+        res.json({ valid: true, code: chk.coupon.code, pct, value: gift ? 0 : couponAmount(chk.coupon, subtotal), gift: gift || undefined });
       } catch (e) { res.status(500).json({ error: e.message }); }
     },
     redeem: async (req, res) => {
       if (limited(req, res)) return;
       try {
-        const { code, ref } = req.body || {};
+        const { code, ref, phone } = req.body || {};
+        const cod = String(code || '').trim();
+        const cp = (await pool.query('SELECT * FROM coupons WHERE upper(code) = upper($1)', [cod])).rows[0];
+        if (!cp) return res.json({ redeemed: false });
+        // compartilhado (max_uses>0): resgate por cliente em coupon_redemptions — precisa do phone
+        if (Number(cp.max_uses) > 0) {
+          const c = phone ? await findCustomer(pool, { phone }) : null;
+          if (!c) return res.json({ redeemed: false, error: 'Cliente não identificado — envie o phone.' });
+          const r = await pool.query(
+            `INSERT INTO coupon_redemptions (id, coupon_id, customer_id, sale_id)
+             SELECT $1, $2, $3, $4
+             WHERE (SELECT COUNT(*) FROM coupon_redemptions WHERE coupon_id = $2) < $5
+             ON CONFLICT DO NOTHING`,
+            ['cr-' + String(ref || 'checkout'), cp.id, c.id, String(ref || 'checkout'), Number(cp.max_uses)]);
+          return res.json({ redeemed: r.rowCount > 0 });
+        }
         const r = await pool.query(
           `UPDATE coupons SET redeemed_at = NOW(), redeemed_sale_id = $2
-           WHERE upper(code) = upper($1) AND redeemed_at IS NULL AND COALESCE(max_uses,0) = 0
+           WHERE upper(code) = upper($1) AND redeemed_at IS NULL
              AND valid_from <= $3 AND valid_to >= $3
            RETURNING code`,
-          [String(code || '').trim(), String(ref || 'checkout'), todayBR()]);
+          [cod, String(ref || 'checkout'), todayBR()]);
         res.json({ redeemed: r.rowCount > 0 });
       } catch (e) { res.status(500).json({ error: e.message }); }
     },
