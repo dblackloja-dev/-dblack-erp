@@ -163,10 +163,21 @@ async function checkCoupon(pool, { code, customer, subtotal }) {
   const cp = (await pool.query('SELECT * FROM coupons WHERE upper(code) = upper($1)', [String(code).trim()])).rows[0];
   if (!cp) return { error: 'Cupom não encontrado — confira o código.' };
   const t = todayBR();
-  if (cp.redeemed_at) return { coupon: cp, error: 'Cupom já utilizado.' };
+  if (Number(cp.max_uses) > 0) {
+    // compartilhado: um código p/ todos, 1 resgate por cliente, limite global de usos
+    if (!customer) return { coupon: cp, error: 'Cupom: busque o cliente pelo CPF para aplicar.' };
+    if (!isEnrolled(customer)) return { coupon: cp, error: 'Cupom exclusivo Cliente Black — cadastre o CPF do cliente.' };
+    const r = (await pool.query(
+      `SELECT COUNT(*)::int uses, COUNT(*) FILTER (WHERE customer_id = $2)::int mine
+       FROM coupon_redemptions WHERE coupon_id = $1`, [cp.id, customer.id])).rows[0];
+    if (r.mine > 0) return { coupon: cp, error: 'Cupom já resgatado por este cliente (1 por CPF).' };
+    if (r.uses >= Number(cp.max_uses)) return { coupon: cp, error: 'Cupom esgotado — todos os brindes já foram resgatados.' };
+  } else {
+    if (cp.redeemed_at) return { coupon: cp, error: 'Cupom já utilizado.' };
+    if (customer && customer.id !== cp.customer_id) return { coupon: cp, error: 'Cupom pertence a outro cliente — confira o cadastro.' };
+  }
   if (t < cp.valid_from) return { coupon: cp, error: `Cupom válido a partir de ${fmtBRDate(cp.valid_from)}.` };
   if (t > cp.valid_to) return { coupon: cp, error: `Cupom venceu em ${fmtBRDate(cp.valid_to)}.` };
-  if (customer && customer.id !== cp.customer_id) return { coupon: cp, error: 'Cupom pertence a outro cliente — confira o cadastro.' };
   if (round2(Number(subtotal) || 0) < Number(cp.min_subtotal))
     return { coupon: cp, error: `Cupom vale para compras a partir de ${fmtBRL(cp.min_subtotal)}.` };
   return { coupon: cp };
@@ -204,7 +215,9 @@ async function quoteSale(pool, p) {
     const chk = !c
       ? { error: 'Busque o cliente pelo CPF para aplicar o cupom — o código é travado no CPF do titular.' }
       : await checkCoupon(pool, { code: couponCode, customer: c, subtotal });
+    const giftChk = chk.coupon ? String(chk.coupon.gift_label || '').trim() : '';
     if (chk.error) warnings.push(chk.error);
+    else if (giftChk) coupon = chk.coupon; // brinde: não é desconto — vale em qualquer pagamento e acumula com desconto manual/nível
     else if (!cash) warnings.push('Cupom só vale à vista (PIX/Dinheiro).');
     else if (maxPromo > 0) warnings.push('Cupom não acumula com desconto manual — remova o desconto para aplicar.');
     else {
@@ -213,11 +226,13 @@ async function quoteSale(pool, p) {
       couponFixed = Number(coupon.value) || 0;
     }
   }
+  const couponGift = coupon ? String(coupon.gift_label || '').trim() : '';
 
   let discountPct = 0;
   if (enrolled && cash && !promo && !couponPct && !couponFixed) discountPct = Number(cfg['discount_' + tier]) || 0;
   if (!c) warnings.push('Cadastre o cliente (CPF) para desconto à vista e cashback.');
   else if (!enrolled) warnings.push('Cliente sem CPF — cadastre o CPF para ativar os benefícios Cliente Black.');
+  if (couponGift) warnings.push(`Cupom ${coupon.code}: ${couponGift} de BRINDE 🎁 (1 por cliente) — entra na venda como item de R$ 0.`);
   if (couponPct || couponFixed) warnings.push(`Cupom ${coupon.code} aplicado: ${couponFixed > 0 ? fmtBRL(couponFixed) : couponPct + '%'} (substitui o desconto de nível).`);
   else {
     if (enrolled && promo && cash) warnings.push('Promoção ativa: desconto de nível não se aplica nesta venda.');
@@ -254,7 +269,7 @@ async function quoteSale(pool, p) {
   return {
     customer: c ? { id: c.id, name: c.name, enrolled, tier, tier_label: tier ? TIER_LABEL[tier] : null, grace_until: c.grace_until } : null,
     tier, tierDiscountPct: discountPct, tierDiscountValue: discountValue,
-    coupon: coupon ? { code: coupon.code, campaign: coupon.campaign, pct: couponPct, value: couponValue } : null,
+    coupon: coupon ? { code: coupon.code, campaign: coupon.campaign, pct: couponPct, value: couponValue, gift: couponGift || undefined } : null,
     couponCode: coupon ? coupon.code : '', couponPct, couponValue,
     subtotal, afterDiscount, balanceAvailable, balanceUsable, balanceUsed, totalPago,
     cashbackPct, cashbackValue, promoActive: promo, maxItemPromoPct: maxPromo,
@@ -271,7 +286,22 @@ function randCode(len) {
   return s;
 }
 
-async function generateCoupons(pool, { campaign, prefix, pct, value, min_subtotal, valid_from, valid_to, created_before }) {
+async function generateCoupons(pool, { campaign, prefix, pct, value, min_subtotal, valid_from, valid_to, created_before, code, max_uses, gift_label }) {
+  // Cupom COMPARTILHADO: passe code + max_uses (ex.: VIP5, 48 usos, gift_label 'LENÇO').
+  // Idempotente por code; repetir a chamada atualiza limite/mínimo/validade/brinde.
+  if (code && Number(max_uses) > 0) {
+    if (!campaign || !valid_from || !valid_to) throw Object.assign(new Error('campaign, valid_from e valid_to são obrigatórios'), { status: 400 });
+    const cod = String(code).trim().toUpperCase();
+    const r = await pool.query(
+      `INSERT INTO coupons (id, code, campaign, customer_id, pct, value, min_subtotal, valid_from, valid_to, gift_label, max_uses)
+       VALUES ($1,$2,$3,'*',$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (code) DO UPDATE SET campaign=EXCLUDED.campaign, min_subtotal=EXCLUDED.min_subtotal,
+         valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to, gift_label=EXCLUDED.gift_label, max_uses=EXCLUDED.max_uses
+       RETURNING (xmax = 0) AS created`,
+      [genId(), cod, campaign, Number(pct) || 0, Number(value) || 0, Number(min_subtotal) || 0, valid_from, valid_to,
+       String(gift_label || '').trim(), Number(max_uses)]);
+    return { campaign, code: cod, shared: true, max_uses: Number(max_uses), created: r.rows[0].created };
+  }
   if (!campaign || (!pct && !value) || !valid_from || !valid_to) throw Object.assign(new Error('campaign, pct OU value, valid_from e valid_to são obrigatórios'), { status: 400 });
   const pfx = String(prefix || 'BLK').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const members = await pool.query(`
@@ -315,10 +345,23 @@ async function couponReport(pool, campaign) {
                          FROM sales WHERE coupon_code <> '' AND status <> 'Cancelada'
                          ${campaign ? `AND coupon_code IN (SELECT code FROM coupons WHERE campaign = $1)` : ''}`, params)).rows[0]
     : { s: 0, d: 0 };
+  // Cupons compartilhados (max_uses>0): contagem de usos + quem resgatou
+  const shared = (await pool.query(`
+    SELECT cp.code, cp.campaign, cp.gift_label, cp.max_uses, cp.min_subtotal, cp.valid_from, cp.valid_to,
+           COUNT(r.id)::int uses
+    FROM coupons cp LEFT JOIN coupon_redemptions r ON r.coupon_id = cp.id
+    WHERE cp.max_uses > 0 ${campaign ? 'AND cp.campaign = $1' : ''}
+    GROUP BY cp.id ORDER BY cp.code`, params)).rows;
+  const sharedRedemptions = shared.length ? (await pool.query(`
+    SELECT cp.code, c.name, c.whatsapp, r.sale_id, r.created_at
+    FROM coupon_redemptions r JOIN coupons cp ON cp.id = r.coupon_id
+    LEFT JOIN customers c ON c.id = r.customer_id
+    WHERE cp.max_uses > 0 ${campaign ? 'AND cp.campaign = $1' : ''}
+    ORDER BY r.created_at DESC`, params)).rows : [];
   return {
     total: rows.length, sent: rows.filter((r) => r.sent_at).length, redeemed: redeemed.length,
     sales_total: Number(redeemedTotal.s) || 0, discount_total: Number(redeemedTotal.d) || 0,
-    coupons: rows,
+    coupons: rows, shared, shared_redemptions: sharedRedemptions,
   };
 }
 
@@ -497,8 +540,10 @@ function router(pool, { requireRole }) {
       if (chk.error) return res.json({ valid: false, error: chk.error });
       const subtotal = round2(Number(p.subtotal) || 0);
       const pct = Number(chk.coupon.pct) || 0;
+      const gift = String(chk.coupon.gift_label || '').trim();
       res.json({ valid: true, code: chk.coupon.code, pct, value: couponAmount(chk.coupon, subtotal),
-                 customer: { id: chk.coupon.customer_id } });
+                 gift: gift || undefined,
+                 customer: { id: Number(chk.coupon.max_uses) > 0 ? c.id : chk.coupon.customer_id } });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -570,6 +615,8 @@ function publicCouponHandlers(pool) {
         if (!c) return res.json({ valid: false, error: 'Use o WhatsApp cadastrado no Cliente Black (o que recebeu o cupom).' });
         const chk = await checkCoupon(pool, { code: p.code || '', customer: c, subtotal: p.subtotal });
         if (chk.error) return res.json({ valid: false, error: chk.error });
+        if (String(chk.coupon.gift_label || '').trim())
+          return res.json({ valid: false, error: 'Este cupom é um brinde para retirar na loja — apresente o código no caixa.' });
         const subtotal = round2(Number(p.subtotal) || 0);
         const pct = Number(chk.coupon.pct) || 0;
         res.json({ valid: true, code: chk.coupon.code, pct, value: couponAmount(chk.coupon, subtotal) });
@@ -581,7 +628,7 @@ function publicCouponHandlers(pool) {
         const { code, ref } = req.body || {};
         const r = await pool.query(
           `UPDATE coupons SET redeemed_at = NOW(), redeemed_sale_id = $2
-           WHERE upper(code) = upper($1) AND redeemed_at IS NULL
+           WHERE upper(code) = upper($1) AND redeemed_at IS NULL AND COALESCE(max_uses,0) = 0
              AND valid_from <= $3 AND valid_to >= $3
            RETURNING code`,
           [String(code || '').trim(), String(ref || 'checkout'), todayBR()]);

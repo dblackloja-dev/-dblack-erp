@@ -71,9 +71,25 @@ async function migrateLoyalty(pool) {
     CREATE INDEX IF NOT EXISTS idx_coupons_campaign ON coupons(campaign);
   `, 'coupons');
 
+  // Cupom COMPARTILHADO (coupons.max_uses > 0): um código só p/ todos (ex.: VIP5),
+  // 1 resgate por cliente, limite global de usos. Resgates ficam aqui, não em redeemed_at.
+  await run(`
+    CREATE TABLE IF NOT EXISTS coupon_redemptions (
+      id TEXT PRIMARY KEY,
+      coupon_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      sale_id TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (coupon_id, customer_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon ON coupon_redemptions(coupon_id);
+  `, 'coupon-redemptions');
+
   // ─── Colunas novas ───
   await run(`
     ALTER TABLE coupons ADD COLUMN IF NOT EXISTS value NUMERIC NOT NULL DEFAULT 0;
+    ALTER TABLE coupons ADD COLUMN IF NOT EXISTS gift_label TEXT NOT NULL DEFAULT '';
+    ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_uses INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS lgpd_consent_at TIMESTAMP;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS whatsapp_opt_out INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'BLACK';
@@ -317,11 +333,12 @@ async function migrateLoyalty(pool) {
     BEGIN
       IF COALESCE(NEW.status,'') = 'Cancelada' THEN RETURN NULL; END IF;
 
-      -- 0) cupom de campanha: marca o resgate (1 uso). Antes de qualquer RETURN para
-      -- cobrir vendas sem cliente vinculável; a validação de dono/validade é da cotação.
+      -- 0) cupom de campanha individual: marca o resgate (1 uso). Antes de qualquer RETURN
+      -- para cobrir vendas sem cliente vinculável; a validação de dono/validade é da cotação.
+      -- Cupom compartilhado (max_uses>0) não usa redeemed_at — resgate por cliente mais abaixo.
       IF COALESCE(NEW.coupon_code,'') <> '' THEN
         UPDATE coupons SET redeemed_at = NOW(), redeemed_sale_id = NEW.id
-        WHERE upper(code) = upper(NEW.coupon_code) AND redeemed_at IS NULL;
+        WHERE upper(code) = upper(NEW.coupon_code) AND redeemed_at IS NULL AND COALESCE(max_uses,0) = 0;
       END IF;
 
       -- 1) achar/criar cliente pelo WhatsApp (mesma lógica do sistema de pontos)
@@ -346,6 +363,15 @@ async function migrateLoyalty(pool) {
       IF cid IS NULL THEN RETURN NULL; END IF;
 
       UPDATE sales SET customer_id = cid WHERE id = NEW.id AND COALESCE(customer_id,'') <> cid;
+
+      -- cupom compartilhado (max_uses>0): registra o resgate deste cliente (1 por CPF;
+      -- o limite global é validado na cotação/POST — aqui só grava, idempotente)
+      IF COALESCE(NEW.coupon_code,'') <> '' THEN
+        INSERT INTO coupon_redemptions (id, coupon_id, customer_id, sale_id)
+        SELECT 'cr-'||NEW.id, cp.id, cid, NEW.id FROM coupons cp
+        WHERE upper(cp.code) = upper(NEW.coupon_code) AND COALESCE(cp.max_uses,0) > 0
+        ON CONFLICT DO NOTHING;
+      END IF;
 
       -- interno: só vincula
       IF EXISTS (SELECT 1 FROM customers WHERE id = cid AND tags LIKE '%Interno%') THEN RETURN NULL; END IF;
@@ -398,6 +424,8 @@ async function migrateLoyalty(pool) {
       IF COALESCE(OLD.status,'') <> 'Cancelada' AND NEW.status = 'Cancelada' THEN
         -- devolve o cupom da campanha (a janela de validade continua valendo no reuso)
         UPDATE coupons SET redeemed_at = NULL, redeemed_sale_id = NULL WHERE redeemed_sale_id = OLD.id;
+        -- cupom compartilhado: devolve o resgate (cliente pode usar de novo; libera vaga no limite)
+        DELETE FROM coupon_redemptions WHERE sale_id = OLD.id;
       END IF;
       IF COALESCE(OLD.status,'') <> 'Cancelada' AND NEW.status = 'Cancelada' AND COALESCE(OLD.customer_id,'') <> '' THEN
         UPDATE customers SET total_spent = GREATEST(0, total_spent - COALESCE(OLD.total,0)), visits = GREATEST(0, visits - 1)
