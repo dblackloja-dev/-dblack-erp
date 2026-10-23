@@ -1807,7 +1807,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
           api.raffleReserve({sale_id:newSale.id,store_id:activeStore,customer:newSale.customer,customer_id:newSale.customerId||"",total:cartTotal,phone:newSale.customerWhatsapp||""}),
           new Promise(res=>setTimeout(()=>res(null),2500))
         ]);
-        if(r?.number){newSale.luckyNumber=r.number;newSale.rafflePending=false;}
+        if(r?.numbers?.length){newSale.luckyNumbers=r.numbers;newSale.rafflePending=false;}
       }catch(e){/* offline — segue sem número, 2ª via resolve */}
     }
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
@@ -2315,13 +2315,13 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   // phase: "cupom" | "troca_prompt" | "troca"
   const [phase,setPhase]=useState("cupom");
   const contentRef=useRef(null);
-  // Sorteio: número da sorte (vem reservado na venda nova; em reimpressão busca no servidor)
-  const [lucky,setLucky]=useState(sale.luckyNumber||null);
+  // Sorteio: números da sorte (1 a cada R$99,90; vêm reservados na venda nova; reimpressão busca no servidor)
+  const [lucky,setLucky]=useState(sale.luckyNumbers||null);
   useEffect(()=>{
-    if(lucky)return;
-    api.raffleBySale(sale.id).then(r=>{if(r?.number)setLucky(r.number);}).catch(()=>{});
+    if(lucky?.length)return;
+    api.raffleBySale(sale.id).then(r=>{if(r?.numbers?.length)setLucky(r.numbers);}).catch(()=>{});
   },[]);
-  const luckyStr=lucky?String(lucky).padStart(4,"0"):null;
+  const luckyStr=lucky?.length?lucky.map(n=>String(n).padStart(4,"0")).join("  "):null;
   const [waPhone,setWaPhone]=useState(sale.customerWhatsapp||"");
   const isEcommerce=sale.storeId==="loja4";
   const showWaBtn=!!(waPhone||isEcommerce);
@@ -2344,7 +2344,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       `💰 *Total:* ${fmt(sale.total)}`,
       `💳 *Pagamento:* ${sale.payment}`,
       ``,
-      ...(luckyStr?[`🍀 *SEU NÚMERO DA SORTE: ${luckyStr}*`,`Sorteio sábado à noite — guarde este comprovante!`,``]:[]),
+      ...(luckyStr?[`🍀 *${lucky.length>1?"SEUS NÚMEROS DA SORTE":"SEU NÚMERO DA SORTE"}: ${luckyStr}*`,`Sorteio sábado à noite — guarde este comprovante!`,``]:[]),
       `Obrigado pela preferência! 🖤`,
       `*D'Black Store*`,
     ].filter(l=>l!==undefined);
@@ -2404,7 +2404,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       // Sorteio
       if(luckyStr){
         center("*** SORTEIO D'BLACK ***",12,true);
-        center("NUMERO DA SORTE: "+luckyStr,16,true);
+        center((lucky.length>1?"NUMEROS DA SORTE: ":"NUMERO DA SORTE: ")+luckyStr,lucky.length>2?12:16,true);
         center("Sorteio sabado a noite!",10,false);
         line();
       }
@@ -2508,8 +2508,8 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
         <HR2/>
         <div style={{textAlign:"center",fontWeight:900,fontSize:12,letterSpacing:1}}>*** SORTEIO D'BLACK ***</div>
         {luckyStr?<>
-          <div style={{textAlign:"center",fontSize:10}}>SEU NUMERO DA SORTE:</div>
-          <div style={{textAlign:"center",fontWeight:900,fontSize:26,letterSpacing:6,margin:"2px 0"}}>{luckyStr}</div>
+          <div style={{textAlign:"center",fontSize:10}}>{lucky.length>1?"SEUS NUMEROS DA SORTE:":"SEU NUMERO DA SORTE:"}</div>
+          <div style={{textAlign:"center",fontWeight:900,fontSize:lucky.length>2?18:26,letterSpacing:lucky.length>2?2:6,margin:"2px 0"}}>{luckyStr}</div>
           <div style={{textAlign:"center",fontSize:10,lineHeight:1.5}}>Guarde este cupom!<br/>Sorteio sabado a noite - @d_blackloja</div>
         </>:<div style={{textAlign:"center",fontSize:10,lineHeight:1.5}}>Voce esta participando!<br/>Seu numero sai na 2a via do cupom.</div>}
         <HR2/>
@@ -5681,15 +5681,15 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
       <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:640,marginTop:14}}>
         <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🎟️ Sorteio — Número da Sorte</div>
         <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
-          Toda venda no PDV <strong style={{color:C.txt}}>a partir do valor mínimo</strong> gera um número da sorte sequencial,
-          impresso no cupom do cliente (e no comprovante de WhatsApp). Venda cancelada sai do sorteio sozinha.
+          Cliente ganha <strong style={{color:C.txt}}>1 número da sorte A CADA</strong> valor abaixo em compras (ex.: 2x o valor = 2 números) —
+          PDV, lojinha e painel do chat, tudo na mesma numeração. Sai no cupom/etiqueta e o aviso vai sozinho no WhatsApp (template). Venda cancelada sai do sorteio sozinha.
         </div>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
           <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:700,cursor:"pointer"}}>
             <input type="checkbox" checked={rfActive} onChange={e=>setRfActive(e.target.checked)}/>
             Ativo
           </label>
-          <span style={{fontSize:12,color:C.dim}}>compras a partir de R$</span>
+          <span style={{fontSize:12,color:C.dim}}>1 número a cada R$</span>
           <input style={{...S.inp,width:90,textAlign:"center",fontSize:15,fontWeight:700}} value={rfMin} onChange={e=>setRfMin(e.target.value)} placeholder="99,90"/>
           <button style={{...S.primBtn,opacity:rfSaving?.6:1}} disabled={rfSaving} onClick={saveRf}>{rfSaving?"Salvando...":"Salvar"}</button>
         </div>

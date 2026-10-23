@@ -226,36 +226,41 @@ app.put('/api/settings/:key', requireRole('admin', 'gestor'), async (req, res) =
 // O PDV RESERVA o número antes de imprimir o cupom (auto-print não espera o POST da
 // venda, que vai pela fila offline); o POST /api/sales garante o número de qualquer
 // jeito — tudo idempotente por sale_id.
+// Devolve ARRAY com todos os números da venda (1 número a cada R$ min — ex.: 199,80 = 2 números).
+// Idempotente por (sale_id, seq); teto de 50 números por venda.
 async function raffleEnter(s) {
   let cfg = null;
   try { cfg = JSON.parse((await queryOne(`SELECT value FROM settings WHERE key = 'raffle'`))?.value || 'null'); } catch {}
   if (!cfg?.active) return null;
   const min = +cfg.min > 0 ? +cfg.min : 99.9;
-  if (!(+s.total >= min) || (s.status || 'Concluída') === 'Cancelada') return null;
+  const qty = Math.min(Math.floor((+s.total || 0) / min), 50);
+  if (qty < 1 || (s.status || 'Concluída') === 'Cancelada') return null;
   const phone = String(s.phone || '').replace(/\D/g, '');
-  const ins = await queryOne(
-    `INSERT INTO raffle_entries (sale_id, store_id, customer, customer_id, total, phone)
-     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (sale_id) DO NOTHING RETURNING n`,
-    [s.sale_id, s.store_id || '', s.customer || 'Avulso', s.customer_id || '', +s.total || 0, phone]);
-  if (ins) return ins.n;
-  const ex = await queryOne('SELECT n, phone FROM raffle_entries WHERE sale_id = $1', [s.sale_id]);
+  for (let seq = 1; seq <= qty; seq++) {
+    await queryRun(
+      `INSERT INTO raffle_entries (sale_id, seq, store_id, customer, customer_id, total, phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (sale_id, seq) DO NOTHING`,
+      [s.sale_id, seq, s.store_id || '', s.customer || 'Avulso', s.customer_id || '', +s.total || 0, phone]);
+  }
   // Reserva do PDV pode vir sem telefone; o POST /api/sales completa depois
-  if (ex && !ex.phone && phone) await queryRun('UPDATE raffle_entries SET phone = $1 WHERE sale_id = $2', [phone, s.sale_id]).catch(() => {});
-  return ex?.n ?? null;
+  if (phone) await queryRun(`UPDATE raffle_entries SET phone = $1 WHERE sale_id = $2 AND COALESCE(phone,'') = ''`, [phone, s.sale_id]).catch(() => {});
+  const rows = await queryAll('SELECT n FROM raffle_entries WHERE sale_id = $1 ORDER BY seq', [s.sale_id]);
+  return rows.length ? rows.map(r => r.n) : null;
 }
 
 app.post('/api/raffle/reserve', async (req, res) => {
   try {
     const { sale_id, store_id, customer, customer_id, total, phone } = req.body || {};
     if (!sale_id) return res.status(400).json({ error: 'sale_id obrigatório' });
-    res.json({ number: await raffleEnter({ sale_id, store_id, customer, customer_id, total, phone }) });
+    const nums = await raffleEnter({ sale_id, store_id, customer, customer_id, total, phone });
+    res.json({ number: nums?.[0] ?? null, numbers: nums || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/raffle/by-sale/:id', async (req, res) => {
   try {
-    const r = await queryOne('SELECT n FROM raffle_entries WHERE sale_id = $1', [req.params.id]);
-    res.json({ number: r?.n ?? null });
+    const rows = await queryAll('SELECT n FROM raffle_entries WHERE sale_id = $1 ORDER BY seq', [req.params.id]);
+    res.json({ number: rows[0]?.n ?? null, numbers: rows.map(r => r.n) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -825,12 +830,12 @@ app.post('/api/sales', async (req, res) => {
     await client.query('COMMIT');
 
     // Sorteio: garante o número da sorte (idempotente; normalmente o PDV já reservou antes do cupom)
-    let lucky_number = null;
+    let lucky_numbers = null;
     try {
-      lucky_number = await raffleEnter({ sale_id: id, store_id: s.store_id, customer: s.customer, customer_id: s.customer_id, total: s.total, status: s.status, phone: s.customer_whatsapp });
+      lucky_numbers = await raffleEnter({ sale_id: id, store_id: s.store_id, customer: s.customer, customer_id: s.customer_id, total: s.total, status: s.status, phone: s.customer_whatsapp });
     } catch (err) { console.error('raffle:', err.message); }
 
-    res.json({ id, lucky_number, ...s });
+    res.json({ id, lucky_number: lucky_numbers?.[0] ?? null, lucky_numbers, ...s });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: e.message });
@@ -2341,6 +2346,10 @@ initDB().then(async () => {
   // phone + notified_at: aviso automático do número via template WhatsApp (worker no dblack-chat)
   await queryRun(`ALTER TABLE raffle_entries ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`).catch(() => {});
   await queryRun(`ALTER TABLE raffle_entries ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ`).catch(() => {});
+  // 23/10: 1 número A CADA R$ min em compras (seq 1..k por venda) — sale_id deixa de ser único sozinho
+  await queryRun(`ALTER TABLE raffle_entries ADD COLUMN IF NOT EXISTS seq INTEGER NOT NULL DEFAULT 1`).catch(() => {});
+  await queryRun(`ALTER TABLE raffle_entries DROP CONSTRAINT IF EXISTS raffle_entries_sale_id_key`).catch(() => {});
+  await queryRun(`CREATE UNIQUE INDEX IF NOT EXISTS raffle_entries_sale_seq ON raffle_entries (sale_id, seq)`).catch(() => {});
   loyalty.scheduleDailyJob(pool); // Cliente Black: expiração de saldo, níveis, avisos (03h BRT)
 }).catch(err => {
   console.error('❌ Falha ao inicializar banco:', err.message);
