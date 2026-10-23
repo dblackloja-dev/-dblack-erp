@@ -232,19 +232,23 @@ async function raffleEnter(s) {
   if (!cfg?.active) return null;
   const min = +cfg.min > 0 ? +cfg.min : 99.9;
   if (!(+s.total >= min) || (s.status || 'Concluída') === 'Cancelada') return null;
+  const phone = String(s.phone || '').replace(/\D/g, '');
   const ins = await queryOne(
-    `INSERT INTO raffle_entries (sale_id, store_id, customer, customer_id, total)
-     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (sale_id) DO NOTHING RETURNING n`,
-    [s.sale_id, s.store_id || '', s.customer || 'Avulso', s.customer_id || '', +s.total || 0]);
+    `INSERT INTO raffle_entries (sale_id, store_id, customer, customer_id, total, phone)
+     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (sale_id) DO NOTHING RETURNING n`,
+    [s.sale_id, s.store_id || '', s.customer || 'Avulso', s.customer_id || '', +s.total || 0, phone]);
   if (ins) return ins.n;
-  return (await queryOne('SELECT n FROM raffle_entries WHERE sale_id = $1', [s.sale_id]))?.n ?? null;
+  const ex = await queryOne('SELECT n, phone FROM raffle_entries WHERE sale_id = $1', [s.sale_id]);
+  // Reserva do PDV pode vir sem telefone; o POST /api/sales completa depois
+  if (ex && !ex.phone && phone) await queryRun('UPDATE raffle_entries SET phone = $1 WHERE sale_id = $2', [phone, s.sale_id]).catch(() => {});
+  return ex?.n ?? null;
 }
 
 app.post('/api/raffle/reserve', async (req, res) => {
   try {
-    const { sale_id, store_id, customer, customer_id, total } = req.body || {};
+    const { sale_id, store_id, customer, customer_id, total, phone } = req.body || {};
     if (!sale_id) return res.status(400).json({ error: 'sale_id obrigatório' });
-    res.json({ number: await raffleEnter({ sale_id, store_id, customer, customer_id, total }) });
+    res.json({ number: await raffleEnter({ sale_id, store_id, customer, customer_id, total, phone }) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -823,7 +827,7 @@ app.post('/api/sales', async (req, res) => {
     // Sorteio: garante o número da sorte (idempotente; normalmente o PDV já reservou antes do cupom)
     let lucky_number = null;
     try {
-      lucky_number = await raffleEnter({ sale_id: id, store_id: s.store_id, customer: s.customer, customer_id: s.customer_id, total: s.total, status: s.status });
+      lucky_number = await raffleEnter({ sale_id: id, store_id: s.store_id, customer: s.customer, customer_id: s.customer_id, total: s.total, status: s.status, phone: s.customer_whatsapp });
     } catch (err) { console.error('raffle:', err.message); }
 
     res.json({ id, lucky_number, ...s });
@@ -2334,6 +2338,9 @@ initDB().then(async () => {
     total NUMERIC DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`).catch(err => console.error('raffle_entries:', err.message));
+  // phone + notified_at: aviso automático do número via template WhatsApp (worker no dblack-chat)
+  await queryRun(`ALTER TABLE raffle_entries ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`).catch(() => {});
+  await queryRun(`ALTER TABLE raffle_entries ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ`).catch(() => {});
   loyalty.scheduleDailyJob(pool); // Cliente Black: expiração de saldo, níveis, avisos (03h BRT)
 }).catch(err => {
   console.error('❌ Falha ao inicializar banco:', err.message);

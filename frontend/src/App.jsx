@@ -1804,7 +1804,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
       newSale.rafflePending=true;
       try{
         const r=await Promise.race([
-          api.raffleReserve({sale_id:newSale.id,store_id:activeStore,customer:newSale.customer,customer_id:newSale.customerId||"",total:cartTotal}),
+          api.raffleReserve({sale_id:newSale.id,store_id:activeStore,customer:newSale.customer,customer_id:newSale.customerId||"",total:cartTotal,phone:newSale.customerWhatsapp||""}),
           new Promise(res=>setTimeout(()=>res(null),2500))
         ]);
         if(r?.number){newSale.luckyNumber=r.number;newSale.rafflePending=false;}
