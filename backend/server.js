@@ -257,23 +257,27 @@ app.get('/api/raffle/by-sale/:id', async (req, res) => {
 
 app.get('/api/raffle/entries', requireRole('admin', 'gestor', 'gerente'), async (req, res) => {
   try {
+    // Entradas 'ck_%' são pedidos pagos da lojinha/checkout (sem venda no PDV) — sempre válidas
     const entries = await queryAll(
-      `SELECT e.n, e.customer, e.store_id, e.total, e.created_at, s.cupom, s.status
+      `SELECT e.n, e.sale_id, e.customer, e.store_id, e.total, e.created_at,
+              COALESCE(s.cupom, e.customer_id) AS cupom, s.status
        FROM raffle_entries e LEFT JOIN sales s ON s.id = e.sale_id
        ORDER BY e.n DESC LIMIT 200`);
     let draws = [];
     try { draws = JSON.parse((await queryOne(`SELECT value FROM settings WHERE key = 'raffle_draws'`))?.value || '[]'); } catch {}
-    res.json({ count: entries.length ? entries[0].n : 0, valid: entries.filter(e => e.status && e.status !== 'Cancelada').length, entries, draws });
+    const isValid = e => (e.status && e.status !== 'Cancelada') || (!e.status && String(e.sale_id || '').startsWith('ck_'));
+    res.json({ count: entries.length ? entries[0].n : 0, valid: entries.filter(isValid).length, entries, draws });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/raffle/draw', requireRole('admin', 'gestor'), async (req, res) => {
   try {
-    // Só concorre número cuja venda existe e não foi cancelada
+    // Concorre: venda do PDV/chat não-cancelada OU pedido pago da lojinha ('ck_%', sem venda no PDV)
     const w = await queryOne(
-      `SELECT e.n, e.customer, e.store_id, e.total, s.cupom, s.customer_whatsapp
-       FROM raffle_entries e JOIN sales s ON s.id = e.sale_id
-       WHERE s.status != 'Cancelada' ORDER BY random() LIMIT 1`);
+      `SELECT e.n, e.customer, e.store_id, e.total, COALESCE(s.cupom, e.customer_id) AS cupom, s.customer_whatsapp
+       FROM raffle_entries e LEFT JOIN sales s ON s.id = e.sale_id
+       WHERE (s.id IS NOT NULL AND s.status != 'Cancelada') OR (s.id IS NULL AND e.sale_id LIKE 'ck_%')
+       ORDER BY random() LIMIT 1`);
     if (!w) return res.status(404).json({ error: 'Nenhum número válido para sortear.' });
     const winner = { ...w, at: new Date().toISOString(), by: req.user.name || req.user.id };
     let draws = [];
