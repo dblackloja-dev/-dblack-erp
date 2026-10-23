@@ -1764,7 +1764,7 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     setShowFolhaSelect(false);
   };
 
-  const finalizeSale=()=>{
+  const finalizeSale=async()=>{
     if(cart.length===0)return showToast("Carrinho vazio!","error");
     if(!storeCash.open)return showToast("Abra o caixa!","error");
     if(discountBlocked){setShowDiscountPanel(true);return showToast("Desconto acima do limite de "+discountLimitPct+"%! Peça liberação de um gerente no painel de desconto.","error");}
@@ -1797,6 +1797,19 @@ function PDVModule({storeProducts,activeStore,stock,setStock,sales,setSales,cust
     // o limite global de resgates é controlado pelo cupom no servidor)
     if(couponGift)saleItems=[...saleItems,{id:"brinde-"+(couponApplied?.code||"CUPOM").toLowerCase(),name:couponGift+" 🎁 BRINDE "+(couponApplied?.code||""),qty:1,price:0}];
     const newSale={id:genId(),date:localDateStr(),customer:cartCustomer||"Avulso",customerId:custObj?.id||"",customerWhatsapp:custObj?.whatsapp||"",storeId:activeStore,seller:loggedUser.name,sellerId:loggedUser.id,items:saleItems,subtotal:cartSubAposPromo,discount:Math.round((discountValue+tierDiscountValue+couponValue+balanceUsed)*100)/100,discountLabel:fullDiscountLabel,total:cartTotal,payment:paymentDesc,payments:payments,status:"Concluída",cupom:cupomNum,empId:empIdAtual,discountAuthBy:discountAuthValid?discountAuth.by:""};
+    // Sorteio: reserva o número da sorte ANTES do cupom (auto-print em 120ms não espera o POST da venda).
+    // Se a loja estiver offline neste segundo, o cupom sai com aviso e a 2ª via (F10) puxa o número.
+    const rfCfg=appSettings?.raffle;
+    if(rfCfg?.active&&cartTotal>=(+rfCfg.min>0?+rfCfg.min:99.9)){
+      newSale.rafflePending=true;
+      try{
+        const r=await Promise.race([
+          api.raffleReserve({sale_id:newSale.id,store_id:activeStore,customer:newSale.customer,customer_id:newSale.customerId||"",total:cartTotal}),
+          new Promise(res=>setTimeout(()=>res(null),2500))
+        ]);
+        if(r?.number){newSale.luckyNumber=r.number;newSale.rafflePending=false;}
+      }catch(e){/* offline — segue sem número, 2ª via resolve */}
+    }
     setSales(prev=>{const n={...prev};n[activeStore]=[newSale,...(n[activeStore]||[])];return n;});
     // O saldo usado e o cashback são processados pelo servidor (trigger no banco);
     // balance_used vai na venda e é consumido de forma idempotente lá.
@@ -2302,6 +2315,13 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   // phase: "cupom" | "troca_prompt" | "troca"
   const [phase,setPhase]=useState("cupom");
   const contentRef=useRef(null);
+  // Sorteio: número da sorte (vem reservado na venda nova; em reimpressão busca no servidor)
+  const [lucky,setLucky]=useState(sale.luckyNumber||null);
+  useEffect(()=>{
+    if(lucky)return;
+    api.raffleBySale(sale.id).then(r=>{if(r?.number)setLucky(r.number);}).catch(()=>{});
+  },[]);
+  const luckyStr=lucky?String(lucky).padStart(4,"0"):null;
   const [waPhone,setWaPhone]=useState(sale.customerWhatsapp||"");
   const isEcommerce=sale.storeId==="loja4";
   const showWaBtn=!!(waPhone||isEcommerce);
@@ -2324,6 +2344,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       `💰 *Total:* ${fmt(sale.total)}`,
       `💳 *Pagamento:* ${sale.payment}`,
       ``,
+      ...(luckyStr?[`🍀 *SEU NÚMERO DA SORTE: ${luckyStr}*`,`Sorteio sábado à noite — guarde este comprovante!`,``]:[]),
       `Obrigado pela preferência! 🖤`,
       `*D'Black Store*`,
     ].filter(l=>l!==undefined);
@@ -2337,7 +2358,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       const items=sale.items||[];
       const payments=sale.payments&&sale.payments.length>0?sale.payments:[{method:sale.payment||"",value:sale.total}];
       // Calcula altura necessária
-      const h=PAD+30+LH+LH+10+LH*3+10+LH+items.length*(LH*2)+10+(sale.discount>0?LH*2:0)+10+LH+10+LH+payments.length*LH+10+LH*4+PAD+40;
+      const h=PAD+30+LH+LH+10+LH*3+10+LH+items.length*(LH*2)+10+(sale.discount>0?LH*2:0)+10+LH+10+LH+payments.length*LH+10+LH*4+PAD+40+(luckyStr?LH*4:0);
       const canvas=document.createElement("canvas");
       canvas.width=W;canvas.height=h;
       const ctx=canvas.getContext("2d");
@@ -2380,6 +2401,13 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       ctx.font="bold 11px Arial";ctx.textAlign="left";ctx.fillText("PAGAMENTO",PAD,y);y+=LH;
       payments.forEach(p=>{row(p.method,fmt(p.received||p.value)+(p.change>0?" troco:"+fmt(p.change):""));});
       line();
+      // Sorteio
+      if(luckyStr){
+        center("*** SORTEIO D'BLACK ***",12,true);
+        center("NUMERO DA SORTE: "+luckyStr,16,true);
+        center("Sorteio sabado a noite!",10,false);
+        line();
+      }
       // Footer
       y+=4;
       center("Obrigado pela preferencia!",11,false);
@@ -2476,6 +2504,16 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
         ?sale.payments.map(function(p,i){return <Row key={i} l={p.method} r={fmt(p.received||p.value)+(p.change>0?" troco:"+fmt(p.change):"")}/>;})
         :<Row l={sale.payment} r={fmt(sale.total)}/>}
       <HR/>
+      {(luckyStr||sale.rafflePending)&&<>
+        <HR2/>
+        <div style={{textAlign:"center",fontWeight:900,fontSize:12,letterSpacing:1}}>*** SORTEIO D'BLACK ***</div>
+        {luckyStr?<>
+          <div style={{textAlign:"center",fontSize:10}}>SEU NUMERO DA SORTE:</div>
+          <div style={{textAlign:"center",fontWeight:900,fontSize:26,letterSpacing:6,margin:"2px 0"}}>{luckyStr}</div>
+          <div style={{textAlign:"center",fontSize:10,lineHeight:1.5}}>Guarde este cupom!<br/>Sorteio sabado a noite - @d_blackloja</div>
+        </>:<div style={{textAlign:"center",fontSize:10,lineHeight:1.5}}>Voce esta participando!<br/>Seu numero sai na 2a via do cupom.</div>}
+        <HR2/>
+      </>}
       <div style={{textAlign:"center",margin:"4px 0"}}><C39SVG text={barcode} h={32}/></div>
       <HR/>
       <div style={{textAlign:"center",fontSize:11,lineHeight:1.7}}>Obrigado pela preferencia!<br/>Volte sempre - D'Black Store<br/>@d_blackloja</div>
@@ -5478,6 +5516,37 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
   const [p43From,setP43From]=useState(p43Saved.from||"");
   const [p43To,setP43To]=useState(p43Saved.to||"");
   const [p43Saving,setP43Saving]=useState(false);
+  // Sorteio Número da Sorte — venda no PDV >= mínimo gera número sequencial impresso no cupom
+  const rfSaved=appSettings?.raffle||{};
+  const [rfActive,setRfActive]=useState(!!rfSaved.active);
+  const [rfMin,setRfMin]=useState(rfSaved.min!=null?String(rfSaved.min).replace(".",","):"99,90");
+  const [rfSaving,setRfSaving]=useState(false);
+  const [rfInfo,setRfInfo]=useState(null);
+  const [rfWinner,setRfWinner]=useState(null);
+  const [rfDrawing,setRfDrawing]=useState(false);
+  const loadRf=()=>{api.raffleEntries().then(r=>{if(!r?.error)setRfInfo(r);}).catch(()=>{});};
+  useEffect(loadRf,[]);
+  const saveRf=async()=>{
+    const min=+String(rfMin).replace(",",".")||99.9;
+    setRfSaving(true);
+    try{
+      const value={active:rfActive,min};
+      const r=await api.saveSetting('raffle',value);
+      if(r?._offline)return showToast("Sem internet — tente novamente quando estiver online.","error");
+      setAppSettings(prev=>({...prev,raffle:value}));
+      showToast(rfActive?"Sorteio ATIVO! Compras a partir de "+fmt(min)+" geram número da sorte no cupom.":"Sorteio desativado.");
+    }catch(e){showToast("Erro ao salvar: "+e.message,"error");}
+    finally{setRfSaving(false);}
+  };
+  const drawRf=async()=>{
+    if(!window.confirm("Sortear um vencedor agora entre todos os números válidos?"))return;
+    setRfDrawing(true);
+    try{
+      const w=await api.raffleDraw();
+      if(w?.error)showToast(w.error,"error");else{setRfWinner(w);loadRf();}
+    }catch(e){showToast(e.message||"Erro ao sortear","error");}
+    finally{setRfDrawing(false);}
+  };
   // Cliente Black — parâmetros do programa (loyalty_config no servidor)
   const [cbCfg,setCbCfg]=useState(null);
   const [cbSaving,setCbSaving]=useState(false);
@@ -5607,6 +5676,46 @@ function ConfigModule({appSettings,setAppSettings,showToast}){
             ?<>Promoção <strong style={{color:C.grn}}>ATIVA</strong>{p43Saved.from?<> de <strong style={{color:C.gold}}>{String(p43Saved.from).split("-").reverse().join("/")}</strong></>:null}{p43Saved.to?<> até <strong style={{color:C.gold}}>{String(p43Saved.to).split("-").reverse().join("/")}</strong></>:null}. Ex.: 4 peças de {fmt(99.90)} → cliente paga {fmt(3*99.90)}.</>
             :<>Promoção desativada. Sem datas, fica ativa até desligar aqui.</>}
         </div>
+      </div>
+
+      <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:640,marginTop:14}}>
+        <div style={{fontSize:14,fontWeight:800,color:C.gold,marginBottom:4}}>🎟️ Sorteio — Número da Sorte</div>
+        <div style={{fontSize:12,color:C.dim,marginBottom:12,lineHeight:1.5}}>
+          Toda venda no PDV <strong style={{color:C.txt}}>a partir do valor mínimo</strong> gera um número da sorte sequencial,
+          impresso no cupom do cliente (e no comprovante de WhatsApp). Venda cancelada sai do sorteio sozinha.
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            <input type="checkbox" checked={rfActive} onChange={e=>setRfActive(e.target.checked)}/>
+            Ativo
+          </label>
+          <span style={{fontSize:12,color:C.dim}}>compras a partir de R$</span>
+          <input style={{...S.inp,width:90,textAlign:"center",fontSize:15,fontWeight:700}} value={rfMin} onChange={e=>setRfMin(e.target.value)} placeholder="99,90"/>
+          <button style={{...S.primBtn,opacity:rfSaving?.6:1}} disabled={rfSaving} onClick={saveRf}>{rfSaving?"Salvando...":"Salvar"}</button>
+        </div>
+        <div style={{fontSize:11,color:C.dim,padding:"8px 10px",background:C.s2,borderRadius:8,marginBottom:10}}>
+          {rfSaved.active
+            ?<>Sorteio <strong style={{color:C.grn}}>ATIVO</strong> — compras a partir de <strong style={{color:C.gold}}>{fmt(+rfSaved.min>0?+rfSaved.min:99.9)}</strong>.</>
+            :<>Sorteio desativado — nenhum número novo é gerado.</>}
+          {rfInfo&&<> Números gerados: <strong style={{color:C.gold}}>{rfInfo.count}</strong>{rfInfo.count>0&&<> ({rfInfo.valid} válidos)</>}.</>}
+        </div>
+        {rfWinner&&<div style={{padding:"14px 12px",background:"rgba(255,193,7,.1)",border:"1px solid rgba(255,193,7,.4)",borderRadius:10,marginBottom:10,textAlign:"center"}}>
+          <div style={{fontSize:11,color:C.dim}}>🏆 NÚMERO SORTEADO</div>
+          <div style={{fontSize:34,fontWeight:900,color:C.gold,letterSpacing:6}}>{String(rfWinner.n).padStart(4,"0")}</div>
+          <div style={{fontSize:13,fontWeight:700}}>{rfWinner.customer||"Avulso"} — {STORES.find(s=>s.id===rfWinner.store_id)?.name||rfWinner.store_id}</div>
+          <div style={{fontSize:11,color:C.dim}}>Cupom {rfWinner.cupom} · compra de {fmt(rfWinner.total)}{rfWinner.customer_whatsapp?<> · 📱 {rfWinner.customer_whatsapp}</>:null}</div>
+        </div>}
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button style={{...S.primBtn,background:`linear-gradient(135deg,${C.pur},#AD1457)`,opacity:rfDrawing?.6:1}} disabled={rfDrawing||!rfInfo?.valid} onClick={drawRf}>{rfDrawing?"Sorteando...":"🎲 Sortear vencedor"}</button>
+          {rfInfo?.draws?.length>0&&<span style={{fontSize:11,color:C.dim}}>Já sorteados: {rfInfo.draws.map(d=>String(d.n).padStart(4,"0")+" ("+(d.customer||"Avulso")+")").join(" · ")}</span>}
+        </div>
+        {rfInfo?.entries?.length>0&&<div style={{marginTop:10,maxHeight:180,overflowY:"auto",fontSize:11,background:C.s2,borderRadius:8,padding:"6px 10px"}}>
+          {rfInfo.entries.slice(0,40).map(e=><div key={e.n} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"2px 0",opacity:e.status==="Cancelada"?.4:1}}>
+            <span style={{fontWeight:800,color:C.gold}}>{String(e.n).padStart(4,"0")}</span>
+            <span style={{flex:1}}>{e.customer||"Avulso"}{e.status==="Cancelada"?" (CANCELADA)":""}</span>
+            <span style={{color:C.dim}}>{STORES.find(s=>s.id===e.store_id)?.name||e.store_id} · {fmt(e.total)}</span>
+          </div>)}
+        </div>}
       </div>
 
       <div style={{background:C.s1,border:`1px solid ${C.brd}`,borderRadius:14,padding:18,maxWidth:640,marginTop:14}}>

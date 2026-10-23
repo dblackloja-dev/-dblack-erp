@@ -367,6 +367,13 @@ const api = {
   decideDiscountAuth(id, approved) { return this._directFetch(`/discount-auth/${id}/decide`, { method: 'POST', body: { approved } }); },
   cancelDiscountAuth(id) { return this._directFetch(`/discount-auth/${id}/cancel`, { method: 'POST' }); },
 
+  // Sorteio Número da Sorte — reserva/consulta são fetch direto (o cupom imprime na hora,
+  // não dá pra esperar a fila offline)
+  raffleReserve(data) { return this._directFetch('/raffle/reserve', { method: 'POST', body: data }); },
+  raffleBySale(saleId) { return this._directFetch(`/raffle/by-sale/${saleId}`); },
+  raffleEntries() { return this._directFetch('/raffle/entries'); },
+  raffleDraw() { return this._directFetch('/raffle/draw', { method: 'POST', body: {} }); },
+
   // Users
   getUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: data }),
