@@ -248,6 +248,11 @@ async function raffleEnter(s) {
   return rows.length ? rows.map(r => r.n) : null;
 }
 
+// Página do sorteio ao vivo (pra filmar): login admin + números girando + confete
+app.get('/sorteio', (req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8').send(require('./sorteio-page'));
+});
+
 app.post('/api/raffle/reserve', async (req, res) => {
   try {
     const { sale_id, store_id, customer, customer_id, total, phone } = req.body || {};
