@@ -235,6 +235,10 @@ async function raffleEnter(s) {
   const min = +cfg.min > 0 ? +cfg.min : 99.9;
   const qty = Math.min(Math.floor((+s.total || 0) / min), 50);
   if (qty < 1 || (s.status || 'Concluída') === 'Cancelada') return null;
+  // Regra do dono (24/10): venda AVULSA (sem cliente identificado) não concorre —
+  // não tem como contatar o ganhador. Identificou o cliente, ganha número.
+  const nomeCliente = String(s.customer || '').trim();
+  if (!nomeCliente || /^avulso$/i.test(nomeCliente)) return null;
   const phone = String(s.phone || '').replace(/\D/g, '');
   for (let seq = 1; seq <= qty; seq++) {
     await queryRun(
@@ -279,7 +283,8 @@ app.get('/api/raffle/entries', requireRole('admin', 'gestor', 'gerente'), async 
        ORDER BY e.n DESC LIMIT 200`);
     let draws = [];
     try { draws = JSON.parse((await queryOne(`SELECT value FROM settings WHERE key = 'raffle_draws'`))?.value || '[]'); } catch {}
-    const isValid = e => (e.status && e.status !== 'Cancelada') || (!e.status && String(e.sale_id || '').startsWith('ck_'));
+    const naoAvulso = e => { const n = String(e.customer || '').trim(); return n && !/^avulso$/i.test(n); };
+    const isValid = e => naoAvulso(e) && ((e.status && e.status !== 'Cancelada') || (!e.status && String(e.sale_id || '').startsWith('ck_')));
     res.json({ count: entries.length ? entries[0].n : 0, valid: entries.filter(isValid).length, entries, draws });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -290,7 +295,8 @@ app.post('/api/raffle/draw', requireRole('admin', 'gestor'), async (req, res) =>
     const w = await queryOne(
       `SELECT e.n, e.customer, e.store_id, e.total, COALESCE(s.cupom, e.customer_id) AS cupom, s.customer_whatsapp
        FROM raffle_entries e LEFT JOIN sales s ON s.id = e.sale_id
-       WHERE (s.id IS NOT NULL AND s.status != 'Cancelada') OR (s.id IS NULL AND e.sale_id LIKE 'ck_%')
+       WHERE ((s.id IS NOT NULL AND s.status != 'Cancelada') OR (s.id IS NULL AND e.sale_id LIKE 'ck_%'))
+         AND TRIM(COALESCE(e.customer, '')) <> '' AND LOWER(TRIM(e.customer)) <> 'avulso'
        ORDER BY random() LIMIT 1`);
     if (!w) return res.status(404).json({ error: 'Nenhum número válido para sortear.' });
     const winner = { ...w, at: new Date().toISOString(), by: req.user.name || req.user.id };
