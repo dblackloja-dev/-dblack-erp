@@ -6456,6 +6456,8 @@ function ExchangeReceiptModal({ex,onClose}){
 function EtiquetasModule({storeProducts,showToast}){
   const [search,setSearch]=useState("");const [queue,setQueue]=useState([]);const [showPreview,setShowPreview]=useState(false);
   const [pickProd,setPickProd]=useState(null); // produto aguardando escolha de tamanho
+  // Formato da bobina: 40x40 avulsa (adesiva) ou TAG VTAG 50x75 em 2 colunas
+  const [formato,setFormato]=useState("40x40");
   const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search));
   // Fila por produto+tamanho — cada tamanho vira etiquetas próprias
   const prodSizes=(p)=>(p.variations||[]).length?p.variations:(p.size?[p.size]:[]);
@@ -6501,10 +6503,39 @@ function EtiquetasModule({storeProducts,showToast}){
   // Formata preço para etiqueta (sem símbolo, separado)
   const fmtPrecoEtiqueta=(v)=>{const n=parseFloat(v)||0;const parts=n.toFixed(2).split('.');return{inteiro:parts[0],decimal:parts[1]};};
 
+  // Etiqueta 40x40mm avulsa adesiva (151px ≈ 40mm a 96dpi) — layout clássico,
+  // agora com TAM e oferta 2 preços (à vista PIX/dinheiro + cartão) compactados.
+  const renderLabel40=(prod,idx,size)=>{
+    const preco=fmtPrecoEtiqueta(prod.price);
+    const temAvista=(+prod.priceAvista>0);
+    const av=temAvista?fmtPrecoEtiqueta(prod.priceAvista):null;
+    return <div key={prod.id+"-"+idx} className="etiqueta-40x40" style={{
+      width:151,height:151,padding:'5px 8px',background:'#fff',color:'#000',
+      fontFamily:"'Arial','Helvetica',sans-serif",display:'flex',flexDirection:'column',
+      alignItems:'center',justifyContent:'space-between',boxSizing:'border-box',
+      border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2,
+      WebkitFontSmoothing:'antialiased',textRendering:'geometricPrecision'
+    }}>
+      <div style={{fontSize:11,fontWeight:900,letterSpacing:1,textAlign:'center',marginTop:3}}>D'BLACK STORE</div>
+      <div style={{fontSize:8.5,fontWeight:700,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:20,width:'100%',wordBreak:'break-word'}}>
+        {prod.sku} {prod.name.toUpperCase()}{size?` • TAM ${size}`:''}
+      </div>
+      {temAvista?<div style={{textAlign:'center'}}>
+        <div style={{fontSize:7,fontWeight:800,letterSpacing:.4}}>A VISTA • PIX/DINHEIRO</div>
+        <div style={{fontSize:18,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {av.inteiro},{av.decimal}</div>
+        <div style={{fontSize:8,fontWeight:800,marginTop:1}}>CARTAO R$ {preco.inteiro},{preco.decimal} <span style={{fontWeight:700,fontSize:7}}>ate 12x</span></div>
+      </div>:<div style={{textAlign:'center'}}>
+        <div style={{fontSize:22,fontWeight:900,lineHeight:1,fontFamily:"'Poppins',sans-serif"}}>R$ {preco.inteiro},{preco.decimal}</div>
+        <div style={{fontSize:8,fontWeight:700,marginTop:1}}>Ate 12x sem juros</div>
+      </div>}
+      <BarcodeEAN ean={prod.ean||''} width={120} height={30}/>
+    </div>;
+  };
+
   // Etiqueta TAG VTAG 50x75mm (189x283px ≈ 50x75mm a 96dpi) — layout aprovado 15/09:
   // corpo de 50mm fica na peça (furo, marca, produto, TAM, código de barras);
   // canhoto de 25mm abaixo do picote leva só o preço (destaca em venda de presente).
-  const renderLabel=(prod,idx,size)=>{
+  const renderLabel50=(prod,idx,size)=>{
     const preco=fmtPrecoEtiqueta(prod.price);
     return <div key={prod.id+"-"+idx} className="etiqueta-tag-50x75" style={{
       width:189,height:283,background:'#fff',color:'#000',
@@ -6533,10 +6564,65 @@ function EtiquetasModule({storeProducts,showToast}){
     </div>;
   };
 
+  const renderLabel=(prod,idx,size)=>formato==="40x40"?renderLabel40(prod,idx,size):renderLabel50(prod,idx,size);
+
   const sample=storeProducts[0]||{id:"x",name:"Produto Exemplo",sku:"00001",ean:"7891234560011",price:49.90,img:"👕"};
 
+  // Impressão 40x40 avulsa: uma etiqueta por página (bobina adesiva simples)
+  const handlePrint40=()=>{
+    const labels=[];
+    queue.forEach(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return;for(let i=0;i<q.qty;i++)labels.push({p,size:q.size||""});});
+    if(labels.length===0)return showToast("Fila vazia!","error");
+
+    const printWin=window.open('','_blank','width=400,height=600');
+    if(!printWin){showToast("Popup bloqueado! Permita popups.","error");return;}
+
+    const labelsHtml=labels.map(({p,size})=>{
+      const preco=fmtPrecoEtiqueta(p.price);
+      const temAvista=(+p.priceAvista>0);
+      const data=ean13Encode(p.ean||'');
+      let barcodeSvg='<div style="font-size:8px;color:#999">Sem EAN</div>';
+      if(data){
+        let rects='';const bw=120/95;const barH=20;
+        for(let i=0;i<data.bits.length;i++){
+          if(data.bits[i]==='1')rects+=`<rect x="${i*bw}" y="0" width="${bw}" height="${barH}" fill="#000"/>`;
+        }
+        barcodeSvg=`<svg width="120" height="30" viewBox="0 0 120 30" style="display:block">${rects}<text x="60" y="29" text-anchor="middle" fill="#000" font-size="9" font-family="Arial,Helvetica,sans-serif" font-weight="700">${data.digits}</text></svg>`;
+      }
+      const precoHtml=temAvista?(()=>{const av=fmtPrecoEtiqueta(p.priceAvista);return `
+        <div style="text-align:center">
+          <div style="font-size:7px;font-weight:800;letter-spacing:.4px">A VISTA &bull; PIX/DINHEIRO</div>
+          <div style="font-size:18px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${av.inteiro},${av.decimal}</div>
+          <div style="font-size:8px;font-weight:800;margin-top:1px">CARTAO R$ ${preco.inteiro},${preco.decimal} <span style="font-weight:700;font-size:7px">ate 12x</span></div>
+        </div>`;})():`
+        <div style="text-align:center">
+          <div style="font-size:22px;font-weight:900;line-height:1;font-family:'Poppins',sans-serif">R$ ${preco.inteiro},${preco.decimal}</div>
+          <div style="font-size:8px;font-weight:700;margin-top:1px">Ate 12x sem juros</div>
+        </div>`;
+      return `<div class="label">
+        <div style="font-size:11px;font-weight:900;letter-spacing:1px;text-align:center;margin-top:2px">D'BLACK STORE</div>
+        <div style="font-size:8.5px;font-weight:700;text-align:center;line-height:1.15;overflow:hidden;max-height:20px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}${size?` &bull; TAM ${size}`:''}</div>
+        ${precoHtml}
+        <div style="display:flex;justify-content:center">${barcodeSvg}</div>
+      </div>`;
+    }).join('');
+
+    printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;900&display=swap" rel="stylesheet">
+      <style>
+      @page{size:40mm 40mm;margin:0 !important;}
+      html,body{width:40mm;height:40mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
+      *{box-sizing:border-box;margin:0;padding:0;}
+      .label{width:40mm;height:40mm;padding:1.5mm 2.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;page-break-after:always;page-break-inside:avoid;line-height:1.2;}
+      .label:last-child{page-break-after:auto;}
+      @media screen{html,body{width:auto;height:auto;padding:10px;display:flex;flex-wrap:wrap;gap:8px;}.label{border:1px solid #ccc;}}
+    </style></head><body>${labelsHtml}</body></html>`);
+    printWin.document.close();
+    setTimeout(()=>{printWin.print();},500);
+  };
+
   // Função de imprimir que abre janela dedicada para impressora térmica
-  const handlePrint=()=>{
+  const handlePrint50=()=>{
     const labels=[];
     queue.forEach(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return;for(let i=0;i<q.qty;i++)labels.push({p,size:q.size||""});});
     if(labels.length===0)return showToast("Fila vazia!","error");
@@ -6611,12 +6697,20 @@ function EtiquetasModule({storeProducts,showToast}){
     setTimeout(doPrint,400);
   };
 
+  const handlePrint=()=>formato==="40x40"?handlePrint40():handlePrint50();
+
   return(
     <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
       <div style={{flex:1,minWidth:280}}>
         <div style={{...S.card,marginBottom:10,padding:12,display:"flex",alignItems:"center",gap:10,background:"rgba(255,215,64,.04)",borderColor:C.brdH}}>
           <span style={{fontSize:28}}>🏷️</span>
-          <div><div style={{fontSize:14,fontWeight:700}}>Etiquetas TAG 50x75mm</div><div style={{fontSize:11,color:C.dim}}>VTAG 2 colunas — Elgin L42 Pro Full</div></div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700}}>{formato==="40x40"?"Etiquetas 40x40mm":"Etiquetas TAG 50x75mm"}</div>
+            <div style={{fontSize:11,color:C.dim}}>{formato==="40x40"?"Avulsa adesiva — Elgin L42 Pro Full":"VTAG 2 colunas — Elgin L42 Pro Full"}</div>
+          </div>
+          <div style={{display:"flex",gap:4}}>
+            {[["40x40","40×40"],["50x75","50×75"]].map(([k,lbl])=><button key={k} onClick={()=>setFormato(k)} style={{padding:"6px 10px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,border:`1px solid ${formato===k?C.gold:C.brd}`,background:formato===k?"rgba(255,215,64,.12)":C.s2,color:formato===k?C.gold:C.dim}}>{lbl}</button>)}
+          </div>
         </div>
         <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU ou EAN..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:6,marginTop:10}}>
@@ -6635,7 +6729,7 @@ function EtiquetasModule({storeProducts,showToast}){
           <div style={{display:"flex",justifyContent:"center",padding:16,background:"#f5f5f5",borderRadius:8,border:`1px dashed ${C.brd}`}}>
             {renderLabel(queue.length>0?(storeProducts.find(p=>p.id===queue[0].pid)||sample):sample,0,queue.length>0?queue[0].size:"M")}
           </div>
-          <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:6}}>50mm × 75mm — sai em pares (2 colunas)</div>
+          <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:6}}>{formato==="40x40"?"40mm × 40mm — avulsa, uma por página":"50mm × 75mm — sai em pares (2 colunas)"}</div>
         </div>
         <div style={S.card}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
@@ -6868,6 +6962,14 @@ const CSS = `
       width: 50mm !important; height: 75mm !important;
       background: #fff !important; color: #000 !important;
       border: none !important; padding: 2mm !important;
+      page-break-after: always !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .etiqueta-40x40 {
+      width: 40mm !important; height: 40mm !important;
+      background: #fff !important; color: #000 !important;
+      border: none !important; padding: 1.5mm 2.5mm !important;
       page-break-after: always !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
