@@ -6516,9 +6516,9 @@ function EtiquetasModule({storeProducts,showToast}){
       border:'1px solid #ccc',flexShrink:0,overflow:'hidden',lineHeight:1.2,
       WebkitFontSmoothing:'antialiased',textRendering:'geometricPrecision'
     }}>
-      <div style={{fontSize:11,fontWeight:900,letterSpacing:1,textAlign:'center',marginTop:3}}>D'BLACK STORE</div>
+      {size?<div style={{fontSize:14,fontWeight:900,letterSpacing:1,textAlign:'center',border:'2px solid #000',borderRadius:5,padding:'0 10px',marginTop:2}}>TAM {size}</div>:<div style={{marginTop:2}}/>}
       <div style={{fontSize:8.5,fontWeight:700,textAlign:'center',lineHeight:1.15,overflow:'hidden',maxHeight:20,width:'100%',wordBreak:'break-word'}}>
-        {prod.sku} {prod.name.toUpperCase()}{size?` • TAM ${size}`:''}
+        {prod.sku} {prod.name.toUpperCase()}
       </div>
       {temAvista?<div style={{textAlign:'center'}}>
         <div style={{fontSize:7,fontWeight:800,letterSpacing:.4}}>A VISTA • PIX/DINHEIRO</div>
@@ -6600,8 +6600,8 @@ function EtiquetasModule({storeProducts,showToast}){
           <div style="font-size:8px;font-weight:700;margin-top:1px">Ate 12x sem juros</div>
         </div>`;
       return `<div class="label">
-        <div style="font-size:11px;font-weight:900;letter-spacing:1px;text-align:center;margin-top:2px">D'BLACK STORE</div>
-        <div style="font-size:8.5px;font-weight:700;text-align:center;line-height:1.15;overflow:hidden;max-height:20px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}${size?` &bull; TAM ${size}`:''}</div>
+        ${size?`<div style="font-size:14px;font-weight:900;letter-spacing:1px;text-align:center;border:2px solid #000;border-radius:5px;padding:0 10px;margin-top:1px">TAM ${size}</div>`:'<div></div>'}
+        <div style="font-size:8.5px;font-weight:700;text-align:center;line-height:1.15;overflow:hidden;max-height:20px;word-break:break-word">${p.sku} ${p.name.toUpperCase()}</div>
         ${precoHtml}
         <div style="display:flex;justify-content:center">${barcodeSvg}</div>
       </div>`;
