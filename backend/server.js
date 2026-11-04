@@ -85,6 +85,29 @@ app.post('/api/loyalty/public-coupon-redeem', publicCoupons.redeem);
 // Página pública de adesão (link enviado pelo chat/bio) — mesma origem do endpoint acima
 app.get('/cliente-black', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cliente-black.html')));
 
+// ─── ETIQUETAS 50x75 — fila pro agente local da Elgin L42 (PC da loja) ───
+// 04/11: o caminho Chrome→driver girava/desalinhava a impressão sem conserto confiável;
+// o agente local consome esta fila e imprime RAW (linguagem nativa) direto na L42.
+pool.query(`CREATE TABLE IF NOT EXISTS label_jobs (
+  id SERIAL PRIMARY KEY,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  printed_at TIMESTAMPTZ
+)`).catch(e => console.error('label_jobs:', e.message));
+const labelAgentAuth = (req, res, next) => {
+  const t = process.env.LABEL_AGENT_TOKEN;
+  if (!t) return res.status(503).json({ error: 'LABEL_AGENT_TOKEN não configurado no servidor' });
+  if (req.headers['x-label-token'] !== t) return res.status(403).json({ error: 'Não autorizado' });
+  next();
+};
+app.get('/api/labels/pending', labelAgentAuth, async (req, res) => {
+  res.json(await queryAll('SELECT id, payload FROM label_jobs WHERE printed_at IS NULL ORDER BY id ASC LIMIT 10'));
+});
+app.post('/api/labels/:id/printed', labelAgentAuth, async (req, res) => {
+  await queryRun('UPDATE label_jobs SET printed_at = NOW() WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 app.use('/api', authMiddleware);
 
 // ─── RBAC MIDDLEWARE — controle de permissão por role ───
@@ -98,6 +121,15 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
 
 // ─── CLIENTE BLACK — quote, cadastro, config, dashboard, jobs ───
 app.use('/api', loyalty.router(pool, { requireRole }));
+
+// Tela de etiquetas manda o lote pra fila do agente (precisa estar logado no ERP)
+app.post('/api/labels/queue', async (req, res) => {
+  const labels = Array.isArray(req.body?.labels) ? req.body.labels : [];
+  if (!labels.length) return res.status(400).json({ error: 'Nenhuma etiqueta na fila' });
+  if (labels.length > 400) return res.status(400).json({ error: 'Máximo de 400 etiquetas por envio' });
+  await queryRun('INSERT INTO label_jobs (payload) VALUES ($1)', [JSON.stringify({ labels, by: req.user?.name || req.user?.username || '' })]);
+  res.json({ ok: true, count: labels.length });
+});
 
 // ─── LIBERAÇÃO REMOTA DE DESCONTO ───
 // O caixa pede a liberação de um desconto acima do limite e um admin/gestor/gerente

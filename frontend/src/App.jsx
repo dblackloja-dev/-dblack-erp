@@ -6463,6 +6463,9 @@ function EtiquetasModule({storeProducts,showToast}){
   // (depende do papel configurado nele) — o usuário acerta pelo seletor e fica salvo.
   const [giro,setGiro]=useState(()=>localStorage.getItem("etq_giro_50x75")||"0");
   const mudaGiro=(g)=>{setGiro(g);localStorage.setItem("etq_giro_50x75",g);};
+  // 04/11: impressão vai pro AGENTE local da L42 (fila /api/labels/queue) — sai sozinha,
+  // sem janela do Chrome (que girava a etiqueta). O navegador fica como reserva.
+  const [enviandoFila,setEnviandoFila]=useState(false);
   const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search));
   // Fila por produto+tamanho — cada tamanho vira etiquetas próprias
   const prodSizes=(p)=>(p.variations||[]).length?p.variations:(p.size?[p.size]:[]);
@@ -6715,6 +6718,21 @@ function EtiquetasModule({storeProducts,showToast}){
 
   const handlePrint=()=>formato==="40x40"?handlePrint40():handlePrint50();
 
+  const enviarFilaAgente=async()=>{
+    if(queue.length===0)return showToast("Fila vazia!","error");
+    const labels=[];
+    queue.forEach(q=>{const p=storeProducts.find(pr=>pr.id===q.pid);if(!p)return;
+      labels.push({sku:p.sku||"",name:p.name||"",ean:p.ean||"",price:+p.price||0,priceAvista:+p.priceAvista||0,size:q.size||"",qty:q.qty||1});});
+    if(labels.length===0)return showToast("Fila vazia!","error");
+    setEnviandoFila(true);
+    try{
+      await api._directFetch('/labels/queue',{method:'POST',body:{labels}});
+      showToast(`🖨️ ${totalLabels} etiqueta${totalLabels>1?"s":""} enviada${totalLabels>1?"s":""} pra impressora!`,"success");
+      setQueue([]);
+    }catch(e){showToast("Falha ao enviar: "+(e?.message||"erro de rede"),"error");}
+    setEnviandoFila(false);
+  };
+
   return(
     <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
       <div style={{flex:1,minWidth:280}}>
@@ -6756,7 +6774,9 @@ function EtiquetasModule({storeProducts,showToast}){
               <div style={{flex:1}}><div style={{fontSize:10,fontWeight:600}}>{p.name}</div><div style={{fontSize:8,color:C.dim}}>{p.ean||'Sem EAN'}</div></div>
               {q.size&&<span style={{padding:"2px 7px",borderRadius:5,border:`1px solid ${C.gold}`,color:C.gold,fontSize:10,fontWeight:800}}>{q.size}</span>}
               <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>same(x)?(x.qty>1?{...x,qty:x.qty-1}:null):x).filter(Boolean))}>{I.minus}</button>
-              <span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:"center"}}>{q.qty}</span>
+              <input type="number" min="1" value={q.qty} onFocus={e=>e.target.select()}
+                onChange={e=>{const v=Math.max(1,Math.min(999,parseInt(e.target.value)||1));setQueue(prev=>prev.map(x=>same(x)?{...x,qty:v}:x));}}
+                style={{width:46,textAlign:"center",fontSize:13,fontWeight:700,background:C.s2,border:`1px solid ${C.brd}`,borderRadius:6,color:C.txt,padding:"3px 2px",fontFamily:"inherit"}}/>
               <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>same(x)?{...x,qty:x.qty+1}:x))}>{I.plus}</button>
             </div>;})}
             <div style={{marginTop:10,padding:"8px 10px",background:C.s2,borderRadius:8,border:`1px solid ${C.brd}`}}>
@@ -6767,8 +6787,9 @@ function EtiquetasModule({storeProducts,showToast}){
             </div>
             <div style={{display:"flex",gap:6,marginTop:10}}>
               <button style={{...S.secBtn,flex:1,fontSize:10}} onClick={()=>setQueue([])}>Limpar</button>
-              <button style={{...S.primBtn,flex:2,fontSize:12}} onClick={handlePrint}>{I.printer} Imprimir {totalLabels} etiqueta{totalLabels>1?'s':''}</button>
+              <button style={{...S.primBtn,flex:2,fontSize:12,opacity:enviandoFila?.6:1}} disabled={enviandoFila} onClick={enviarFilaAgente}>{I.printer} {enviandoFila?"Enviando...":`Imprimir ${totalLabels} etiqueta${totalLabels>1?'s':''}`}</button>
             </div>
+            <button style={{...S.secBtn,width:"100%",marginTop:6,fontSize:10}} onClick={handlePrint}>Imprimir pelo navegador (reserva)</button>
           </div>}
         </div>
       </div>
