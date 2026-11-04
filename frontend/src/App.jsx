@@ -6456,8 +6456,9 @@ function ExchangeReceiptModal({ex,onClose}){
 function EtiquetasModule({storeProducts,showToast}){
   const [search,setSearch]=useState("");const [queue,setQueue]=useState([]);const [showPreview,setShowPreview]=useState(false);
   const [pickProd,setPickProd]=useState(null); // produto aguardando escolha de tamanho
-  // Formato da bobina: 40x40 avulsa (adesiva) ou TAG VTAG 50x75 em 2 colunas
-  const [formato,setFormato]=useState("40x40");
+  // Formato da bobina: só TAG VTAG 50x75 em 2 colunas (04/11: dono tirou a opção 40x40;
+  // o código do 40x40 segue abaixo caso um dia volte — basta reexpor o seletor)
+  const [formato,setFormato]=useState("50x75");
   const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search));
   // Fila por produto+tamanho — cada tamanho vira etiquetas próprias
   const prodSizes=(p)=>(p.variations||[]).length?p.variations:(p.size?[p.size]:[]);
@@ -6667,24 +6668,28 @@ function EtiquetasModule({storeProducts,showToast}){
       </div>`;
     };
     const pagesHtml=[];
-    for(let i=0;i<labels.length;i+=2)pagesHtml.push(`<div class="page">${labelHtml(labels[i])}${labelHtml(labels[i+1])}</div>`);
+    for(let i=0;i<labels.length;i+=2)pagesHtml.push(`<div class="sheet"><div class="page">${labelHtml(labels[i])}${labelHtml(labels[i+1])}</div></div>`);
 
     printWin.document.write(`<!DOCTYPE html><html><head><title>Etiquetas D'Black</title>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;900&display=swap" rel="stylesheet">
       <style>
       /* COL_GAP: vão central entre as 2 colunas da bobina */
       :root{--col-gap:3mm;}
-      @page{size:103mm 75mm;margin:0 !important;}
-      html,body{width:103mm;margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
+      /* 04/11: página declarada EM PÉ (75x103) e conteúdo girado 90° por CSS.
+         Com size 103x75 o Chrome marcava a página como paisagem e o driver da
+         Elgin girava de novo — a etiqueta saía virada na horizontal. */
+      @page{size:75mm 103mm;margin:0 !important;}
+      html,body{margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
       *{box-sizing:border-box;margin:0;padding:0;}
-      .page{width:103mm;height:75mm;display:flex;page-break-after:always;page-break-inside:avoid;}
-      .page:last-child{page-break-after:auto;}
+      .sheet{width:75mm;height:103mm;page-break-after:always;page-break-inside:avoid;overflow:hidden;}
+      .sheet:last-child{page-break-after:auto;}
+      .page{width:103mm;height:75mm;display:flex;transform:rotate(90deg) translateY(-75mm);transform-origin:top left;}
       .label{width:50mm;height:75mm;display:flex;flex-direction:column;overflow:hidden;line-height:1.2;}
       .label:first-child{margin-right:var(--col-gap);}
       /* corpo fica na peça (acima do picote físico a 50mm); canhoto destacável leva o preço */
       .corpo{height:50mm;padding:6.5mm 2.5mm 1.5mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;overflow:hidden;}
       .canhoto{height:25mm;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;}
-      @media screen{html,body{width:auto;height:auto;padding:10px;}.page{margin-bottom:8px;}.label{border:1px solid #ccc;}}
+      @media screen{html,body{width:auto;height:auto;padding:10px;}.sheet{width:auto;height:auto;}.page{transform:none;margin-bottom:8px;}.label{border:1px solid #ccc;}}
     </style></head><body>${pagesHtml.join('')}</body></html>`);
     printWin.document.close();
     // espera a logo (e fontes) carregarem antes de imprimir; cap de ~3s
@@ -6708,9 +6713,7 @@ function EtiquetasModule({storeProducts,showToast}){
             <div style={{fontSize:14,fontWeight:700}}>{formato==="40x40"?"Etiquetas 40x40mm":"Etiquetas TAG 50x75mm"}</div>
             <div style={{fontSize:11,color:C.dim}}>{formato==="40x40"?"Avulsa adesiva — Elgin L42 Pro Full":"VTAG 2 colunas — Elgin L42 Pro Full"}</div>
           </div>
-          <div style={{display:"flex",gap:4}}>
-            {[["40x40","40×40"],["50x75","50×75"]].map(([k,lbl])=><button key={k} onClick={()=>setFormato(k)} style={{padding:"6px 10px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,border:`1px solid ${formato===k?C.gold:C.brd}`,background:formato===k?"rgba(255,215,64,.12)":C.s2,color:formato===k?C.gold:C.dim}}>{lbl}</button>)}
-          </div>
+          <div style={{padding:"6px 10px",borderRadius:7,fontSize:11,fontWeight:800,border:`1px solid ${C.gold}`,background:"rgba(255,215,64,.12)",color:C.gold}}>50×75</div>
         </div>
         <div style={S.searchBar}>{I.search}<input style={S.searchIn} placeholder="Buscar por nome, SKU ou EAN..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:6,marginTop:10}}>
