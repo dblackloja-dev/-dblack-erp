@@ -6461,8 +6461,6 @@ function EtiquetasModule({storeProducts,showToast}){
   const [formato,setFormato]=useState("50x75");
   // Giro da impressão 50x75: o driver da Elgin pode girar a página por conta própria
   // (depende do papel configurado nele) — o usuário acerta pelo seletor e fica salvo.
-  const [giro,setGiro]=useState(()=>localStorage.getItem("etq_giro_50x75")||"0");
-  const mudaGiro=(g)=>{setGiro(g);localStorage.setItem("etq_giro_50x75",g);};
   // 04/11: impressão vai pro AGENTE local da L42 (fila /api/labels/queue) — sai sozinha,
   // sem janela do Chrome (que girava a etiqueta). O navegador fica como reserva.
   const [enviandoFila,setEnviandoFila]=useState(false);
@@ -6674,14 +6672,8 @@ function EtiquetasModule({storeProducts,showToast}){
         </div>
       </div>`;
     };
-    // Página + transformação conforme o giro escolhido (0/180 = página deitada 103x75;
-    // 90/270 = página em pé 75x103 com o par girado por CSS)
-    const GIRO={
-      "0":  {pw:"103mm",ph:"75mm", tf:"none"},
-      "90": {pw:"75mm", ph:"103mm",tf:"rotate(90deg) translateY(-75mm)"},
-      "180":{pw:"103mm",ph:"75mm", tf:"rotate(180deg) translate(-103mm,-75mm)"},
-      "270":{pw:"75mm", ph:"103mm",tf:"rotate(-90deg) translateX(-103mm)"},
-    }[giro]||{pw:"103mm",ph:"75mm",tf:"none"};
+    // Impressão pelo navegador é só RESERVA (a oficial é o agente da L42) — página fixa 103x75
+    const GIRO={pw:"103mm",ph:"75mm",tf:"none"};
     const pagesHtml=[];
     for(let i=0;i<labels.length;i+=2)pagesHtml.push(`<div class="sheet"><div class="page">${labelHtml(labels[i])}${labelHtml(labels[i+1])}</div></div>`);
 
@@ -6779,12 +6771,6 @@ function EtiquetasModule({storeProducts,showToast}){
                 style={{width:46,textAlign:"center",fontSize:13,fontWeight:700,background:C.s2,border:`1px solid ${C.brd}`,borderRadius:6,color:C.txt,padding:"3px 2px",fontFamily:"inherit"}}/>
               <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>same(x)?{...x,qty:x.qty+1}:x))}>{I.plus}</button>
             </div>;})}
-            <div style={{marginTop:10,padding:"8px 10px",background:C.s2,borderRadius:8,border:`1px solid ${C.brd}`}}>
-              <div style={{fontSize:10,fontWeight:700,color:C.dim,marginBottom:5}}>GIRO DA IMPRESSÃO — saiu deitada? troque e imprima de novo (fica salvo)</div>
-              <div style={{display:"flex",gap:4}}>
-                {[["0","Normal"],["90","90°"],["180","180°"],["270","270°"]].map(([k,lbl])=><button key={k} onClick={()=>mudaGiro(k)} style={{flex:1,padding:"5px 0",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800,border:`1px solid ${giro===k?C.gold:C.brd}`,background:giro===k?"rgba(255,215,64,.12)":"transparent",color:giro===k?C.gold:C.dim}}>{lbl}</button>)}
-              </div>
-            </div>
             <div style={{display:"flex",gap:6,marginTop:10}}>
               <button style={{...S.secBtn,flex:1,fontSize:10}} onClick={()=>setQueue([])}>Limpar</button>
               <button style={{...S.primBtn,flex:2,fontSize:12,opacity:enviandoFila?.6:1}} disabled={enviandoFila} onClick={enviarFilaAgente}>{I.printer} {enviandoFila?"Enviando...":`Imprimir ${totalLabels} etiqueta${totalLabels>1?'s':''}`}</button>
