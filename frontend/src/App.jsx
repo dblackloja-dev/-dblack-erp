@@ -6459,6 +6459,10 @@ function EtiquetasModule({storeProducts,showToast}){
   // Formato da bobina: só TAG VTAG 50x75 em 2 colunas (04/11: dono tirou a opção 40x40;
   // o código do 40x40 segue abaixo caso um dia volte — basta reexpor o seletor)
   const [formato,setFormato]=useState("50x75");
+  // Giro da impressão 50x75: o driver da Elgin pode girar a página por conta própria
+  // (depende do papel configurado nele) — o usuário acerta pelo seletor e fica salvo.
+  const [giro,setGiro]=useState(()=>localStorage.getItem("etq_giro_50x75")||"0");
+  const mudaGiro=(g)=>{setGiro(g);localStorage.setItem("etq_giro_50x75",g);};
   const filtered=storeProducts.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku.toLowerCase().includes(search.toLowerCase())||(p.ean||"").includes(search));
   // Fila por produto+tamanho — cada tamanho vira etiquetas próprias
   const prodSizes=(p)=>(p.variations||[]).length?p.variations:(p.size?[p.size]:[]);
@@ -6667,6 +6671,14 @@ function EtiquetasModule({storeProducts,showToast}){
         </div>
       </div>`;
     };
+    // Página + transformação conforme o giro escolhido (0/180 = página deitada 103x75;
+    // 90/270 = página em pé 75x103 com o par girado por CSS)
+    const GIRO={
+      "0":  {pw:"103mm",ph:"75mm", tf:"none"},
+      "90": {pw:"75mm", ph:"103mm",tf:"rotate(90deg) translateY(-75mm)"},
+      "180":{pw:"103mm",ph:"75mm", tf:"rotate(180deg) translate(-103mm,-75mm)"},
+      "270":{pw:"75mm", ph:"103mm",tf:"rotate(-90deg) translateX(-103mm)"},
+    }[giro]||{pw:"103mm",ph:"75mm",tf:"none"};
     const pagesHtml=[];
     for(let i=0;i<labels.length;i+=2)pagesHtml.push(`<div class="sheet"><div class="page">${labelHtml(labels[i])}${labelHtml(labels[i+1])}</div></div>`);
 
@@ -6675,15 +6687,14 @@ function EtiquetasModule({storeProducts,showToast}){
       <style>
       /* COL_GAP: vão central entre as 2 colunas da bobina */
       :root{--col-gap:3mm;}
-      /* 04/11: página declarada EM PÉ (75x103) e conteúdo girado 90° por CSS.
-         Com size 103x75 o Chrome marcava a página como paisagem e o driver da
-         Elgin girava de novo — a etiqueta saía virada na horizontal. */
-      @page{size:75mm 103mm;margin:0 !important;}
+      /* 04/11: o giro é escolhido na tela (seletor "Giro da impressão") porque o driver
+         da Elgin pode girar a página sozinho conforme o papel configurado nele. */
+      @page{size:${GIRO.pw} ${GIRO.ph};margin:0 !important;}
       html,body{margin:0 !important;padding:0 !important;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision;}
       *{box-sizing:border-box;margin:0;padding:0;}
-      .sheet{width:75mm;height:103mm;page-break-after:always;page-break-inside:avoid;overflow:hidden;}
+      .sheet{width:${GIRO.pw};height:${GIRO.ph};page-break-after:always;page-break-inside:avoid;overflow:hidden;}
       .sheet:last-child{page-break-after:auto;}
-      .page{width:103mm;height:75mm;display:flex;transform:rotate(90deg) translateY(-75mm);transform-origin:top left;}
+      .page{width:103mm;height:75mm;display:flex;transform:${GIRO.tf};transform-origin:top left;}
       .label{width:50mm;height:75mm;display:flex;flex-direction:column;overflow:hidden;line-height:1.2;}
       .label:first-child{margin-right:var(--col-gap);}
       /* corpo fica na peça (acima do picote físico a 50mm); canhoto destacável leva o preço */
@@ -6748,6 +6759,12 @@ function EtiquetasModule({storeProducts,showToast}){
               <span style={{fontSize:13,fontWeight:700,minWidth:20,textAlign:"center"}}>{q.qty}</span>
               <button style={S.qBtn} onClick={()=>setQueue(prev=>prev.map(x=>same(x)?{...x,qty:x.qty+1}:x))}>{I.plus}</button>
             </div>;})}
+            <div style={{marginTop:10,padding:"8px 10px",background:C.s2,borderRadius:8,border:`1px solid ${C.brd}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.dim,marginBottom:5}}>GIRO DA IMPRESSÃO — saiu deitada? troque e imprima de novo (fica salvo)</div>
+              <div style={{display:"flex",gap:4}}>
+                {[["0","Normal"],["90","90°"],["180","180°"],["270","270°"]].map(([k,lbl])=><button key={k} onClick={()=>mudaGiro(k)} style={{flex:1,padding:"5px 0",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800,border:`1px solid ${giro===k?C.gold:C.brd}`,background:giro===k?"rgba(255,215,64,.12)":"transparent",color:giro===k?C.gold:C.dim}}>{lbl}</button>)}
+              </div>
+            </div>
             <div style={{display:"flex",gap:6,marginTop:10}}>
               <button style={{...S.secBtn,flex:1,fontSize:10}} onClick={()=>setQueue([])}>Limpar</button>
               <button style={{...S.primBtn,flex:2,fontSize:12}} onClick={handlePrint}>{I.printer} Imprimir {totalLabels} etiqueta{totalLabels>1?'s':''}</button>
