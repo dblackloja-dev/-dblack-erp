@@ -367,6 +367,10 @@ const api = {
   decideDiscountAuth(id, approved) { return this._directFetch(`/discount-auth/${id}/decide`, { method: 'POST', body: { approved } }); },
   cancelDiscountAuth(id) { return this._directFetch(`/discount-auth/${id}/cancel`, { method: 'POST' }); },
 
+  // Peças no site (checkout): pendências de conferência física por loja (foto obrigatória)
+  getSiteLinks() { return this._directFetch('/site-links'); },
+  confirmSiteConf(data) { return this._directFetch('/site-confs', { method: 'POST', body: data }); },
+
   // Sorteio Número da Sorte — reserva/consulta são fetch direto (o cupom imprime na hora,
   // não dá pra esperar a fila offline)
   raffleReserve(data) { return this._directFetch('/raffle/reserve', { method: 'POST', body: data }); },

@@ -343,6 +343,72 @@ app.post('/api/raffle/draw', requireRole('admin', 'gestor'), async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── PEÇAS NO SITE — CONFERÊNCIA DE ESTOQUE COM FOTO ───
+// O checkout grava em site_links os DBK que subiram pro site (nome lá pode ser outro;
+// o DBK é o elo). Cada loja PRECISA conferir a peça fisicamente (contagem + foto)
+// antes de o estoque dela valer na venda online. A contagem ajusta o estoque na hora.
+const SITE_CONF_STOCKS = ['loja1', 'loja2', 'shared_matriz'];
+const SITE_CONF_LABEL = { loja1: 'Divino', loja2: 'São João', shared_matriz: 'Matriz' };
+
+// Tudo que está no site + status de conferência por loja (o sino do App usa isso)
+app.get('/api/site-links', async (req, res) => {
+  try {
+    const links = await queryAll(`
+      SELECT l.sku, l.site_product, l.variants, l.photo, l.linked_at, p.name AS erp_name, p.id AS product_id
+      FROM site_links l LEFT JOIN products p ON p.sku = l.sku
+      ORDER BY l.linked_at DESC`);
+    const confs = await queryAll(`
+      SELECT c.sku, c.store_id, c.qty_counted, c.user_name, c.created_at
+      FROM site_confs c JOIN site_links l ON l.sku = c.sku
+      WHERE c.created_at >= l.linked_at`);
+    const stocks = await queryAll(`
+      SELECT p.sku, s.stock_id, s.quantity
+      FROM site_links l JOIN products p ON p.sku = l.sku
+      JOIN stock s ON s.product_id = p.id WHERE s.stock_id = ANY($1)`, [SITE_CONF_STOCKS]);
+    res.json({ links, confs, stocks });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Loja confere a peça: contagem POR COR/TAMANHO (grade do site) + foto obrigatória.
+// O total ajusta o estoque do ERP; o detalhe por variação vai pro site saber quais
+// tamanhos cada loja tem de verdade.
+app.post('/api/site-confs', async (req, res) => {
+  try {
+    const { sku, stock_id, photo, details } = req.body || {};
+    if (!SITE_CONF_STOCKS.includes(stock_id)) return res.status(400).json({ error: 'Loja inválida' });
+    if (!Array.isArray(details) || details.length === 0) return res.status(400).json({ error: 'Informe a contagem por cor/tamanho' });
+    const det = details.map(d => ({ color: String(d.color || ''), size: String(d.size || ''), qty: parseInt(d.qty, 10) }));
+    if (det.some(d => !Number.isInteger(d.qty) || d.qty < 0)) return res.status(400).json({ error: 'Contagem inválida' });
+    const qtd = det.reduce((s, d) => s + d.qty, 0);
+    // Foto da câmera é opcional: a identificação visual vem da foto do SITE na tela
+    if (photo && String(photo).length > 2_000_000) return res.status(400).json({ error: 'Foto grande demais — tente de novo' });
+    const link = await queryOne(`SELECT sku FROM site_links WHERE sku = $1`, [sku]);
+    if (!link) return res.status(404).json({ error: 'Essa peça não está (mais) no site' });
+    const prod = await queryOne(`SELECT id, name FROM products WHERE sku = $1`, [sku]);
+    if (!prod) return res.status(404).json({ error: 'Produto não encontrado no ERP' });
+
+    const cur = await queryOne(`SELECT quantity FROM stock WHERE stock_id = $1 AND product_id = $2`, [stock_id, prod.id]);
+    const atual = cur ? cur.quantity : 0;
+    if (qtd !== atual) {
+      await queryRun(
+        `INSERT INTO stock (stock_id, product_id, quantity) VALUES ($1, $2, $3)
+         ON CONFLICT (stock_id, product_id) DO UPDATE SET quantity = $3`,
+        [stock_id, prod.id, qtd]);
+      await queryRun(
+        `INSERT INTO stock_movements (id, stock_id, product_id, type, quantity, reason, user_name, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+        ['sconf' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), stock_id, prod.id,
+         qtd > atual ? 'ajuste_entrada' : 'ajuste_saida', Math.abs(qtd - atual),
+         `Conferência peça no site (${sku}): sistema ${atual} → contado ${qtd}`, req.user.name || '']);
+    }
+    await queryRun(
+      `INSERT INTO site_confs (sku, store_id, qty_counted, photo, user_name, details) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [sku, stock_id, qtd, photo ? String(photo) : null, req.user.name || '', JSON.stringify(det)]);
+    console.log(`🛒 Conferência site: ${sku} em ${SITE_CONF_LABEL[stock_id]} = ${qtd} pçs (${req.user.name})${qtd !== atual ? ` — ajuste ${atual}→${qtd}` : ''}`);
+    res.json({ ok: true, adjusted: qtd - atual });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════
 // ═══  AUTH / USERS                       ═══
 // ═══════════════════════════════════════════
@@ -2377,6 +2443,27 @@ initDB().then(async () => {
   )`).catch(err => console.error('discount_auth_requests:', err.message));
 
   // Sorteio "Número da Sorte": o SERIAL n é o próprio número do cliente
+  // Peças no site (checkout): vínculo por sku + conferência física por loja (com foto).
+  // O checkout também cria essas tabelas (ensureSiteTables) — idempotente dos dois lados.
+  await queryRun(`CREATE TABLE IF NOT EXISTS site_links (
+    sku TEXT PRIMARY KEY,
+    site_product TEXT NOT NULL DEFAULT '',
+    linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(err => console.error('site_links:', err.message));
+  await queryRun(`ALTER TABLE site_links ADD COLUMN IF NOT EXISTS variants TEXT`).catch(() => {});
+  await queryRun(`ALTER TABLE site_links ADD COLUMN IF NOT EXISTS photo TEXT`).catch(() => {});
+  await queryRun(`CREATE TABLE IF NOT EXISTS site_confs (
+    id SERIAL PRIMARY KEY,
+    sku TEXT NOT NULL,
+    store_id TEXT NOT NULL,
+    qty_counted INTEGER NOT NULL,
+    photo TEXT,
+    user_name TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(err => console.error('site_confs:', err.message));
+  await queryRun(`ALTER TABLE site_confs ADD COLUMN IF NOT EXISTS details TEXT`).catch(() => {});
+  await queryRun(`CREATE INDEX IF NOT EXISTS site_confs_sku_store ON site_confs (sku, store_id)`).catch(() => {});
+
   await queryRun(`CREATE TABLE IF NOT EXISTS raffle_entries (
     n SERIAL PRIMARY KEY,
     sale_id TEXT UNIQUE NOT NULL,

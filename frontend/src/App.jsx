@@ -329,6 +329,132 @@ function RemoteAuthBell({loggedUser,showToast}){
   );
 }
 
+// ─── TRAVA DE CONFERÊNCIA — PEÇAS NO SITE ───
+// Peça vinculada no site (pelo DBK) PRECISA ser conferida fisicamente pela equipe de
+// cada loja, com foto — só depois o estoque daquela loja vale pra venda online.
+// NÃO é aviso: é tela cheia OBRIGATÓRIA que cobre o ERP até conferir. Único respiro:
+// "estou com cliente" adia 10 min (venda no balcão nunca pode travar), e ela volta.
+// O nome no site pode ser diferente; o DBK é o elo. Polling leve a cada 60s.
+function SiteConfGate({loggedUser,showToast}){
+  const [data,setData]=useState(null);
+  const [confering,setConfering]=useState(null); // sku em conferência
+  const [counts,setCounts]=useState({}); // 'cor|tam' -> contagem digitada
+  const [sending,setSending]=useState(false);
+  const [snoozeUntil,setSnoozeUntil]=useState(()=>{try{return parseInt(localStorage.getItem("dblack_siteconf_snooze")||"0",10);}catch{return 0;}});
+  const [,força]=useState(0); // re-render quando o snooze vence
+  useEffect(()=>{const t=setInterval(()=>força(x=>x+1),30000);return()=>clearInterval(t);},[]);
+  // Quais estoques este usuário confere: loja1/loja2 direto; loja3/loja4 = matriz.
+  // Admin/gestor/gerente NÃO são travados (acompanham o status no cadastro do site).
+  const myStocks=(()=>{
+    const s=loggedUser?.store_id;
+    if(["admin","gestor","gerente"].includes(loggedUser?.role))return[];
+    if(s==="loja1"||s==="loja2")return[s];
+    if(s==="loja3"||s==="loja4")return["shared_matriz"];
+    return[];
+  })();
+  const STOCK_LABEL={loja1:"Divino",loja2:"São João",shared_matriz:"Matriz"};
+  useEffect(()=>{
+    let alive=true;
+    const load=async()=>{try{const d=await api.getSiteLinks();if(alive&&d?.links)setData(d);}catch{}};
+    load();
+    const t=setInterval(load,60000);
+    return()=>{alive=false;clearInterval(t);};
+  },[]);
+  if(!data)return null;
+  // Pendências: (sku × loja minha) sem conferência desde o vínculo
+  const confKey=new Set((data.confs||[]).map(c=>c.sku+"|"+c.store_id));
+  const stockOf=(sku,sid)=>data.stocks?.find(s=>s.sku===sku&&s.stock_id===sid)?.quantity??0;
+  const pend=[];
+  for(const l of data.links||[])for(const sid of myStocks){
+    if(!confKey.has(l.sku+"|"+sid))pend.push({...l,stock_id:sid});
+  }
+  if(pend.length===0)return null;
+  if(Date.now()<snoozeUntil)return null; // "estou com cliente" — volta a cobrar em 10 min
+  const adiar=()=>{
+    const ate=Date.now()+10*60*1000;
+    setSnoozeUntil(ate);
+    try{localStorage.setItem("dblack_siteconf_snooze",String(ate));}catch{}
+    showToast("Ok — volto a cobrar em 10 minutos! 📷","error");
+  };
+  // Grade do site da peça (cor×tamanho) — a conferência conta POR variação
+  const gridOf=(p)=>{
+    try{const g=JSON.parse(p.variants||"[]");if(Array.isArray(g)&&g.length)return g.map(v=>({color:v.color||"",size:v.size||""}));}catch{}
+    return[{color:"",size:""}];
+  };
+  const comboLabel=(c)=>[c.color,c.size].filter(Boolean).join(" · ")||"Única";
+  const totalContado=(p)=>gridOf(p).reduce((s,c)=>s+(parseInt(counts[c.color+"|"+c.size],10)||0),0);
+  const enviar=async(p)=>{
+    const grid=gridOf(p);
+    const det=grid.map(c=>({color:c.color,size:c.size,qty:parseInt(counts[c.color+"|"+c.size],10)||0}));
+    const preenchidos=grid.filter(c=>counts[c.color+"|"+c.size]!==undefined&&counts[c.color+"|"+c.size]!=="").length;
+    if(preenchidos<grid.length)return showToast("Preencha a contagem de TODAS as variações (se não tem, coloque 0).","error");
+    setSending(true);
+    try{
+      const r=await api.confirmSiteConf({sku:p.sku,stock_id:p.stock_id,details:det});
+      showToast(`✓ ${p.sku} conferida em ${STOCK_LABEL[p.stock_id]}: ${det.reduce((s,d)=>s+d.qty,0)} pçs${r.adjusted?` (estoque ajustado ${r.adjusted>0?"+":""}${r.adjusted})`:""} — já vale no site!`);
+      setConfering(null);setCounts({});
+      const d=await api.getSiteLinks();if(d?.links)setData(d);
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSending(false);
+  };
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.88)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:14}}>
+      <div style={{width:440,maxWidth:"96vw",maxHeight:"88vh",overflowY:"auto",background:C.s1,border:`1px solid rgba(64,196,255,.45)`,borderRadius:14,padding:16,boxShadow:"0 16px 60px rgba(0,0,0,.7)"}}>
+        <div style={{fontSize:15,fontWeight:900,color:C.blu,letterSpacing:1,marginBottom:4}}>🛒 CONFERÊNCIA OBRIGATÓRIA — PEÇAS NO SITE</div>
+        <div style={{fontSize:11,color:C.dim,marginBottom:10}}>
+          {pend.length} peça{pend.length>1?"s":""} da SUA loja subiu pro site e precisa de conferência física <b>AGORA</b>:
+          olhe a FOTO da peça, conte na arara <b>por cor/tamanho</b> e confirme. Enquanto não conferir, o estoque da sua loja NÃO vende online — e esta tela volta sempre.
+        </div>
+        {pend.map(p=>{
+          const aberta=confering===p.sku+"|"+p.stock_id;
+          return(
+          <div key={p.sku+p.stock_id} style={{padding:"8px 10px",borderRadius:8,background:C.s2,border:`1px solid ${aberta?C.brdH:C.brd}`,marginBottom:6}}>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+              {/* Foto do SITE: a caixa bate o olho e sabe qual peça conferir */}
+              {p.photo
+                ? <img src={p.photo} alt="" style={{width:aberta?110:64,height:aberta?140:80,objectFit:"cover",borderRadius:8,flexShrink:0,border:`1px solid ${C.brd}`,cursor:"pointer",transition:"all .2s"}}
+                    onClick={e=>{e.stopPropagation();window.open(p.photo,"_blank");}} title="Toque pra ampliar"/>
+                : <div style={{width:64,height:80,borderRadius:8,flexShrink:0,background:C.bg,border:`1px dashed ${C.brd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🖤</div>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700}}>{p.sku} · {p.erp_name||"?"}</div>
+                <div style={{fontSize:11,color:C.dim,marginTop:2}}>
+                  No site como: <em>{p.site_product||"—"}</em> · Loja: <b style={{color:C.blu}}>{STOCK_LABEL[p.stock_id]}</b> · Sistema: {stockOf(p.sku,p.stock_id)} pç{stockOf(p.sku,p.stock_id)===1?"":"s"}
+                </div>
+              </div>
+            </div>
+            {!aberta?(
+              <button onClick={()=>{setConfering(p.sku+"|"+p.stock_id);setCounts({});}}
+                style={{marginTop:6,width:"100%",padding:"9px",borderRadius:7,border:"none",background:C.blu,color:"#000",cursor:"pointer",fontSize:12,fontWeight:800,fontFamily:"inherit"}}>🔍 Conferir agora</button>
+            ):(
+              <div style={{marginTop:8}}>
+                <div style={{fontSize:10,fontWeight:800,color:C.dim,letterSpacing:.5,marginBottom:4}}>CONTE POR COR/TAMANHO (não tem = 0):</div>
+                {gridOf(p).map(c=>{const k=c.color+"|"+c.size;return(
+                  <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                    <span style={{flex:1,fontSize:12,fontWeight:700}}>{comboLabel(c)}</span>
+                    <input type="number" min="0" inputMode="numeric" placeholder="0" value={counts[k]??""}
+                      onChange={e=>setCounts(prev=>({...prev,[k]:e.target.value}))}
+                      style={{width:72,padding:"7px",borderRadius:7,border:`1px solid ${counts[k]!==undefined&&counts[k]!==""?C.brdH:C.brd}`,background:C.bg,color:C.txt,fontSize:14,fontWeight:800,textAlign:"center",fontFamily:"inherit"}}/>
+                  </div>);})}
+                <div style={{fontSize:11,fontWeight:800,color:C.blu,textAlign:"right",marginBottom:2}}>Total contado: {totalContado(p)} pç{totalContado(p)===1?"":"s"}</div>
+                <div style={{display:"flex",gap:6,marginTop:6}}>
+                  <button disabled={sending} onClick={()=>enviar(p)}
+                    style={{flex:2,padding:"8px",borderRadius:7,border:"none",background:C.grn,color:"#000",cursor:"pointer",fontSize:11,fontWeight:800,fontFamily:"inherit",opacity:sending?.6:1}}>{sending?"Enviando...":"✓ Confirmar conferência"}</button>
+                  <button disabled={sending} onClick={()=>setConfering(null)}
+                    style={{flex:1,padding:"8px",borderRadius:7,border:`1px solid ${C.brd}`,background:"transparent",color:C.dim,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>Depois</button>
+                </div>
+              </div>
+            )}
+          </div>);
+        })}
+        <button onClick={adiar}
+          style={{width:"100%",marginTop:4,padding:"9px",borderRadius:7,border:`1px solid ${C.brd}`,background:"transparent",color:C.dim,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>
+          ⏸ Estou atendendo cliente agora — me lembra em 10 min
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // Auth
   const [loggedUser, setLoggedUser] = useState(null);
@@ -967,6 +1093,7 @@ export default function App() {
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <RemoteAuthBell loggedUser={loggedUser} showToast={showToast}/>
+            <SiteConfGate loggedUser={loggedUser} showToast={showToast}/>
             <div style={{fontSize:11,color:C.dim,display:"flex",alignItems:"center",gap:4}}>{I.store} <span>{loggedUser.name}</span></div>
           </div>
         </header>
