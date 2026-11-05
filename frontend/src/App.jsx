@@ -343,13 +343,13 @@ function SiteConfGate({loggedUser,showToast}){
   const [snoozeUntil,setSnoozeUntil]=useState(()=>{try{return parseInt(localStorage.getItem("dblack_siteconf_snooze")||"0",10);}catch{return 0;}});
   const [,força]=useState(0); // re-render quando o snooze vence
   useEffect(()=>{const t=setInterval(()=>força(x=>x+1),30000);return()=>clearInterval(t);},[]);
-  // Quais estoques este usuário confere: loja1/loja2 direto; loja3/loja4 = matriz.
+  // Quais estoques este usuário confere: só loja1/loja2 — a MATRIZ fica fora
+  // (decisão do dono 05/11: o estoque do site já é contado na matriz no cadastro).
   // Admin/gestor/gerente NÃO são travados (acompanham o status no cadastro do site).
   const myStocks=(()=>{
     const s=loggedUser?.store_id;
     if(["admin","gestor","gerente"].includes(loggedUser?.role))return[];
     if(s==="loja1"||s==="loja2")return[s];
-    if(s==="loja3"||s==="loja4")return["shared_matriz"];
     return[];
   })();
   const STOCK_LABEL={loja1:"Divino",loja2:"São João",shared_matriz:"Matriz"};

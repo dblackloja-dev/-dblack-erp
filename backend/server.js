@@ -347,7 +347,9 @@ app.post('/api/raffle/draw', requireRole('admin', 'gestor'), async (req, res) =>
 // O checkout grava em site_links os DBK que subiram pro site (nome lá pode ser outro;
 // o DBK é o elo). Cada loja PRECISA conferir a peça fisicamente (contagem + foto)
 // antes de o estoque dela valer na venda online. A contagem ajusta o estoque na hora.
-const SITE_CONF_STOCKS = ['loja1', 'loja2', 'shared_matriz'];
+// Matriz FORA da conferência (decisão do dono 05/11): o estoque do site já é
+// contado na matriz no próprio cadastro — só Divino e São João conferem.
+const SITE_CONF_STOCKS = ['loja1', 'loja2'];
 const SITE_CONF_LABEL = { loja1: 'Divino', loja2: 'São João', shared_matriz: 'Matriz' };
 
 // Tudo que está no site + status de conferência por loja (o sino do App usa isso)
