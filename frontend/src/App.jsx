@@ -5191,6 +5191,16 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
     showToast("Pagamento excluído!");
   };
 
+  // Reimprimir recibo de pagamento antigo: reabre o modal do recibo (com as compras em loja, se houver)
+  const reprintPayroll=async(p)=>{
+    let purchaseDetails=[];
+    if(p.storeDiscount>0&&p.empId){
+      try{purchaseDetails=(await api.getEmployeePurchaseDetails(p.empId,p.month))||[];}
+      catch(e){/* sem detalhes das compras o recibo sai mesmo assim */}
+    }
+    setReceiptData({...p,purchaseDetails});
+  };
+
   const shareReceiptWhatsApp=(p)=>{
     const store=STORES.find(s=>s.id===p.storeId);
     let txt=`📋 *RECIBO DE PAGAMENTO*\n`;
@@ -5486,7 +5496,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
               <td style={{...S.td,color:p.otherDeductions>0?C.red:C.dim}}>{p.otherDeductions>0?"-"+fmt(p.otherDeductions):"-"}</td>
               <td style={{...S.td,fontWeight:800,color:C.gold,fontSize:14}}>{fmt(p.netPay)}</td>
               <td style={{...S.td,fontSize:10,color:C.dim,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}}>{p.notes||"-"}</td>
-              <td style={{...S.td,display:"flex",gap:4}}><button style={{...S.smBtn,color:"#25D366"}} title="Compartilhar recibo via WhatsApp" onClick={()=>shareReceiptWhatsApp(p)}>📱</button><button style={{...S.smBtn,color:C.red}} onClick={()=>deletePayroll(p.id)}>🗑️</button></td>
+              <td style={{...S.td,display:"flex",gap:4}}><button style={{...S.smBtn,color:C.gold}} title="Reimprimir recibo" onClick={()=>reprintPayroll(p)}>🖨️</button><button style={{...S.smBtn,color:"#25D366"}} title="Compartilhar recibo via WhatsApp" onClick={()=>shareReceiptWhatsApp(p)}>📱</button><button style={{...S.smBtn,color:C.red}} onClick={()=>deletePayroll(p.id)}>🗑️</button></td>
             </tr>;
           })}</tbody></table></div>
         </div>
