@@ -1724,12 +1724,15 @@ app.get('/api/payrolls', async (req, res) => {
 app.post('/api/payrolls', requireRole('admin', 'gestor'), async (req, res) => {
   try {
     const p = req.body;
-    const id = genId();
+    // Idempotente: usa o id do cliente — replay da fila offline não duplica
+    // (lição do incidente das trocas 10/09 e das 26k folhas demo de 2026-03)
+    const id = p.id || genId();
     await queryRun(
       `INSERT INTO payrolls (id, month, emp_id, emp_name, emp_cpf, emp_role, emp_pix, store_id, store_name,
        base_salary, meta_bonus, awards, overtime, store_discount, advances, other_deductions,
        total_earnings, total_deductions, net_pay, paid, paid_date, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+       ON CONFLICT (id) DO NOTHING`,
       [id, p.month, p.emp_id, p.emp_name || '', p.emp_cpf || '', p.emp_role || '', p.emp_pix || '',
        p.store_id || '', p.store_name || '', p.base_salary || 0, p.meta_bonus || 0, p.awards || 0,
        p.overtime || 0, p.store_discount || 0, p.advances || 0, p.other_deductions || 0,

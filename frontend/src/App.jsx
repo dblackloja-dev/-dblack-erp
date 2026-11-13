@@ -5280,7 +5280,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
     };
     setPayrolls(prev=>[newPay,...prev]);
     api.createPayroll({
-      month:newPay.month,emp_id:newPay.empId,emp_name:newPay.empName,emp_cpf:newPay.empCpf,emp_role:newPay.empRole,emp_pix:newPay.empPix,
+      id:newPay.id,month:newPay.month,emp_id:newPay.empId,emp_name:newPay.empName,emp_cpf:newPay.empCpf,emp_role:newPay.empRole,emp_pix:newPay.empPix,
       store_id:newPay.storeId,store_name:newPay.storeName,
       base_salary:newPay.baseSalary,meta_bonus:newPay.metaBonus,awards:newPay.awards,overtime:newPay.overtime,
       store_discount:newPay.storeDiscount,advances:newPay.advances,other_deductions:newPay.otherDeductions,
