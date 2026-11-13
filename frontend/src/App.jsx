@@ -5417,6 +5417,7 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
               if(!pontoHoras)return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(108,159,255,.05)",border:"1px solid rgba(108,159,255,.2)",fontSize:12,color:C.dim}}>⏱️ Buscando banco de horas do ponto...</div>;
               const ph=pontoHoras[selectedEmp.id];
               if(!ph)return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,fontSize:12,color:C.dim}}>⏱️ {selectedEmp.name.split(" ")[0]} não está vinculada ao ponto facial deste mês (sem batidas ou cadastro não sincronizado).</div>;
+              if(!(+ph.total_trabalhado>0))return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,fontSize:12,color:C.dim}}>⏱️ {selectedEmp.name.split(" ")[0]} não tem nenhuma batida no ponto em {pay.month} — banco de horas não se aplica (entrou depois, ou ainda não cadastrou o rosto).</div>;
               const hora=(+pay.baseSalary||0)/220;
               const banco=+ph.banco_horas||0;
               const positivo=banco>=0;
