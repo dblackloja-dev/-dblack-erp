@@ -5145,6 +5145,21 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
   // Payroll form
   const [pay,setPay]=useState({month:new Date().toISOString().slice(0,7),empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
 
+  // Banco de horas do sistema de ponto facial (match por erp_id = employees.id)
+  const PONTO_API="https://dblack-ponto-production.up.railway.app";
+  const [pontoHoras,setPontoHoras]=useState(null); // {empId: resumo do mês}
+  useEffect(()=>{
+    let alive=true;
+    setPontoHoras(null);
+    fetch(`${PONTO_API}/api/banco-horas?mes=${pay.month}`).then(r=>r.json()).then(d=>{
+      if(!alive||!d?.colaboradores)return;
+      const map={};d.colaboradores.forEach(c=>{if(c.erp_id)map[c.erp_id]=c;});
+      setPontoHoras(map);
+    }).catch(()=>{});
+    return()=>{alive=false;};
+  },[pay.month]);
+  const minHM=m=>{const a=Math.abs(+m||0);return `${Math.floor(a/60)}h${String(a%60).padStart(2,"0")}m`;};
+
   const [editEmpId,setEditEmpId]=useState(null);
 
   const addEmployee=()=>{
@@ -5396,6 +5411,39 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
                 <div style={{fontSize:12,color:C.dim}}>{selectedEmp.role} • {STORES.find(s=>s.id===selectedEmp.storeId)?.name} • PIX: {selectedEmp.pix||"N/A"}</div>
               </div>
             </div>
+
+            {/* ⏱️ Banco de horas vindo do ponto facial — sugestão de extras/desconto */}
+            {(()=>{
+              if(!pontoHoras)return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(108,159,255,.05)",border:"1px solid rgba(108,159,255,.2)",fontSize:12,color:C.dim}}>⏱️ Buscando banco de horas do ponto...</div>;
+              const ph=pontoHoras[selectedEmp.id];
+              if(!ph)return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,fontSize:12,color:C.dim}}>⏱️ {selectedEmp.name.split(" ")[0]} não está vinculada ao ponto facial deste mês (sem batidas ou cadastro não sincronizado).</div>;
+              const hora=(+pay.baseSalary||0)/220;
+              const banco=+ph.banco_horas||0;
+              const positivo=banco>=0;
+              // Extra em dinheiro = hora × 1,5 (CLT); saldo negativo desconta hora simples
+              const valor=Math.round(Math.abs(banco)/60*hora*(positivo?1.5:1)*100)/100;
+              return (
+                <div style={{marginBottom:14,padding:"12px 14px",borderRadius:10,background:positivo?"rgba(0,230,118,.05)":"rgba(255,82,82,.05)",border:`1px solid ${positivo?"rgba(0,230,118,.25)":"rgba(255,82,82,.25)"}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:12.5}}>
+                    <span style={{fontWeight:800}}>⏱️ Ponto {pay.month}:</span>
+                    <span style={{color:C.dim}}>trabalhou <b style={{color:C.txt}}>{minHM(ph.total_trabalhado)}</b> de {minHM(ph.total_esperado)} esperadas</span>
+                    <span style={{color:C.dim}}>· extras +{minHM(ph.total_extra)} · déficit −{minHM(ph.total_deficit)} · sábados +{minHM(ph.compensatorio_sabado)}</span>
+                    {ph.faltas>0&&<span style={{color:C.red}}>· {ph.faltas} falta{ph.faltas>1?"s":""}</span>}
+                    <span style={{fontWeight:900,color:positivo?C.grn:C.red,fontSize:14}}>BANCO {positivo?"+":"−"}{minHM(banco)}</span>
+                  </div>
+                  {hora>0&&Math.abs(banco)>0&&(
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,flexWrap:"wrap"}}>
+                      <span style={{fontSize:11.5,color:C.dim}}>{positivo?`Valor sugerido (hora ${fmt(hora)} × 1,5):`:`Desconto sugerido (hora simples):`} <b style={{color:positivo?C.grn:C.red}}>{fmt(valor)}</b></span>
+                      <button onClick={()=>positivo?setPay(p=>({...p,overtime:String(valor)})):setPay(p=>({...p,otherDeductions:String(valor)}))}
+                        style={{...S.smBtn,borderColor:positivo?C.grn:C.red,color:positivo?C.grn:C.red,fontWeight:700}}>
+                        {positivo?"⬇ Usar em Horas Extras":"⬇ Usar em Outros Descontos"}
+                      </button>
+                      <span style={{fontSize:10,color:C.dim}}>(ou compense em folga e não lance nada)</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
               {/* PROVENTOS */}
