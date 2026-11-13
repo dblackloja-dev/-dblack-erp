@@ -5418,6 +5418,28 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
               const ph=pontoHoras[selectedEmp.id];
               if(!ph)return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,fontSize:12,color:C.dim}}>⏱️ {selectedEmp.name.split(" ")[0]} não está vinculada ao ponto facial deste mês (sem batidas ou cadastro não sincronizado).</div>;
               if(!(+ph.total_trabalhado>0))return <div style={{marginBottom:14,padding:"10px 14px",borderRadius:10,background:"rgba(255,255,255,.03)",border:`1px solid ${C.brd}`,fontSize:12,color:C.dim}}>⏱️ {selectedEmp.name.split(" ")[0]} não tem nenhuma batida no ponto em {pay.month} — banco de horas não se aplica (entrou depois, ou ainda não cadastrou o rosto).</div>;
+              if(ph.regime==="horista"){
+                // Horista: salário = horas normais × hora; extras (fora da janela) × 1,5
+                const horaBase=(+selectedEmp.salary||0)/220;
+                const extraMin=+ph.total_extra||0, normaisMin=Math.max(0,(+ph.total_trabalhado||0)-extraMin);
+                const vNorm=Math.round(normaisMin/60*horaBase*100)/100, vExt=Math.round(extraMin/60*horaBase*1.5*100)/100;
+                return (
+                  <div style={{marginBottom:14,padding:"12px 14px",borderRadius:10,background:"rgba(255,215,64,.05)",border:"1px solid rgba(255,215,64,.3)"}}>
+                    <div style={{fontSize:12.5,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                      <span style={{fontWeight:800}}>💰 Horista · Ponto {pay.month}:</span>
+                      <span>trabalhou <b>{minHM(ph.total_trabalhado)}</b></span>
+                      <span style={{color:C.dim}}>= {minHM(normaisMin)} normais + <b style={{color:C.gold}}>{minHM(extraMin)} extras</b> (após 19h/14h sáb, antes das 9h ou sem almoço)</span>
+                    </div>
+                    {horaBase>0&&(
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,flexWrap:"wrap"}}>
+                        <span style={{fontSize:11.5,color:C.dim}}>Hora base (ref. ÷220): <b>{fmt(horaBase)}</b> → normais <b style={{color:C.grn}}>{fmt(vNorm)}</b> + extras ×1,5 <b style={{color:C.gold}}>{fmt(vExt)}</b> = <b style={{color:C.grn}}>{fmt(vNorm+vExt)}</b></span>
+                        <button onClick={()=>setPay(p=>({...p,baseSalary:String(vNorm),overtime:String(vExt)}))}
+                          style={{...S.smBtn,borderColor:C.gold,color:C.gold,fontWeight:700}}>⬇ Usar (Salário Base + Horas Extras)</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
               const hora=(+pay.baseSalary||0)/220;
               const banco=+ph.banco_horas||0;
               const positivo=banco>=0;
