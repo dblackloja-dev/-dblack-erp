@@ -5142,8 +5142,9 @@ function RHModule({employees,setEmployees,payrolls,setPayrolls,advances,showToas
   // New employee form
   const [ne,setNe]=useState({name:"",cpf:"",role:"Vendedor",storeId:"loja1",salary:"",pix:"",admission:localDateStr()});
 
-  // Payroll form
-  const [pay,setPay]=useState({month:new Date().toISOString().slice(0,7),empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
+  // Payroll form — referência abre no MÊS ANTERIOR (folha paga em novembro refere-se a outubro)
+  const mesAnterior=(()=>{const d=new Date();const m=d.getMonth();return m===0?`${d.getFullYear()-1}-12`:`${d.getFullYear()}-${String(m).padStart(2,"0")}`;})();
+  const [pay,setPay]=useState({month:mesAnterior,empId:"",baseSalary:0,metaBonus:"",awards:"",overtime:"",storeDiscount:"",advances:"",otherDeductions:"",notes:""});
 
   // Banco de horas do sistema de ponto facial (match por erp_id = employees.id)
   const PONTO_API="https://dblack-ponto-production.up.railway.app";
