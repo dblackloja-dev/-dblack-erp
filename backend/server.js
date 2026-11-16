@@ -841,6 +841,31 @@ app.post('/api/stock/transfer', async (req, res) => {
   }
 });
 
+// Cupom de transferência (2ª via): o frontend manda o payload completo do cupom.
+// id vem do cliente → idempotente (fila offline pode reenviar).
+app.post('/api/transfers', async (req, res) => {
+  try {
+    const { id, fromStockId, toStockId, data } = req.body;
+    if (!id || !data) return res.status(400).json({ error: 'id e data são obrigatórios' });
+    await queryRun(
+      'INSERT INTO transfers (id, from_stock_id, to_stock_id, data) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING',
+      [id, fromStockId || '', toStockId || '', JSON.stringify(data)]
+    );
+    res.json({ success: true });
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/transfers', async (req, res) => {
+  try {
+    const { stockId } = req.query;
+    const limit = Math.min(+req.query.limit || 30, 200);
+    const rows = stockId
+      ? await queryAll('SELECT * FROM transfers WHERE from_stock_id = $1 OR to_stock_id = $1 ORDER BY created_at DESC LIMIT $2', [stockId, limit])
+      : await queryAll('SELECT * FROM transfers ORDER BY created_at DESC LIMIT $1', [limit]);
+    res.json(rows);
+  } catch (e) { if (!res.headersSent) res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/stock/movements/:stockId', async (req, res) => {
   try {
     const movements = await queryAll(
@@ -2485,6 +2510,18 @@ initDB().then(async () => {
   await queryRun(`ALTER TABLE raffle_entries ADD COLUMN IF NOT EXISTS seq INTEGER NOT NULL DEFAULT 1`).catch(() => {});
   await queryRun(`ALTER TABLE raffle_entries DROP CONSTRAINT IF EXISTS raffle_entries_sale_id_key`).catch(() => {});
   await queryRun(`CREATE UNIQUE INDEX IF NOT EXISTS raffle_entries_sale_seq ON raffle_entries (sale_id, seq)`).catch(() => {});
+
+  // 2ª via do cupom de transferência: o frontend salva o payload completo do cupom
+  // (itens, cliente, quem pediu/separou) — reimprimível de qualquer máquina/loja
+  await queryRun(`CREATE TABLE IF NOT EXISTS transfers (
+    id TEXT PRIMARY KEY,
+    from_stock_id TEXT NOT NULL DEFAULT '',
+    to_stock_id TEXT NOT NULL DEFAULT '',
+    data JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(err => console.error('transfers:', err.message));
+  await queryRun(`CREATE INDEX IF NOT EXISTS transfers_from_idx ON transfers (from_stock_id, created_at DESC)`).catch(() => {});
+  await queryRun(`CREATE INDEX IF NOT EXISTS transfers_to_idx ON transfers (to_stock_id, created_at DESC)`).catch(() => {});
   loyalty.scheduleDailyJob(pool); // Cliente Black: expiração de saldo, níveis, avisos (03h BRT)
 }).catch(err => {
   console.error('❌ Falha ao inicializar banco:', err.message);

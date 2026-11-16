@@ -419,6 +419,9 @@ const api = {
   adjustStock: (stockId, productId, data) => request(`/stock/${stockId}/${productId}`, { method: 'PUT', body: data }),
   transferStock: (data) => request('/stock/transfer', { method: 'POST', body: data }),
   getMovements: (stockId) => request(`/stock/movements/${stockId}`),
+  // Cupom de transferência (2ª via): salva/busca o payload completo do cupom no servidor
+  saveTransfer: (data) => request('/transfers', { method: 'POST', body: data }),
+  getTransfers: (stockId) => request(`/transfers?stockId=${stockId}`),
 
   // Sales
   getSales: (storeId, days) => {

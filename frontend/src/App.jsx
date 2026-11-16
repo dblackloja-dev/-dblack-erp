@@ -2442,6 +2442,11 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
   // phase: "cupom" | "troca_prompt" | "troca"
   const [phase,setPhase]=useState("cupom");
   const contentRef=useRef(null);
+  // Cupom de troca por presente: qtd selecionada de cada item (vários cupons na mesma venda)
+  const [trocaSel,setTrocaSel]=useState(()=>(sale.items||[]).map(it=>it.qty||1));
+  const [trocaPrinted,setTrocaPrinted]=useState(0);
+  const trocaSelCount=trocaSel.reduce((s,q)=>s+q,0);
+  const multiTroca=(sale.items||[]).length>1||(sale.items||[]).some(it=>(it.qty||1)>1);
   // Sorteio: números da sorte (1 a cada R$99,90; vêm reservados na venda nova; reimpressão busca no servidor)
   const [lucky,setLucky]=useState(sale.luckyNumbers||null);
   useEffect(()=>{
@@ -2588,16 +2593,28 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
     return()=>clearTimeout(t);
   },[autoFlow]);
 
-  // Teclado: Enter = imprimir troca, Esc = fechar
+  // Imprime o cupom de troca com os itens selecionados e VOLTA pro prompt —
+  // permite imprimir vários cupons na mesma venda (um por presente) sem sair do PDV
+  const printTroca=()=>{
+    if(trocaSelCount===0)return;
+    setPhase("troca");
+    setTimeout(()=>{
+      triggerPrint(contentRef,()=>{setTrocaPrinted(n=>n+1);setPhase("troca_prompt");});
+      // Se o guard anti-duplo-clique do triggerPrint engolir a chamada, volta pro prompt mesmo assim
+      setTimeout(()=>setPhase(p=>p==="troca"&&autoFlow?"troca_prompt":p),3500);
+    },120);
+  };
+
+  // Teclado: Enter = imprimir troca (1ª vez) / concluir (depois), Esc = fechar
   useEffect(()=>{
     if(phase!=="troca_prompt")return;
     const handler=(e)=>{
-      if(e.key==="Enter"){e.preventDefault();setPhase("troca");setTimeout(()=>{triggerPrint(contentRef,onClose);},120);}
+      if(e.key==="Enter"){e.preventDefault();if(trocaPrinted===0)printTroca();else onClose();}
       if(e.key==="Escape"){e.preventDefault();onClose();}
     };
     window.addEventListener("keydown",handler);
     return()=>window.removeEventListener("keydown",handler);
-  },[phase,onClose]);
+  },[phase,onClose,trocaPrinted,trocaSel]);
 
   // estilos térmico 80mm
   const W={fontFamily:"'Courier New',Courier,monospace",color:"#000",background:"#fff",width:"100%",boxSizing:"border-box",wordBreak:"break-word",fontWeight:700};
@@ -2659,7 +2676,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       <Row l={"Cliente: "+(sale.customer||"Avulso")} r=""/>
       <HR/>
       <div style={{fontWeight:700,fontSize:10}}>ITENS PARA TROCA</div>
-      {sale.items.map(function(it,i){return <Row key={i} l={it.qty+"x "+it.name} r=""/>;}) }
+      {sale.items.map(function(it,i){var q=trocaSel[i];if(!q)return null;return <Row key={i} l={q+"x "+it.name} r=""/>;}) }
       <HR/>
       <div style={{textAlign:"center",margin:"4px 0"}}><C39SVG text={barcode} h={32}/></div>
       <HR/>
@@ -2670,6 +2687,29 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
       <div style={{textAlign:"center",fontSize:10,marginTop:3}}>{new Date().toLocaleString("pt-BR")}</div>
     </div>
   );
+
+  // Seletor de itens do cupom de troca (checkbox + qtd) — permite um cupom por presente
+  const trocaSelector=multiTroca?(
+    <div style={{background:C.s2,border:"1px solid "+C.brd,borderRadius:12,padding:"10px 12px",marginBottom:12,textAlign:"left"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <span style={{fontSize:11,fontWeight:700,color:C.pur}}>🎁 Itens neste cupom de troca</span>
+        <span style={{fontSize:10,color:C.dim,cursor:"pointer",textDecoration:"underline"}} onClick={()=>setTrocaSel(sale.items.map(it=>trocaSelCount===0?(it.qty||1):0))}>{trocaSelCount===0?"marcar todos":"desmarcar todos"}</span>
+      </div>
+      {(sale.items||[]).map((it,i)=>{
+        const q=trocaSel[i]||0;const max=it.qty||1;
+        return <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",borderBottom:i<sale.items.length-1?"1px solid "+C.brd:"none"}}>
+          <input type="checkbox" checked={q>0} onChange={()=>setTrocaSel(prev=>prev.map((v,j)=>j===i?(v>0?0:max):v))} style={{accentColor:C.pur,width:16,height:16,cursor:"pointer",flexShrink:0}}/>
+          <span style={{flex:1,fontSize:12,opacity:q>0?1:.4}}>{it.name}</span>
+          {max>1&&<div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+            <button onClick={()=>setTrocaSel(prev=>prev.map((v,j)=>j===i?Math.max(0,v-1):v))} style={{...S.smBtn,padding:"2px 8px"}}>−</button>
+            <span style={{fontSize:12,fontWeight:700,minWidth:34,textAlign:"center"}}>{q}/{max}</span>
+            <button onClick={()=>setTrocaSel(prev=>prev.map((v,j)=>j===i?Math.min(max,v+1):v))} style={{...S.smBtn,padding:"2px 8px"}}>+</button>
+          </div>}
+        </div>;
+      })}
+      <div style={{fontSize:10,color:C.dim,marginTop:6}}>Mais de um presente? Imprima um cupom, ajuste os itens e imprima o próximo — sem sair daqui.</div>
+    </div>
+  ):null;
 
   // ── PHASE: TROCA PROMPT ──
   if(phase==="troca_prompt"){
@@ -2707,21 +2747,27 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
             </div>}
           </div>}
 
+          {trocaPrinted>0&&<div style={{background:"rgba(224,64,251,.08)",border:"1px solid rgba(224,64,251,.3)",borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,fontWeight:700,color:C.pur}}>
+            🎁 {trocaPrinted} {trocaPrinted===1?"cupom de troca impresso":"cupons de troca impressos"}
+          </div>}
+
+          {trocaSelector}
+
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             <button autoFocus
-              style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${C.pur},#AD1457)`,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
-              onClick={()=>{setPhase("troca");setTimeout(()=>{triggerPrint(contentRef,onClose);},120);}}>
-              🎁 Imprimir Cupom de Troca <span style={{fontSize:11,opacity:.7,marginLeft:4}}>[Enter]</span>
+              style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${C.pur},#AD1457)`,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:trocaSelCount===0?.5:1}}
+              onClick={printTroca} disabled={trocaSelCount===0}>
+              🎁 Imprimir {trocaPrinted>0?"Outro ":""}Cupom de Troca {trocaPrinted===0&&<span style={{fontSize:11,opacity:.7,marginLeft:4}}>[Enter]</span>}
             </button>
             <button
               style={{width:"100%",padding:"11px",borderRadius:12,border:"1px solid "+C.brd,background:"transparent",color:C.txt,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}
               onClick={onClose}>
-              ✕ Pular — Nova Venda <span style={{fontSize:11,opacity:.7,marginLeft:4}}>[Esc]</span>
+              {trocaPrinted>0?<>✓ Concluir — Nova Venda <span style={{fontSize:11,opacity:.7,marginLeft:4}}>[Enter]</span></>:<>✕ Pular — Nova Venda <span style={{fontSize:11,opacity:.7,marginLeft:4}}>[Esc]</span></>}
             </button>
           </div>
 
           <div style={{marginTop:16,fontSize:10,color:C.dim,opacity:.5}}>
-            Enter = imprimir troca &nbsp;•&nbsp; Esc = nova venda
+            {trocaPrinted===0?<>Enter = imprimir troca &nbsp;•&nbsp; Esc = nova venda</>:<>Enter / Esc = nova venda</>}
           </div>
         </div>
       </div>
@@ -2743,6 +2789,7 @@ function ReceiptCupom({sale,onClose,autoFlow=false}){
           </button>
         </div>
 
+        {phase==="troca"&&trocaSelector&&<div style={{padding:"12px 24px 0"}}>{trocaSelector}</div>}
         {phase==="cupom"?<CupomVenda/>:<CupomTroca/>}
 
         <div style={{display:"flex",gap:8,padding:"0 24px 12px"}}>
@@ -3560,7 +3607,16 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
   const [transClientName,setTransClientName]=useState("");
   const [transClientPhone,setTransClientPhone]=useState("");
   const [printTransfer,setPrintTransfer]=useState(null);
+  const [recentTransfers,setRecentTransfers]=useState(null); // null = ainda não carregou
   const transSearchRef=useRef(null);
+
+  // 2ª via: busca do servidor as transferências que envolvem esta loja
+  useEffect(()=>{
+    if(activeTab!=="transferencia")return;
+    let alive=true;
+    api.getTransfers(activeStockId).then(rows=>{if(alive)setRecentTransfers(rows||[]);}).catch(()=>{if(alive)setRecentTransfers([]);});
+    return()=>{alive=false;};
+  },[activeTab,activeStockId]);
 
   // Count form
   const [countData,setCountData]=useState(null); // [{productId, systemQty, countedQty}]
@@ -3653,14 +3709,19 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
     // Cupom viaja com as peças entre lojas — mostra valor de VENDA (custo é sigiloso)
     const totalVal=transItems.reduce((s,i)=>s+i.price*i.qty,0);
 
-    // Dados para o cupom
-    setPrintTransfer({
+    // Dados para o cupom (itens sem custo/foto — o cupom só usa nome, sku, qtd e preço de venda)
+    const cupomData={
       id:genId(),date:today,time,
       from:currentStore.name,to:destStore?.name,
-      items:transItems,totalPcs,totalVal,
+      items:transItems.map(i=>({productId:i.productId,productName:i.productName,sku:i.sku,qty:i.qty,price:i.price})),
+      totalPcs,totalVal,
       description:transDesc,requestedBy:transRequestedBy,separatedBy:transSeparatedBy,paid:transPaid,
       clientName:transClientName,clientPhone:transClientPhone
-    });
+    };
+    setPrintTransfer(cupomData);
+    // Salva no servidor pra 2ª via em qualquer máquina (fila offline reenvia se falhar)
+    api.saveTransfer({id:cupomData.id,fromStockId:activeStockId,toStockId:getStockId(transTo),data:cupomData}).catch(console.error);
+    setRecentTransfers(prev=>prev?[{id:cupomData.id,data:cupomData,created_at:new Date().toISOString()},...prev]:prev);
 
     showToast(totalPcs+" peças transferidas para "+destStore?.name+"!");
     setTransItems([]);setTransTo("");setTransDesc("");setTransRequestedBy("");setTransSeparatedBy("");setTransPaid(false);setTransClientName("");setTransClientPhone("");
@@ -3883,6 +3944,32 @@ function EstoqueModule({storeProducts,activeStore,stock,setStock,currentStore,ca
 
         {/* Cupom de transferência */}
         {printTransfer&&<ReceiptComprovante data={{type:"transferencia",...printTransfer,store:currentStore.name}} onClose={()=>setPrintTransfer(null)}/>}
+
+        {/* 2ª via — transferências salvas no servidor (reimprime em qualquer máquina) */}
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+            <h3 style={{...S.cardTitle,margin:0}}>🖨️ 2ª Via de Transferências</h3>
+            <button style={{...S.smBtn,fontSize:11}} onClick={()=>{setRecentTransfers(null);api.getTransfers(activeStockId).then(rows=>setRecentTransfers(rows||[])).catch(()=>setRecentTransfers([]));}}>🔄 Atualizar</button>
+          </div>
+          {recentTransfers===null?<div style={{textAlign:"center",padding:16,color:C.dim,fontSize:12}}>Carregando...</div>
+          :recentTransfers.length===0?<div style={{textAlign:"center",padding:16,color:C.dim,fontSize:12}}>Nenhuma transferência registrada ainda.<br/><span style={{fontSize:10,opacity:.7}}>(só transferências feitas a partir de agora ficam salvas para 2ª via)</span></div>
+          :<div style={S.tWrap}><table style={S.table}><thead><tr>
+            <th style={S.th}>Data</th><th style={S.th}>Origem → Destino</th><th style={S.th}>Peças</th><th style={S.th}>Cliente</th><th style={S.th}>Pedido por</th><th style={S.th}></th>
+          </tr></thead><tbody>
+            {recentTransfers.map(t=>{
+              const d=typeof t.data==="string"?(()=>{try{return JSON.parse(t.data);}catch{return null;}})():t.data;
+              if(!d)return null;
+              return <tr key={t.id} style={S.tr}>
+                <td style={{...S.td,fontSize:11,whiteSpace:"nowrap"}}>{fmtDate(d.date)} {d.time?.slice(0,5)||""}</td>
+                <td style={{...S.td,fontSize:11,fontWeight:600}}>{d.from} → {d.to}</td>
+                <td style={{...S.td,fontWeight:700,color:C.pur}}>{d.totalPcs} pç</td>
+                <td style={{...S.td,fontSize:11}}>{d.clientName||"-"}</td>
+                <td style={{...S.td,fontSize:11,color:C.dim}}>{d.requestedBy||"-"}</td>
+                <td style={S.td}><button style={{...S.smBtn,color:C.gold,whiteSpace:"nowrap"}} onClick={()=>setPrintTransfer(d)}>🖨️ Reimprimir</button></td>
+              </tr>;
+            })}
+          </tbody></table></div>}
+        </div>
 
         {/* Quick view: stock across all stores */}
         <div style={S.card}>
